@@ -21,24 +21,19 @@ export default function TimeframePicker({ value, onChange }) {
 
   return (
     <div className="tf-picker" role="group" aria-label={t("tf.aria")}>
-      <div className="tf-presets">
+      <select
+        className="tf-select"
+        value={isPreset && !isNumericValue ? value : ""}
+        onChange={(e) => e.target.value && onChange(e.target.value)}
+        aria-label={t("tf.aria")}
+      >
+        {isNumericValue && <option value="">{t("tf.days", { n: value })}</option>}
         {TIMEFRAMES.map((tf) => (
-          <button
-            key={tf.id}
-            type="button"
-            className={`tf-chip ${
-              value === tf.id || (isNumericValue && value === tf.days && tf.intervalMinutes >= 1440) ? "is-active" : ""
-            }`}
-            onClick={() => onChange(tf.id)}
-            title={tf.intraday ? t("tf.intraday") : t("tf.daily")}
-          >
+          <option key={tf.id} value={tf.id}>
             {t(`tf.${tf.id}`) || tf.label}
-          </button>
+          </option>
         ))}
-        {!isPreset && Number.isFinite(Number(value)) && (
-          <span className="tf-chip is-active is-custom">{t("tf.days", { n: value })}</span>
-        )}
-      </div>
+      </select>
       <div className="tf-custom">
         <input
           type="number"

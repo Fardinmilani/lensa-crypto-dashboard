@@ -68,9 +68,9 @@ export async function searchCoins(query) {
 }
 
 /** Rich metadata for a single coin (price, image, links). */
-export async function getCoinDetail(id) {
+export async function getCoinDetail(id, ttl = 15_000) {
   const url = `${BASE}/coins/${id}?localization=false&tickers=false&market_data=true&community_data=false&developer_data=false&sparkline=false`;
-  const data = await cachedFetch(url, 60_000);
+  const data = await cachedFetch(url, ttl);
   return {
     id: data.id,
     symbol: (data.symbol || "").toUpperCase(),

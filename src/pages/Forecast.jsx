@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { getCandles } from "../lib/coingecko";
-import { monteCarlo, outcomeZones, tradeSetups, annualizedVol, probabilityPriceMap } from "../lib/forecast";
+import { monteCarlo, tradeSetups, annualizedVol, probabilityPriceMap } from "../lib/forecast";
 import ConeChart from "../components/ConeChart";
+import ReportActions from "../components/ReportActions";
 import TimeframePicker from "../components/TimeframePicker";
 import { useCoin } from "../context/coinStore";
 import { useI18n } from "../i18n/langStore";
 import { useStaggerReveal, useCountUp } from "../hooks/useAnimations";
+import { useLocalStorageState } from "../hooks/useLocalStorageState";
 
 function fmtPrice(n) {
   if (n == null) return "—";
@@ -26,11 +28,11 @@ const PRECISION = [
 export default function Forecast() {
   const { coin } = useCoin();
   const { t } = useI18n();
-  const [days, setDays] = useState("4h");
-  const [horizon, setHorizon] = useState(30);
-  const [method, setMethod] = useState("bootstrap");
-  const [driftMode, setDriftMode] = useState("historical");
-  const [sims, setSims] = useState(3000);
+  const [days, setDays] = useLocalStorageState("lensa.forecast.timeframe", "4h");
+  const [horizon, setHorizon] = useLocalStorageState("lensa.forecast.horizon", 30);
+  const [method, setMethod] = useLocalStorageState("lensa.forecast.method", "bootstrap");
+  const [driftMode, setDriftMode] = useLocalStorageState("lensa.forecast.drift", "historical");
+  const [sims, setSims] = useLocalStorageState("lensa.forecast.sims", 3000);
   const [mc, setMc] = useState(null);
   const [extra, setExtra] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -53,7 +55,6 @@ export default function Forecast() {
       const histTail = candles.slice(-Math.min(candles.length, Math.max(40, horizon)));
       setMc(sim);
       setExtra({
-        zones: outcomeZones(sim, 7),
         setups: tradeSetups(sim),
         probabilityMap: probabilityPriceMap(sim),
         annVol: annualizedVol(closes, periodsPerYear),
@@ -68,6 +69,30 @@ export default function Forecast() {
       setLoading(false);
     }
   }
+  const report =
+    mc && extra
+      ? {
+          type: "forecast",
+          generatedAt: new Date().toISOString(),
+          coin,
+          timeframe: days,
+          horizon,
+          method,
+          driftMode,
+          sims,
+          summary: {
+            probabilityOfProfit: mc.probProfit,
+            expectedReturnPct: mc.expectedReturnPct,
+            downsideP5Pct: mc.var5Pct,
+            upsideP95Pct: mc.upside95Pct,
+            annualizedVolatility: extra.annVol,
+          },
+          probabilityMap: extra.probabilityMap,
+          setups: extra.setups,
+          distribution: mc.dist,
+          cone: mc.cone,
+        }
+      : null;
 
   return (
     <div className="forecast-page" ref={reveal}>
@@ -134,6 +159,7 @@ export default function Forecast() {
 
       {mc && extra && (
         <>
+          <ReportActions report={report} type="forecast" symbol={coin.symbol} />
           <div className="forecast-hl">
             <HlCard label={t("fc.hl.prob")} value={mc.probProfit * 100} suffix="%" decimals={0} tone={mc.probProfit >= 0.5 ? "up" : "down"} hint={t("fc.hl.probHint", { n: extra.horizonDaysApprox.toFixed(1) })} />
             <HlCard label={t("fc.hl.expected")} value={mc.expectedReturnPct} suffix="%" decimals={1} tone={mc.expectedReturnPct >= 0 ? "up" : "down"} hint={t("fc.hl.expectedHint")} />
@@ -171,32 +197,7 @@ export default function Forecast() {
             <ConeChart history={extra.history} cone={mc.cone} stepSeconds={extra.stepSeconds} />
           </div>
 
-          <div className="forecast-cols">
-            <div className="glass-card reveal">
-              <div className="panel-header">
-                <div>
-                  <h2>{t("fc.zones")}</h2>
-                  <span className="panel-subtitle">{t("fc.zonesSub")}</span>
-                </div>
-              </div>
-              <div className="zones">
-                {extra.zones.map((z, i) => (
-                  <div className="zone-row" key={i}>
-                    <span className={`zone-range num ${z.changePct >= 0 ? "up" : "down"}`}>
-                      {fmtPrice(z.mid)} <small>({pct(z.changePct, 0)})</small>
-                    </span>
-                    <div className="zone-bar-track">
-                      <div
-                        className={`zone-bar ${z.changePct >= 0 ? "zone-bar--up" : "zone-bar--down"}`}
-                        style={{ width: `${Math.max(2, z.probability * 100)}%` }}
-                      />
-                    </div>
-                    <span className="zone-prob num">{(z.probability * 100).toFixed(1)}%</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
+          <div className="forecast-cols forecast-cols--single">
             <div className="glass-card reveal">
               <div className="panel-header">
                 <div>

@@ -3,10 +3,12 @@ import { STRATEGIES, PARAM_LABELS } from "../lib/strategies";
 import { runBacktest } from "../lib/backtest";
 import { getCandles } from "../lib/coingecko";
 import EquityChart from "../components/EquityChart";
+import ReportActions from "../components/ReportActions";
 import TimeframePicker from "../components/TimeframePicker";
 import { useCoin } from "../context/coinStore";
 import { useI18n, pick } from "../i18n/langStore";
 import { useStaggerReveal, useCountUp } from "../hooks/useAnimations";
+import { useLocalStorageState } from "../hooks/useLocalStorageState";
 
 const CATEGORY_ORDER = ["trend", "momentum", "reversion", "hybrid"];
 
@@ -14,10 +16,10 @@ export default function Backtest() {
   const { coin } = useCoin();
   const { t, lang } = useI18n();
   const locale = lang === "fa" ? "fa-IR" : "en-US";
-  const [strategyKey, setStrategyKey] = useState("trendMomentumHybrid");
-  const [days, setDays] = useState("1d");
-  const [params, setParams] = useState(STRATEGIES.trendMomentumHybrid.params);
-  const [fee, setFee] = useState(0.1);
+  const [strategyKey, setStrategyKey] = useLocalStorageState("lensa.backtest.strategy", "trendMomentumHybrid");
+  const [days, setDays] = useLocalStorageState("lensa.backtest.timeframe", "1d");
+  const [params, setParams] = useLocalStorageState("lensa.backtest.params", STRATEGIES.trendMomentumHybrid.params);
+  const [fee, setFee] = useLocalStorageState("lensa.backtest.fee", 0.1);
   const [result, setResult] = useState(null);
   const [benchmarkResult, setBenchmarkResult] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -62,6 +64,21 @@ export default function Backtest() {
     cat,
     items: Object.entries(STRATEGIES).filter(([, s]) => s.category === cat),
   }));
+  const report =
+    result && benchmarkResult
+      ? {
+          type: "backtest",
+          generatedAt: new Date().toISOString(),
+          coin,
+          strategy: strategyKey,
+          strategyLabel: pick(lang, strategy.label),
+          timeframe: days,
+          params,
+          fee,
+          result,
+          benchmark: benchmarkResult,
+        }
+      : null;
 
   return (
     <div className="backtest-page" ref={reveal}>
@@ -127,6 +144,7 @@ export default function Backtest() {
 
       {result && (
         <div className="backtest-results">
+          <ReportActions report={report} type="backtest" symbol={coin.symbol} />
           <div className="stats-grid">
             <Stat label={t("bt.stat.return")} value={result.totalReturnPercent} suffix="%" tone={result.totalReturnPercent >= 0 ? "up" : "down"} />
             <Stat label={t("bt.stat.bench")} value={result.benchmarkReturnPercent} suffix="%" tone={result.benchmarkReturnPercent >= 0 ? "up" : "down"} />

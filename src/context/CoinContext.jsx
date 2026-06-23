@@ -1,5 +1,5 @@
-import { useState } from "react";
 import { DEFAULT_COINS } from "../lib/coingecko";
+import { useLocalStorageState } from "../hooks/useLocalStorageState";
 import { CoinContext } from "./coinStore";
 
 const INITIAL = {
@@ -10,7 +10,7 @@ const INITIAL = {
 };
 
 export function CoinProvider({ children }) {
-  const [coin, setCoin] = useState(INITIAL);
+  const [coin, setCoin] = useLocalStorageState("lensa.activeCoin", INITIAL);
 
   function selectCoin(next) {
     setCoin({

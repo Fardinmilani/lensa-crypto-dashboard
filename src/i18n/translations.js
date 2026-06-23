@@ -40,11 +40,13 @@ export const translations = {
     "chart.loading": "Loading {sym} chart…",
     "chart.error": "Chart error: {e}",
     "chart.noData": "No data received.",
+    "chart.indicators": "Indicators",
 
     "hero.vol24": "24h Volume",
     "hero.mcap": "Market Cap",
     "hero.high24": "24h High",
     "hero.low24": "24h Low",
+    "hero.live": "Live-ish · {time}",
 
     "news.title": "Market News",
     "news.subtitle": "Summary from multiple sources — no buy/sell signals",
@@ -63,6 +65,11 @@ export const translations = {
 
     "common.activeCoin": "Active coin",
     "common.changeFromTop": "changeable from the top bar",
+    "report.title": "Report export",
+    "report.saved": "{n} saved locally",
+    "report.pdf": "Export PDF",
+    "report.json": "Download JSON",
+    "report.save": "Save details",
 
     "bt.disclaimer": "Backtest results show how a fixed rule would have performed on PAST data. This is not a forecast of future performance and must not be used directly as a basis for trading decisions.",
     "bt.strategy": "Strategy",
@@ -225,11 +232,13 @@ export const translations = {
     "chart.loading": "در حال بارگذاری چارت {sym}…",
     "chart.error": "خطا در دریافت چارت: {e}",
     "chart.noData": "داده‌ای دریافت نشد.",
+    "chart.indicators": "اندیکاتورها",
 
     "hero.vol24": "حجم ۲۴س",
     "hero.mcap": "ارزش بازار",
     "hero.high24": "سقف ۲۴س",
     "hero.low24": "کف ۲۴س",
+    "hero.live": "نزدیک به لایو · {time}",
 
     "news.title": "اخبار بازار",
     "news.subtitle": "خلاصه‌ای از منابع متعدد — بدون سیگنال خرید/فروش",
@@ -248,6 +257,11 @@ export const translations = {
 
     "common.activeCoin": "رمزارز فعال",
     "common.changeFromTop": "از نوار بالا قابل تغییر است",
+    "report.title": "خروجی گزارش",
+    "report.saved": "{n} گزارش ذخیره‌شده",
+    "report.pdf": "خروجی PDF",
+    "report.json": "دانلود JSON",
+    "report.save": "ذخیره جزئیات",
 
     "bt.disclaimer": "نتایج بک‌تست عملکرد یک قانون مشخص را روی داده‌های گذشته نشان می‌دهد. این پیش‌بینی عملکرد آینده نیست و نباید مستقیماً مبنای تصمیم معاملاتی قرار گیرد.",
     "bt.strategy": "استراتژی",
