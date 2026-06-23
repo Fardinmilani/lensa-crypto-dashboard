@@ -41,6 +41,10 @@ export const translations = {
     "chart.error": "Chart error: {e}",
     "chart.noData": "No data received.",
     "chart.indicators": "Indicators",
+    "chart.addIndicator": "Add indicator",
+    "chart.removeIndicator": "Remove indicator",
+    "chart.color": "Color",
+    "chart.width": "Width",
 
     "hero.vol24": "24h Volume",
     "hero.mcap": "Market Cap",
@@ -233,6 +237,10 @@ export const translations = {
     "chart.error": "خطا در دریافت چارت: {e}",
     "chart.noData": "داده‌ای دریافت نشد.",
     "chart.indicators": "اندیکاتورها",
+    "chart.addIndicator": "افزودن اندیکاتور",
+    "chart.removeIndicator": "حذف اندیکاتور",
+    "chart.color": "رنگ",
+    "chart.width": "ضخامت",
 
     "hero.vol24": "حجم ۲۴س",
     "hero.mcap": "ارزش بازار",

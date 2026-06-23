@@ -2,9 +2,9 @@ import { useState } from "react";
 import { downloadJson, exportPdf, getSavedReports, reportFilename, saveReport } from "../lib/reports";
 import { useI18n } from "../i18n/langStore";
 
-export default function ReportActions({ report, type, symbol }) {
+export default function ReportActions({ report, type, symbol, allowSave = true }) {
   const { t } = useI18n();
-  const [savedCount, setSavedCount] = useState(() => getSavedReports().length);
+  const [savedCount, setSavedCount] = useState(() => (allowSave ? getSavedReports().length : 0));
   if (!report) return null;
 
   function handleSave() {
@@ -20,7 +20,7 @@ export default function ReportActions({ report, type, symbol }) {
     <div className="report-actions glass-card no-print">
       <div>
         <strong>{t("report.title")}</strong>
-        <span>{t("report.saved", { n: savedCount })}</span>
+        {allowSave && <span>{t("report.saved", { n: savedCount })}</span>}
       </div>
       <button type="button" className="ghost-btn" onClick={() => exportPdf()}>
         {t("report.pdf")}
@@ -28,9 +28,11 @@ export default function ReportActions({ report, type, symbol }) {
       <button type="button" className="ghost-btn" onClick={() => downloadJson(report, reportFilename(type, symbol))}>
         {t("report.json")}
       </button>
-      <button type="button" className="run-btn report-actions__save" onClick={handleSave}>
-        {t("report.save")}
-      </button>
+      {allowSave && (
+        <button type="button" className="run-btn report-actions__save" onClick={handleSave}>
+          {t("report.save")}
+        </button>
+      )}
     </div>
   );
 }

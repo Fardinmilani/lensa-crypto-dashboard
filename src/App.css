@@ -522,31 +522,62 @@
 }
 .indicator-panel {
   display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 10px;
   margin-bottom: 10px;
 }
-.indicator-toggle {
-  display: inline-flex;
+.indicator-add {
+  display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 7px 9px;
-  border: 1px solid var(--border-subtle);
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.indicator-add select {
+  min-width: 210px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-raised);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-family: inherit;
+  font-size: 0.82rem;
+}
+.indicator-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 8px;
+}
+.indicator-editor {
+  padding: 9px;
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--bg-raised);
 }
-.indicator-toggle.is-on {
-  border-color: var(--border-glow);
-}
-.indicator-toggle label {
-  display: inline-flex;
+.indicator-editor__top {
+  display: flex;
   align-items: center;
-  gap: 5px;
-  color: var(--text-secondary);
-  font-size: 0.76rem;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
 }
-.indicator-toggle input[type="number"] {
-  width: 58px;
+.indicator-editor__top strong {
+  font-size: 0.78rem;
+  color: var(--text-primary);
+}
+.indicator-editor__controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
+  gap: 7px;
+}
+.indicator-editor__controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-tertiary);
+  font-size: 0.68rem;
+}
+.indicator-editor__controls input {
+  width: 100%;
   border: 1px solid var(--border-strong);
   border-radius: 6px;
   background: rgba(8, 11, 20, 0.45);
@@ -554,6 +585,24 @@
   padding: 4px 6px;
   font-family: inherit;
   font-size: 0.74rem;
+}
+.indicator-editor__controls input[type="color"] {
+  min-height: 28px;
+  padding: 2px;
+}
+.mini-icon-btn {
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: rgba(239, 68, 68, 0.08);
+  color: var(--text-secondary);
+  cursor: pointer;
+  line-height: 1;
+}
+.mini-icon-btn:hover {
+  color: var(--negative);
+  border-color: rgba(239, 68, 68, 0.4);
 }
 .price-chart__canvas {
   flex: 1;
@@ -1196,12 +1245,26 @@
 }
 
 @media print {
+  @page {
+    size: A4 portrait;
+    margin: 10mm;
+  }
+  html,
+  body,
+  #root,
+  .app-shell {
+    width: 100%;
+    min-height: auto;
+    overflow: visible !important;
+  }
   body {
     background: #fff;
     color: #111827;
+    font-size: 10px;
   }
   .app-header,
   .app-footer,
+  .aurora,
   .ticker-tape,
   .news-feed,
   .no-print {
@@ -1209,7 +1272,16 @@
   }
   .app-main {
     padding: 0;
-    max-width: none;
+    max-width: 100%;
+    width: 100%;
+    margin: 0;
+    animation: none;
+  }
+  .backtest-controls,
+  .guide-card,
+  .disclaimer-banner {
+    padding: 8px 10px;
+    margin-bottom: 8px;
   }
   .glass-card,
   .stat-card,
@@ -1219,10 +1291,56 @@
     border-color: #d1d5db;
     color: #111827;
   }
+  .stats-grid {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+  .forecast-hl {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+  .stat-card,
+  .hl-card {
+    padding: 8px;
+  }
+  .stat-value,
+  .hl-card__value {
+    font-size: 1rem;
+  }
   .chart-card,
   .table-card,
   .probability-card {
     break-inside: avoid;
+    padding: 10px;
+    margin-bottom: 8px;
+  }
+  .equity-chart-container,
+  .cone-chart {
+    height: 230px;
+  }
+  .table-scroll {
+    overflow: visible;
+  }
+  .trades-table {
+    table-layout: fixed;
+    font-size: 8px;
+    width: 100%;
+  }
+  .trades-table th,
+  .trades-table td {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    padding: 4px 5px;
+  }
+  .probability-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+  }
+  .probability-item {
+    min-height: auto;
+    padding: 8px;
   }
   .stat-label,
   .hl-card__label,

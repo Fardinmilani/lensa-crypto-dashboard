@@ -159,7 +159,7 @@ export default function Forecast() {
 
       {mc && extra && (
         <>
-          <ReportActions report={report} type="forecast" symbol={coin.symbol} />
+          <ReportActions report={report} type="forecast" symbol={coin.symbol} allowSave={false} />
           <div className="forecast-hl">
             <HlCard label={t("fc.hl.prob")} value={mc.probProfit * 100} suffix="%" decimals={0} tone={mc.probProfit >= 0.5 ? "up" : "down"} hint={t("fc.hl.probHint", { n: extra.horizonDaysApprox.toFixed(1) })} />
             <HlCard label={t("fc.hl.expected")} value={mc.expectedReturnPct} suffix="%" decimals={1} tone={mc.expectedReturnPct >= 0 ? "up" : "down"} hint={t("fc.hl.expectedHint")} />
