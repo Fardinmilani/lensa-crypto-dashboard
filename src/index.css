@@ -1,0 +1,116 @@
+:root {
+  /* Deep OLED-dark palette with gold (trust) + violet (tech) accents */
+  --bg-base: #07090f;
+  --bg-deep: #0a0e1a;
+  --bg-panel: rgba(20, 26, 40, 0.66);
+  --bg-panel-solid: #121828;
+  --bg-raised: rgba(31, 39, 58, 0.7);
+
+  --border-subtle: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.13);
+  --border-glow: rgba(245, 158, 11, 0.32);
+
+  --text-primary: #f4f6fb;
+  --text-secondary: #aeb8c8;
+  --text-tertiary: #6b7689;
+
+  --gold: #f59e0b;
+  --gold-2: #fbbf24;
+  --violet: #8b5cf6;
+  --violet-2: #a78bfa;
+
+  --positive: #22c55e;
+  --negative: #ef4444;
+
+  --font-mono: "Fira Code", "SF Mono", ui-monospace, Menlo, monospace;
+  --font-sans: "Vazirmatn", "Inter", -apple-system, "Segoe UI", sans-serif;
+
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+
+  --shadow-card: 0 18px 48px -24px rgba(0, 0, 0, 0.85);
+  --glass-blur: blur(14px);
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background:
+    radial-gradient(1200px 700px at 85% -10%, rgba(139, 92, 246, 0.12), transparent 60%),
+    radial-gradient(1000px 600px at 0% 0%, rgba(245, 158, 11, 0.09), transparent 55%),
+    var(--bg-base);
+  background-attachment: fixed;
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  direction: rtl;
+  min-height: 100vh;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+button {
+  font-family: inherit;
+}
+
+a {
+  color: var(--gold-2);
+}
+
+.num {
+  font-family: var(--font-mono);
+  direction: ltr;
+  unicode-bidi: isolate;
+  font-feature-settings: "tnum";
+}
+
+.up {
+  color: var(--positive);
+}
+.down {
+  color: var(--negative);
+}
+
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-tertiary);
+}
+
+:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
