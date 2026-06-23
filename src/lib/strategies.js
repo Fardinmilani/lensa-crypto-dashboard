@@ -104,10 +104,12 @@ export function roc(values, period = 10) {
 
 export const STRATEGIES = {
   smaCrossover: {
-    label: "تقاطع میانگین متحرک (SMA)",
-    category: "روند",
-    description:
-      "وقتی میانگین متحرک کوتاه‌مدت از بلندمدت بالاتر می‌رود لانگ باز می‌شود؛ در تقاطع معکوس بسته می‌شود.",
+    label: { en: "SMA Crossover", fa: "تقاطع میانگین متحرک (SMA)" },
+    category: "trend",
+    description: {
+      en: "Goes long when the short-term moving average rises above the long-term one; exits on the reverse cross.",
+      fa: "وقتی میانگین متحرک کوتاه‌مدت از بلندمدت بالاتر می‌رود لانگ باز می‌شود؛ در تقاطع معکوس بسته می‌شود.",
+    },
     params: { fastPeriod: 10, slowPeriod: 30 },
     generateSignals(candles, p) {
       const c = candles.map((x) => x.close);
@@ -118,10 +120,12 @@ export const STRATEGIES = {
   },
 
   emaCrossover: {
-    label: "تقاطع EMA (واکنش سریع‌تر)",
-    category: "روند",
-    description:
-      "نسخه‌ی واکنش‌سریع‌تر تقاطع میانگین؛ از EMA استفاده می‌کند که به قیمت‌های اخیر وزن بیشتری می‌دهد — مناسب تایم‌فریم پایین‌تر.",
+    label: { en: "EMA Crossover (faster)", fa: "تقاطع EMA (واکنش سریع‌تر)" },
+    category: "trend",
+    description: {
+      en: "A faster-reacting moving-average cross using EMAs, which weight recent prices more — suited to lower timeframes.",
+      fa: "نسخه‌ی واکنش‌سریع‌تر تقاطع میانگین؛ از EMA استفاده می‌کند که به قیمت‌های اخیر وزن بیشتری می‌دهد — مناسب تایم‌فریم پایین‌تر.",
+    },
     params: { fastPeriod: 9, slowPeriod: 21 },
     generateSignals(candles, p) {
       const c = candles.map((x) => x.close);
@@ -132,10 +136,12 @@ export const STRATEGIES = {
   },
 
   rsiThreshold: {
-    label: "آستانه RSI (بازگشت به میانگین)",
-    category: "بازگشتی",
-    description:
-      "وقتی RSI زیر اشباع فروش می‌رود وارد می‌شود و در اشباع خرید خارج می‌شود — استراتژی بازگشت به میانگین.",
+    label: { en: "RSI Threshold (mean-reversion)", fa: "آستانه RSI (بازگشت به میانگین)" },
+    category: "reversion",
+    description: {
+      en: "Enters when RSI drops below oversold and exits at overbought — a mean-reversion approach.",
+      fa: "وقتی RSI زیر اشباع فروش می‌رود وارد می‌شود و در اشباع خرید خارج می‌شود — استراتژی بازگشت به میانگین.",
+    },
     params: { period: 14, oversold: 30, overbought: 70 },
     generateSignals(candles, p) {
       const c = candles.map((x) => x.close);
@@ -153,10 +159,12 @@ export const STRATEGIES = {
   },
 
   macdCross: {
-    label: "تقاطع MACD",
-    category: "مومنتوم",
-    description:
-      "وقتی خط MACD از خط سیگنال بالاتر می‌رود لانگ، و در تقاطع معکوس فلت می‌شود.",
+    label: { en: "MACD Crossover", fa: "تقاطع MACD" },
+    category: "momentum",
+    description: {
+      en: "Goes long when the MACD line crosses above its signal line, and flat on the reverse cross.",
+      fa: "وقتی خط MACD از خط سیگنال بالاتر می‌رود لانگ، و در تقاطع معکوس فلت می‌شود.",
+    },
     params: { fast: 12, slow: 26, signal: 9 },
     generateSignals(candles, p) {
       const c = candles.map((x) => x.close);
@@ -168,10 +176,12 @@ export const STRATEGIES = {
   },
 
   bollingerReversion: {
-    label: "بازگشت باند بولینگر",
-    category: "بازگشتی",
-    description:
-      "وقتی قیمت زیر باند پایین بسته می‌شود (فروش افراطی) وارد می‌شود و در رسیدن به خط میانی خارج می‌شود.",
+    label: { en: "Bollinger Reversion", fa: "بازگشت باند بولینگر" },
+    category: "reversion",
+    description: {
+      en: "Enters when price closes below the lower band (oversold) and exits when it returns to the middle band.",
+      fa: "وقتی قیمت زیر باند پایین بسته می‌شود (فروش افراطی) وارد می‌شود و در رسیدن به خط میانی خارج می‌شود.",
+    },
     params: { period: 20, mult: 2 },
     generateSignals(candles, p) {
       const c = candles.map((x) => x.close);
@@ -189,10 +199,12 @@ export const STRATEGIES = {
   },
 
   bollingerBreakout: {
-    label: "شکست باند بولینگر",
-    category: "روند",
-    description:
-      "وقتی قیمت بالای باند بالایی بسته می‌شود وارد روند صعودی و وقتی زیر خط میانی برگردد خارج می‌شود.",
+    label: { en: "Bollinger Breakout", fa: "شکست باند بولینگر" },
+    category: "trend",
+    description: {
+      en: "Enters an uptrend when price closes above the upper band and exits when it falls back below the middle band.",
+      fa: "وقتی قیمت بالای باند بالایی بسته می‌شود وارد روند صعودی و وقتی زیر خط میانی برگردد خارج می‌شود.",
+    },
     params: { period: 20, mult: 2 },
     generateSignals(candles, p) {
       const c = candles.map((x) => x.close);
@@ -210,10 +222,12 @@ export const STRATEGIES = {
   },
 
   donchianBreakout: {
-    label: "شکست کانال دونچیان",
-    category: "روند",
-    description:
-      "سیستم کلاسیک پیرو روند: شکست بالاترین سقف N کندل اخیر ورود، و شکست کف خروج است.",
+    label: { en: "Donchian Channel Breakout", fa: "شکست کانال دونچیان" },
+    category: "trend",
+    description: {
+      en: "A classic trend-following system: breaking the highest high of the last N candles is entry; breaking the low is exit.",
+      fa: "سیستم کلاسیک پیرو روند: شکست بالاترین سقف N کندل اخیر ورود، و شکست کف خروج است.",
+    },
     params: { entryPeriod: 20, exitPeriod: 10 },
     generateSignals(candles, p) {
       const out = new Array(candles.length).fill(0);
@@ -231,10 +245,12 @@ export const STRATEGIES = {
   },
 
   momentum: {
-    label: "مومنتوم (نرخ تغییر)",
-    category: "مومنتوم",
-    description:
-      "اگر بازده N کندل اخیر مثبت و بالای آستانه باشد لانگ می‌ماند؛ سادگیِ پیرو روند.",
+    label: { en: "Momentum (Rate of Change)", fa: "مومنتوم (نرخ تغییر)" },
+    category: "momentum",
+    description: {
+      en: "Stays long while the return over the last N candles is positive and above a threshold — simple trend-following.",
+      fa: "اگر بازده N کندل اخیر مثبت و بالای آستانه باشد لانگ می‌ماند؛ سادگیِ پیرو روند.",
+    },
     params: { period: 14, threshold: 0 },
     generateSignals(candles, p) {
       const c = candles.map((x) => x.close);
@@ -246,10 +262,12 @@ export const STRATEGIES = {
   /* --------------------- Hybrid / combined --------------------- */
 
   trendMomentumHybrid: {
-    label: "ترکیبی: روند + مومنتوم",
-    category: "ترکیبی",
-    description:
-      "فقط زمانی لانگ می‌شود که هم روند صعودی باشد (EMA سریع بالای کند) و هم RSI تأیید کند (بالای ۵۰). فیلتر دوگانه سیگنال‌های ضعیف را حذف می‌کند.",
+    label: { en: "Hybrid: Trend + Momentum", fa: "ترکیبی: روند + مومنتوم" },
+    category: "hybrid",
+    description: {
+      en: "Goes long only when the trend is up (fast EMA above slow) AND RSI confirms (above 50). The dual filter removes weak signals.",
+      fa: "فقط زمانی لانگ می‌شود که هم روند صعودی باشد (EMA سریع بالای کند) و هم RSI تأیید کند (بالای ۵۰). فیلتر دوگانه سیگنال‌های ضعیف را حذف می‌کند.",
+    },
     params: { fastPeriod: 9, slowPeriod: 21, rsiPeriod: 14, rsiFloor: 50 },
     generateSignals(candles, p) {
       const c = candles.map((x) => x.close);
@@ -264,10 +282,12 @@ export const STRATEGIES = {
   },
 
   macdRsiHybrid: {
-    label: "ترکیبی: MACD + تأیید RSI",
-    category: "ترکیبی",
-    description:
-      "تقاطع صعودی MACD به‌عنوان ماشه، با تأیید RSI که در ناحیه‌ی فروش افراطی نباشد — کاهش ورودهای زودهنگام.",
+    label: { en: "Hybrid: MACD + RSI confirmation", fa: "ترکیبی: MACD + تأیید RSI" },
+    category: "hybrid",
+    description: {
+      en: "A bullish MACD cross as the trigger, confirmed by RSI not being in oversold territory — fewer premature entries.",
+      fa: "تقاطع صعودی MACD به‌عنوان ماشه، با تأیید RSI که در ناحیه‌ی فروش افراطی نباشد — کاهش ورودهای زودهنگام.",
+    },
     params: { fast: 12, slow: 26, signal: 9, rsiPeriod: 14, rsiFloor: 45 },
     generateSignals(candles, p) {
       const c = candles.map((x) => x.close);
@@ -281,10 +301,12 @@ export const STRATEGIES = {
   },
 
   tripleConfluence: {
-    label: "ترکیبی: هم‌گرایی سه‌گانه",
-    category: "ترکیبی",
-    description:
-      "ورود فقط با هم‌راستایی سه شرط: روند (قیمت بالای SMA بلند)، مومنتوم (MACD مثبت) و RSI میانه. محافظه‌کارانه ولی باکیفیت.",
+    label: { en: "Hybrid: Triple Confluence", fa: "ترکیبی: هم‌گرایی سه‌گانه" },
+    category: "hybrid",
+    description: {
+      en: "Enters only when three conditions align: trend (price above a long SMA), momentum (positive MACD) and a mid-range RSI. Conservative but high-quality.",
+      fa: "ورود فقط با هم‌راستایی سه شرط: روند (قیمت بالای SMA بلند)، مومنتوم (MACD مثبت) و RSI میانه. محافظه‌کارانه ولی باکیفیت.",
+    },
     params: { trendPeriod: 50, rsiPeriod: 14, rsiFloor: 48, rsiCap: 78 },
     generateSignals(candles, p) {
       const c = candles.map((x) => x.close);
@@ -302,9 +324,12 @@ export const STRATEGIES = {
   },
 
   buyAndHold: {
-    label: "خرید و نگهداری (Benchmark)",
-    category: "مرجع",
-    description: "خط مقایسه: از کندل اول خریداری و تا پایان بازه نگه‌داری می‌شود.",
+    label: { en: "Buy & Hold (Benchmark)", fa: "خرید و نگهداری (Benchmark)" },
+    category: "benchmark",
+    description: {
+      en: "The comparison line: buy at the first candle and hold until the end of the range.",
+      fa: "خط مقایسه: از کندل اول خریداری و تا پایان بازه نگه‌داری می‌شود.",
+    },
     params: {},
     generateSignals(candles) {
       return candles.map(() => 1);
@@ -312,22 +337,22 @@ export const STRATEGIES = {
   },
 };
 
-// Friendly Persian labels for tunable parameters.
+// Bilingual labels for tunable parameters.
 export const PARAM_LABELS = {
-  fastPeriod: "دوره سریع",
-  slowPeriod: "دوره کند",
-  period: "دوره",
-  oversold: "اشباع فروش",
-  overbought: "اشباع خرید",
-  fast: "EMA سریع",
-  slow: "EMA کند",
-  signal: "خط سیگنال",
-  mult: "ضریب انحراف",
-  entryPeriod: "دوره ورود",
-  exitPeriod: "دوره خروج",
-  threshold: "آستانه",
-  rsiPeriod: "دوره RSI",
-  rsiFloor: "کف RSI",
-  rsiCap: "سقف RSI",
-  trendPeriod: "دوره روند",
+  fastPeriod: { en: "Fast period", fa: "دوره سریع" },
+  slowPeriod: { en: "Slow period", fa: "دوره کند" },
+  period: { en: "Period", fa: "دوره" },
+  oversold: { en: "Oversold", fa: "اشباع فروش" },
+  overbought: { en: "Overbought", fa: "اشباع خرید" },
+  fast: { en: "Fast EMA", fa: "EMA سریع" },
+  slow: { en: "Slow EMA", fa: "EMA کند" },
+  signal: { en: "Signal line", fa: "خط سیگنال" },
+  mult: { en: "Std-dev multiple", fa: "ضریب انحراف" },
+  entryPeriod: { en: "Entry period", fa: "دوره ورود" },
+  exitPeriod: { en: "Exit period", fa: "دوره خروج" },
+  threshold: { en: "Threshold", fa: "آستانه" },
+  rsiPeriod: { en: "RSI period", fa: "دوره RSI" },
+  rsiFloor: { en: "RSI floor", fa: "کف RSI" },
+  rsiCap: { en: "RSI cap", fa: "سقف RSI" },
+  trendPeriod: { en: "Trend period", fa: "دوره روند" },
 };

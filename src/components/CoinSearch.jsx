@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { searchCoins, DEFAULT_COINS } from "../lib/coingecko";
 import { useCoin } from "../context/coinStore";
+import { useI18n } from "../i18n/langStore";
 
 export default function CoinSearch() {
   const { coin, selectCoin } = useCoin();
+  const { t } = useI18n();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [open, setOpen] = useState(false);
@@ -79,14 +81,14 @@ export default function CoinSearch() {
         <input
           type="text"
           value={query}
-          placeholder={`جستجوی هر رمزارز…  (فعلی: ${coin.symbol})`}
+          placeholder={t("search.placeholder", { sym: coin.symbol })}
           onChange={(e) => {
             setQuery(e.target.value);
             setOpen(true);
           }}
           onFocus={() => setOpen(true)}
           onKeyDown={onKeyDown}
-          aria-label="جستجوی رمزارز"
+          aria-label={t("search.placeholder", { sym: coin.symbol })}
         />
         {loading && <span className="coin-search__spinner" aria-hidden="true" />}
       </div>
@@ -94,7 +96,7 @@ export default function CoinSearch() {
       {open && (query.trim() ? results.length > 0 : true) && (
         <ul className="coin-search__dropdown" role="listbox">
           {!query.trim() && (
-            <li className="coin-search__hint">رمزارزهای پرطرفدار</li>
+            <li className="coin-search__hint">{t("search.popular")}</li>
           )}
           {(query.trim() ? results : DEFAULT_COINS).map((c, i) => (
             <li

@@ -1,4 +1,5 @@
 import { useMarketSnapshot } from "../hooks/useMarketSnapshot";
+import { useI18n } from "../i18n/langStore";
 
 function formatPrice(price) {
   if (price >= 1000) return price.toLocaleString("en-US", { maximumFractionDigits: 0 });
@@ -8,12 +9,13 @@ function formatPrice(price) {
 
 export default function TickerTape() {
   const { data, loading, error } = useMarketSnapshot();
+  const { t } = useI18n();
 
   if (loading) {
-    return <div className="ticker-tape ticker-tape--loading">در حال دریافت قیمت‌ها…</div>;
+    return <div className="ticker-tape ticker-tape--loading">{t("ticker.loading")}</div>;
   }
   if (error) {
-    return <div className="ticker-tape ticker-tape--error">خطا در دریافت قیمت‌ها: {error}</div>;
+    return <div className="ticker-tape ticker-tape--error">{t("ticker.error", { e: error })}</div>;
   }
 
   return (

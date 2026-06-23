@@ -1,13 +1,15 @@
 import { useState } from "react";
 import { TIMEFRAMES } from "../lib/coingecko";
+import { useI18n } from "../i18n/langStore";
 
 /**
  * Lets the user pick a preset timeframe OR type an arbitrary number of days.
  * `value` is the number of days; `onChange(days)` reports changes.
  */
 export default function TimeframePicker({ value, onChange }) {
+  const { t } = useI18n();
   const [custom, setCustom] = useState("");
-  const isPreset = TIMEFRAMES.some((t) => t.days === value);
+  const isPreset = TIMEFRAMES.some((tf) => tf.days === value);
 
   function applyCustom() {
     const n = Math.round(Number(custom));
@@ -15,34 +17,34 @@ export default function TimeframePicker({ value, onChange }) {
   }
 
   return (
-    <div className="tf-picker" role="group" aria-label="انتخاب بازه زمانی">
+    <div className="tf-picker" role="group" aria-label={t("tf.aria")}>
       <div className="tf-presets">
-        {TIMEFRAMES.map((t) => (
+        {TIMEFRAMES.map((tf) => (
           <button
-            key={t.id}
+            key={tf.id}
             type="button"
-            className={`tf-chip ${value === t.days ? "is-active" : ""}`}
-            onClick={() => onChange(t.days)}
-            title={t.intraday ? "شامل کندل‌های درون‌روزی" : "کندل روزانه"}
+            className={`tf-chip ${value === tf.days ? "is-active" : ""}`}
+            onClick={() => onChange(tf.days)}
+            title={tf.intraday ? t("tf.intraday") : t("tf.daily")}
           >
-            {t.label}
+            {t(`tf.${tf.id}`)}
           </button>
         ))}
-        {!isPreset && <span className="tf-chip is-active is-custom">{value} روز</span>}
+        {!isPreset && <span className="tf-chip is-active is-custom">{t("tf.days", { n: value })}</span>}
       </div>
       <div className="tf-custom">
         <input
           type="number"
           min="1"
           max="3650"
-          placeholder="روز دلخواه"
+          placeholder={t("tf.custom")}
           value={custom}
           onChange={(e) => setCustom(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && applyCustom()}
-          aria-label="تعداد روز دلخواه"
+          aria-label={t("tf.custom")}
         />
         <button type="button" className="tf-custom__btn" onClick={applyCustom}>
-          اعمال
+          {t("tf.apply")}
         </button>
       </div>
     </div>

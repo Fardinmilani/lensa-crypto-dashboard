@@ -1,18 +1,20 @@
 import { useEffect, useState } from "react";
 import { getNews } from "../lib/news";
+import { useI18n } from "../i18n/langStore";
 
-function timeAgo(isoDate) {
+function timeAgo(isoDate, t) {
   if (!isoDate) return "";
   const diffMs = Date.now() - new Date(isoDate).getTime();
   const mins = Math.floor(diffMs / 60000);
-  if (mins < 1) return "همین حالا";
-  if (mins < 60) return `${mins} دقیقه پیش`;
+  if (mins < 1) return t("time.now");
+  if (mins < 60) return t("time.min", { n: mins });
   const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours} ساعت پیش`;
-  return `${Math.floor(hours / 24)} روز پیش`;
+  if (hours < 24) return t("time.hour", { n: hours });
+  return t("time.day", { n: Math.floor(hours / 24) });
 }
 
 export default function NewsFeed({ query = "", coinSymbol = "" }) {
+  const { t } = useI18n();
   const [news, setNews] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -52,21 +54,21 @@ export default function NewsFeed({ query = "", coinSymbol = "" }) {
     <div className="news-feed glass-card">
       <div className="panel-header">
         <div>
-          <h2>اخبار بازار{coinSymbol ? ` · ${coinSymbol}` : ""}</h2>
-          <span className="panel-subtitle">خلاصه‌ای از منابع متعدد — بدون سیگنال خرید/فروش</span>
+          <h2>{t("news.title")}{coinSymbol ? ` · ${coinSymbol}` : ""}</h2>
+          <span className="panel-subtitle">{t("news.subtitle")}</span>
         </div>
-        <button className="icon-btn" onClick={load} title="به‌روزرسانی" aria-label="به‌روزرسانی اخبار">
+        <button className="icon-btn" onClick={load} title={t("news.refresh")} aria-label={t("news.refresh")}>
           <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
             <path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </button>
       </div>
 
-      {loading && <p className="news-loading">در حال بارگذاری اخبار…</p>}
-      {error && !loading && <p className="news-error">خطا در دریافت اخبار: {error}</p>}
+      {loading && <p className="news-loading">{t("news.loading")}</p>}
+      {error && !loading && <p className="news-error">{t("news.error", { e: error })}</p>}
 
       {showGlobalFallback && (
-        <p className="news-note">خبر اختصاصی برای {coinSymbol} یافت نشد — جدیدترین اخبار کل بازار:</p>
+        <p className="news-note">{t("news.fallback", { sym: coinSymbol })}</p>
       )}
 
       {!loading && !error && (
@@ -78,11 +80,11 @@ export default function NewsFeed({ query = "", coinSymbol = "" }) {
               </a>
               <div className="news-meta">
                 <span className="news-source">{item.source}</span>
-                {item.publishedAt && <span className="news-time num">{timeAgo(item.publishedAt)}</span>}
+                {item.publishedAt && <span className="news-time num">{timeAgo(item.publishedAt, t)}</span>}
               </div>
             </li>
           ))}
-          {list.length === 0 && <li className="news-loading">خبری برای نمایش نیست.</li>}
+          {list.length === 0 && <li className="news-loading">{t("news.empty")}</li>}
         </ul>
       )}
     </div>

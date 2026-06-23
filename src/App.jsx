@@ -3,20 +3,24 @@ import Dashboard from "./pages/Dashboard";
 import Backtest from "./pages/Backtest";
 import Forecast from "./pages/Forecast";
 import RiskTools from "./pages/RiskTools";
+import About from "./pages/About";
 import CoinSearch from "./components/CoinSearch";
 import { CoinProvider } from "./context/CoinContext";
+import { useI18n } from "./i18n/langStore";
 import "./App.css";
 
 const TABS = [
-  { id: "dashboard", label: "نمای کلی", component: Dashboard, icon: GridIcon },
-  { id: "forecast", label: "پیش‌بینی احتمالی", component: Forecast, icon: WaveIcon, badge: "Premium" },
-  { id: "backtest", label: "بک‌تست", component: Backtest, icon: ChartIcon },
-  { id: "risk", label: "مدیریت ریسک", component: RiskTools, icon: ShieldIcon },
+  { id: "dashboard", labelKey: "tab.dashboard", component: Dashboard, icon: GridIcon },
+  { id: "forecast", labelKey: "tab.forecast", component: Forecast, icon: WaveIcon, badge: "Premium" },
+  { id: "backtest", labelKey: "tab.backtest", component: Backtest, icon: ChartIcon },
+  { id: "risk", labelKey: "tab.risk", component: RiskTools, icon: ShieldIcon },
+  { id: "about", labelKey: "tab.about", component: About, icon: InfoIcon },
 ];
 
 export default function App() {
+  const { t, toggle } = useI18n();
   const [activeTab, setActiveTab] = useState("dashboard");
-  const ActiveComponent = TABS.find((t) => t.id === activeTab).component;
+  const ActiveComponent = TABS.find((tab) => tab.id === activeTab).component;
 
   return (
     <CoinProvider>
@@ -35,13 +39,13 @@ export default function App() {
             </span>
             <div className="brand-text">
               <span className="brand-name">Lensa</span>
-              <span className="brand-sub">سامانه تصمیم‌یاری کریپتو</span>
+              <span className="brand-sub">{t("brand.sub")}</span>
             </div>
           </div>
 
           <CoinSearch />
 
-          <nav className="tab-nav" role="tablist" aria-label="بخش‌های اصلی">
+          <nav className="tab-nav" role="tablist" aria-label={t("brand.sub")}>
             {TABS.map((tab) => {
               const Icon = tab.icon;
               return (
@@ -53,22 +57,24 @@ export default function App() {
                   onClick={() => setActiveTab(tab.id)}
                 >
                   <Icon />
-                  <span>{tab.label}</span>
+                  <span>{t(tab.labelKey)}</span>
                   {tab.badge && <em className="tab-badge">{tab.badge}</em>}
                 </button>
               );
             })}
           </nav>
+
+          <button className="lang-toggle" onClick={toggle} title="Language / زبان">
+            <GlobeIcon />
+            <span>{t("lang.toggle")}</span>
+          </button>
         </header>
 
         <main className="app-main" key={activeTab}>
           <ActiveComponent />
         </main>
 
-        <footer className="app-footer">
-          این ابزار صرفاً برای تحلیل و آموزش است و توصیه‌ی مالی محسوب نمی‌شود. تمام تصمیمات معاملاتی و
-          مسئولیت سود/ضرر بر عهده‌ی شماست.
-        </footer>
+        <footer className="app-footer">{t("footer")}</footer>
       </div>
     </CoinProvider>
   );
@@ -102,6 +108,23 @@ function ShieldIcon() {
   return (
     <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
       <path d="M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6l7-3z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+    </svg>
+  );
+}
+function InfoIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="2" />
+      <line x1="12" y1="11" x2="12" y2="16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <circle cx="12" cy="7.5" r="1.1" fill="currentColor" />
+    </svg>
+  );
+}
+function GlobeIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="2" />
+      <path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18" fill="none" stroke="currentColor" strokeWidth="1.6" />
     </svg>
   );
 }

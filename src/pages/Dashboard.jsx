@@ -5,6 +5,7 @@ import NewsFeed from "../components/NewsFeed";
 import TimeframePicker from "../components/TimeframePicker";
 import { getCoinDetail } from "../lib/coingecko";
 import { useCoin } from "../context/coinStore";
+import { useI18n } from "../i18n/langStore";
 import { useStaggerReveal } from "../hooks/useAnimations";
 
 function fmtUsd(n, max = 2) {
@@ -19,6 +20,7 @@ function fmtCompact(n) {
 
 export default function Dashboard() {
   const { coin } = useCoin();
+  const { t } = useI18n();
   const [days, setDays] = useState(90);
   const [detail, setDetail] = useState(null);
   const reveal = useStaggerReveal([coin.id]);
@@ -67,17 +69,17 @@ export default function Dashboard() {
           </div>
         </div>
         <div className="coin-hero__stats">
-          <Mini label="حجم ۲۴س" value={fmtCompact(detail?.volume24h)} />
-          <Mini label="ارزش بازار" value={fmtCompact(detail?.marketCap)} />
-          <Mini label="سقف ۲۴س" value={fmtUsd(detail?.high24h)} />
-          <Mini label="کف ۲۴س" value={fmtUsd(detail?.low24h)} />
+          <Mini label={t("hero.vol24")} value={fmtCompact(detail?.volume24h)} />
+          <Mini label={t("hero.mcap")} value={fmtCompact(detail?.marketCap)} />
+          <Mini label={t("hero.high24")} value={fmtUsd(detail?.high24h)} />
+          <Mini label={t("hero.low24")} value={fmtUsd(detail?.low24h)} />
         </div>
       </div>
 
       <div className="dashboard-grid">
         <div className="chart-panel glass-card reveal">
           <div className="panel-header">
-            <h2>چارت {coin.symbol}/USD</h2>
+            <h2>{t("chart.title", { sym: coin.symbol })}</h2>
           </div>
           <TimeframePicker value={days} onChange={setDays} />
           <PriceChart coinId={coin.id} symbol={coin.symbol} days={days} />

@@ -2,16 +2,15 @@ import { useState } from "react";
 import { positionSize, riskRewardRatio, calculateATR, atrStopSuggestion } from "../lib/risk";
 import { getCandles } from "../lib/coingecko";
 import { useCoin } from "../context/coinStore";
+import { useI18n } from "../i18n/langStore";
 import { useStaggerReveal } from "../hooks/useAnimations";
 
 export default function RiskTools() {
+  const { t } = useI18n();
   const reveal = useStaggerReveal([]);
   return (
     <div className="risk-page" ref={reveal}>
-      <div className="disclaimer-banner reveal">
-        این ابزارها فقط محاسبات ریاضی استاندارد مدیریت ریسک را انجام می‌دهند — هیچ‌کدام پیش‌بینی
-        قیمت یا توصیه‌ی معاملاتی ارائه نمی‌دهند. تمام اعداد ورودی را خودتان تعیین می‌کنید.
-      </div>
+      <div className="disclaimer-banner reveal">{t("risk.disclaimer")}</div>
       <div className="risk-grid">
         <PositionSizeCalculator />
         <ATRStopCalculator />
@@ -22,6 +21,7 @@ export default function RiskTools() {
 }
 
 function PositionSizeCalculator() {
+  const { t } = useI18n();
   const [accountSize, setAccountSize] = useState(1000);
   const [riskPercent, setRiskPercent] = useState(1);
   const [entryPrice, setEntryPrice] = useState("");
@@ -38,20 +38,20 @@ function PositionSizeCalculator() {
 
   return (
     <div className="risk-card glass-card reveal">
-      <h3>محاسبه‌گر حجم پوزیشن</h3>
-      <p className="card-hint">بر اساس درصد ریسک ثابت از کل حساب</p>
+      <h3>{t("risk.pos.title")}</h3>
+      <p className="card-hint">{t("risk.pos.hint")}</p>
 
-      <Field label="حجم کل حساب ($)" value={accountSize} onChange={setAccountSize} type="number" />
-      <Field label="درصد ریسک در این معامله (%)" value={riskPercent} onChange={setRiskPercent} type="number" step="0.1" />
-      <Field label="قیمت ورود ($)" value={entryPrice} onChange={setEntryPrice} type="number" />
-      <Field label="قیمت حد ضرر ($)" value={stopPrice} onChange={setStopPrice} type="number" />
+      <Field label={t("risk.pos.account")} value={accountSize} onChange={setAccountSize} type="number" />
+      <Field label={t("risk.pos.riskPct")} value={riskPercent} onChange={setRiskPercent} type="number" step="0.1" />
+      <Field label={t("risk.pos.entry")} value={entryPrice} onChange={setEntryPrice} type="number" />
+      <Field label={t("risk.pos.stop")} value={stopPrice} onChange={setStopPrice} type="number" />
 
       {result && !result.error && (
         <div className="result-box">
-          <Row label="مقدار ریسک" value={`$${result.riskAmount.toFixed(2)}`} />
-          <Row label="حجم قابل خرید" value={`${result.units.toFixed(6)} واحد`} />
-          <Row label="ارزش پوزیشن" value={`$${result.positionValue.toFixed(2)}`} />
-          <Row label="درصد از کل حساب" value={`${result.positionPercentOfAccount.toFixed(1)}%`} />
+          <Row label={t("risk.pos.riskAmt")} value={`$${result.riskAmount.toFixed(2)}`} />
+          <Row label={t("risk.pos.units")} value={`${result.units.toFixed(6)} ${t("risk.pos.units.suffix")}`} />
+          <Row label={t("risk.pos.value")} value={`$${result.positionValue.toFixed(2)}`} />
+          <Row label={t("risk.pos.pctAcct")} value={`${result.positionPercentOfAccount.toFixed(1)}%`} />
         </div>
       )}
       {result?.error && <p className="news-error">{result.error}</p>}
@@ -61,6 +61,7 @@ function PositionSizeCalculator() {
 
 function ATRStopCalculator() {
   const { coin } = useCoin();
+  const { t } = useI18n();
   const [entryPrice, setEntryPrice] = useState("");
   const [multiplier, setMultiplier] = useState(2);
   const [direction, setDirection] = useState("long");
@@ -88,32 +89,32 @@ function ATRStopCalculator() {
 
   return (
     <div className="risk-card glass-card reveal">
-      <h3>پیشنهاد حد ضرر بر اساس نوسان (ATR)</h3>
-      <p className="card-hint">حد ضرر متناسب با نوسان واقعی بازار، نه درصد دلخواه</p>
+      <h3>{t("risk.atr.title")}</h3>
+      <p className="card-hint">{t("risk.atr.hint")}</p>
 
       <button className="run-btn" onClick={handleCalculate} disabled={loading}>
-        {loading ? "در حال محاسبه…" : `دریافت ATR برای ${coin.symbol}`}
+        {loading ? t("risk.atr.calculating") : t("risk.atr.get", { sym: coin.symbol })}
       </button>
       {error && <p className="news-error">{error}</p>}
-      {atr && <Row label="ATR (۱۴ دوره)" value={`$${atr.toFixed(2)}`} />}
+      {atr && <Row label={t("risk.atr.value")} value={`$${atr.toFixed(2)}`} />}
 
-      <Field label="قیمت ورود ($)" value={entryPrice} onChange={setEntryPrice} type="number" />
+      <Field label={t("risk.atr.entry")} value={entryPrice} onChange={setEntryPrice} type="number" />
       <div className="control-group">
-        <label>ضریب ATR</label>
+        <label>{t("risk.atr.mult")}</label>
         <input type="number" step="0.5" value={multiplier} onChange={(e) => setMultiplier(e.target.value)} />
       </div>
       <div className="control-group">
-        <label>جهت پوزیشن</label>
+        <label>{t("risk.atr.dir")}</label>
         <select value={direction} onChange={(e) => setDirection(e.target.value)}>
-          <option value="long">لانگ (خرید)</option>
-          <option value="short">شورت (فروش)</option>
+          <option value="long">{t("risk.atr.long")}</option>
+          <option value="short">{t("risk.atr.short")}</option>
         </select>
       </div>
 
       {suggestion && (
         <div className="result-box">
-          <Row label="فاصله پیشنهادی" value={`$${suggestion.distance.toFixed(2)}`} />
-          <Row label="قیمت حد ضرر پیشنهادی" value={`$${suggestion.stopPrice.toFixed(2)}`} />
+          <Row label={t("risk.atr.dist")} value={`$${suggestion.distance.toFixed(2)}`} />
+          <Row label={t("risk.atr.stop")} value={`$${suggestion.stopPrice.toFixed(2)}`} />
         </div>
       )}
     </div>
@@ -121,6 +122,7 @@ function ATRStopCalculator() {
 }
 
 function RiskRewardCalculator() {
+  const { t } = useI18n();
   const [entryPrice, setEntryPrice] = useState("");
   const [stopPrice, setStopPrice] = useState("");
   const [targetPrice, setTargetPrice] = useState("");
@@ -136,21 +138,17 @@ function RiskRewardCalculator() {
 
   return (
     <div className="risk-card glass-card reveal">
-      <h3>نسبت ریسک به ریوارد</h3>
-      <p className="card-hint">آیا پتانسیل سود این معامله نسبت به ریسکش منطقی است؟</p>
+      <h3>{t("risk.rr.title")}</h3>
+      <p className="card-hint">{t("risk.rr.hint")}</p>
 
-      <Field label="قیمت ورود ($)" value={entryPrice} onChange={setEntryPrice} type="number" />
-      <Field label="قیمت حد ضرر ($)" value={stopPrice} onChange={setStopPrice} type="number" />
-      <Field label="قیمت هدف ($)" value={targetPrice} onChange={setTargetPrice} type="number" />
+      <Field label={t("risk.rr.entry")} value={entryPrice} onChange={setEntryPrice} type="number" />
+      <Field label={t("risk.rr.stop")} value={stopPrice} onChange={setStopPrice} type="number" />
+      <Field label={t("risk.rr.target")} value={targetPrice} onChange={setTargetPrice} type="number" />
 
       {ratio != null && (
         <div className="result-box">
-          <Row label="نسبت R:R" value={`۱ : ${ratio.toFixed(2)}`} />
-          <p className="card-hint">
-            {ratio >= 2
-              ? "نسبت قابل‌قبول — ریوارد حداقل دو برابر ریسک است (معیار رایج، نه قانون قطعی)."
-              : "نسبت کمتر از معیار رایج ۱:۲ — بسته به نرخ برد استراتژی ممکن است منطقی باشد یا نباشد."}
-          </p>
+          <Row label={t("risk.rr.ratio")} value={`1 : ${ratio.toFixed(2)}`} />
+          <p className="card-hint">{ratio >= 2 ? t("risk.rr.good") : t("risk.rr.bad")}</p>
         </div>
       )}
     </div>

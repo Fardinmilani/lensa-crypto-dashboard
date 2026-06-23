@@ -4,6 +4,7 @@ import { monteCarlo, outcomeZones, tradeSetups, annualizedVol } from "../lib/for
 import ConeChart from "../components/ConeChart";
 import TimeframePicker from "../components/TimeframePicker";
 import { useCoin } from "../context/coinStore";
+import { useI18n } from "../i18n/langStore";
 import { useStaggerReveal, useCountUp } from "../hooks/useAnimations";
 
 function fmtPrice(n) {
@@ -17,13 +18,14 @@ function pct(n, d = 1) {
 }
 
 const PRECISION = [
-  { label: "سریع", sims: 1000 },
-  { label: "متعادل", sims: 3000 },
-  { label: "دقیق", sims: 8000 },
+  { key: "fast", sims: 1000 },
+  { key: "balanced", sims: 3000 },
+  { key: "precise", sims: 8000 },
 ];
 
 export default function Forecast() {
   const { coin } = useCoin();
+  const { t } = useI18n();
   const [days, setDays] = useState(90);
   const [horizon, setHorizon] = useState(30);
   const [method, setMethod] = useState("bootstrap");
@@ -40,7 +42,7 @@ export default function Forecast() {
     setError(null);
     try {
       const candles = await getCandles(coin.id, days);
-      if (candles.length < 20) throw new Error("داده‌ی کافی برای شبیه‌سازی موجود نیست.");
+      if (candles.length < 20) throw new Error(t("fc.noData"));
       const closes = candles.map((c) => c.close);
       const stepSeconds = Math.max(1, candles[1].time - candles[0].time);
 
@@ -68,15 +70,11 @@ export default function Forecast() {
 
   return (
     <div className="forecast-page" ref={reveal}>
-      <div className="disclaimer-banner reveal">
-        این بخش یک <strong>توزیع احتمالی</strong> از مسیرهای ممکن قیمت را با شبیه‌سازی مونت‌کارلو بر پایه‌ی
-        نوسان تاریخی همین دارایی می‌سازد. هیچ عددی «پیش‌بینی قطعی» نیست؛ آینده می‌تواند خارج از هر بازه‌ی
-        شبیه‌سازی‌شده رخ دهد. صرفاً ابزار آموزشی و تحلیلی است، نه توصیه‌ی مالی.
-      </div>
+      <div className="disclaimer-banner reveal">{t("fc.disclaimer")}</div>
 
       <div className="backtest-controls glass-card reveal">
         <div className="control-group control-group--wide">
-          <label>رمزارز فعال</label>
+          <label>{t("common.activeCoin")}</label>
           <div className="active-coin-chip">
             {coin.thumb && <img src={coin.thumb} alt="" width="18" height="18" />}
             <strong>{coin.symbol}</strong>
@@ -85,42 +83,44 @@ export default function Forecast() {
         </div>
 
         <div className="control-group">
-          <label>افق پیش‌بینی (تعداد کندل)</label>
+          <label>{t("fc.horizon")}</label>
           <input type="number" min="5" max="365" value={horizon} onChange={(e) => setHorizon(e.target.value)} />
         </div>
 
         <div className="control-group">
-          <label>روش شبیه‌سازی</label>
+          <label>{t("fc.method")}</label>
           <select value={method} onChange={(e) => setMethod(e.target.value)}>
-            <option value="bootstrap">بوت‌استرپ تاریخی</option>
-            <option value="gbm">حرکت براونی هندسی (نرمال)</option>
+            <option value="bootstrap">{t("fc.method.bootstrap")}</option>
+            <option value="gbm">{t("fc.method.gbm")}</option>
           </select>
         </div>
 
         <div className="control-group">
-          <label>روند (drift)</label>
+          <label>{t("fc.drift")}</label>
           <select value={driftMode} onChange={(e) => setDriftMode(e.target.value)}>
-            <option value="historical">بر پایه روند تاریخی</option>
-            <option value="zero">بدون فرض روند (محافظه‌کار)</option>
+            <option value="historical">{t("fc.drift.historical")}</option>
+            <option value="zero">{t("fc.drift.zero")}</option>
           </select>
         </div>
 
         <div className="control-group">
-          <label>دقت</label>
+          <label>{t("fc.precision")}</label>
           <select value={sims} onChange={(e) => setSims(Number(e.target.value))}>
             {PRECISION.map((p) => (
-              <option key={p.sims} value={p.sims}>{p.label} ({p.sims.toLocaleString("en-US")} مسیر)</option>
+              <option key={p.sims} value={p.sims}>
+                {t(`fc.precision.${p.key}`)} ({t("fc.paths", { n: p.sims.toLocaleString("en-US") })})
+              </option>
             ))}
           </select>
         </div>
 
         <div className="control-group control-group--full">
-          <label>بازه داده‌ی تاریخی (تخمین نوسان) — هر تایم‌فریمی</label>
+          <label>{t("fc.dataRange")}</label>
           <TimeframePicker value={days} onChange={setDays} />
         </div>
 
         <button className="run-btn" onClick={handleRun} disabled={loading}>
-          {loading ? "در حال شبیه‌سازی…" : "اجرای شبیه‌سازی"}
+          {loading ? t("fc.running") : t("fc.run")}
         </button>
       </div>
 
@@ -129,18 +129,18 @@ export default function Forecast() {
       {mc && extra && (
         <>
           <div className="forecast-hl">
-            <HlCard label="احتمال سود" value={mc.probProfit * 100} suffix="%" decimals={0} tone={mc.probProfit >= 0.5 ? "up" : "down"} hint={`در افق ~${extra.horizonDaysApprox.toFixed(1)} روز`} />
-            <HlCard label="بازده مورد انتظار" value={mc.expectedReturnPct} suffix="%" decimals={1} tone={mc.expectedReturnPct >= 0 ? "up" : "down"} hint="میانگین همه مسیرها" />
-            <HlCard label="سناریو خوش‌بینانه (P95)" value={mc.upside95Pct} suffix="%" decimals={1} tone="up" hint={fmtPrice(mc.dist.p95)} />
-            <HlCard label="ریسک نزولی (P5 / VaR)" value={mc.var5Pct} suffix="%" decimals={1} tone="down" hint={fmtPrice(mc.dist.p5)} />
-            <HlCard label="نوسان سالانه" value={extra.annVol} suffix="%" decimals={0} hint="نوسان واقعی‌شده" />
+            <HlCard label={t("fc.hl.prob")} value={mc.probProfit * 100} suffix="%" decimals={0} tone={mc.probProfit >= 0.5 ? "up" : "down"} hint={t("fc.hl.probHint", { n: extra.horizonDaysApprox.toFixed(1) })} />
+            <HlCard label={t("fc.hl.expected")} value={mc.expectedReturnPct} suffix="%" decimals={1} tone={mc.expectedReturnPct >= 0 ? "up" : "down"} hint={t("fc.hl.expectedHint")} />
+            <HlCard label={t("fc.hl.upside")} value={mc.upside95Pct} suffix="%" decimals={1} tone="up" hint={fmtPrice(mc.dist.p95)} />
+            <HlCard label={t("fc.hl.downside")} value={mc.var5Pct} suffix="%" decimals={1} tone="down" hint={fmtPrice(mc.dist.p5)} />
+            <HlCard label={t("fc.hl.vol")} value={extra.annVol} suffix="%" decimals={0} hint={t("fc.hl.volHint")} />
           </div>
 
           <div className="glass-card chart-card reveal">
             <div className="panel-header">
               <div>
-                <h2>مخروط احتمال قیمت</h2>
-                <span className="panel-subtitle">باند بنفش = محدوده‌ی محتمل (۲۵٪ تا ۷۵٪)، خط‌چین = ۵٪ تا ۹۵٪، خط طلایی = میانه</span>
+                <h2>{t("fc.cone")}</h2>
+                <span className="panel-subtitle">{t("fc.coneSub")}</span>
               </div>
             </div>
             <ConeChart history={extra.history} cone={mc.cone} stepSeconds={extra.stepSeconds} />
@@ -150,8 +150,8 @@ export default function Forecast() {
             <div className="glass-card reveal">
               <div className="panel-header">
                 <div>
-                  <h2>ناحیه‌بندی و احتمال وقوع</h2>
-                  <span className="panel-subtitle">احتمال اینکه قیمت پایانی در هر ناحیه قرار بگیرد</span>
+                  <h2>{t("fc.zones")}</h2>
+                  <span className="panel-subtitle">{t("fc.zonesSub")}</span>
                 </div>
               </div>
               <div className="zones">
@@ -175,20 +175,20 @@ export default function Forecast() {
             <div className="glass-card reveal">
               <div className="panel-header">
                 <div>
-                  <h2>ستاپ‌های ریسک‌به‌ریوارد</h2>
-                  <span className="panel-subtitle">حد سود/ضرر بر پایه‌ی نوسان، با احتمال لمس هر سطح</span>
+                  <h2>{t("fc.setups")}</h2>
+                  <span className="panel-subtitle">{t("fc.setupsSub")}</span>
                 </div>
               </div>
               <div className="table-scroll">
                 <table className="trades-table setups-table">
                   <thead>
                     <tr>
-                      <th>هدف</th>
-                      <th>حد ضرر</th>
-                      <th>R:R</th>
-                      <th>P(هدف)</th>
-                      <th>P(ضرر)</th>
-                      <th>ارزش مورد انتظار</th>
+                      <th>{t("fc.col.target")}</th>
+                      <th>{t("fc.col.stop")}</th>
+                      <th>{t("fc.col.rr")}</th>
+                      <th>{t("fc.col.ptarget")}</th>
+                      <th>{t("fc.col.pstop")}</th>
+                      <th>{t("fc.col.ev")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -196,7 +196,7 @@ export default function Forecast() {
                       <tr key={i}>
                         <td className="num up">{fmtPrice(s.target)}<br /><small>{pct(s.targetPct)}</small></td>
                         <td className="num down">{fmtPrice(s.stop)}<br /><small>{pct(s.stopPct)}</small></td>
-                        <td className="num"><strong>۱:{s.rr?.toFixed(2)}</strong></td>
+                        <td className="num"><strong>1:{s.rr?.toFixed(2)}</strong></td>
                         <td className="num up">{(s.pTarget * 100).toFixed(0)}%</td>
                         <td className="num down">{(s.pStop * 100).toFixed(0)}%</td>
                         <td className={`num ${(s.ev ?? 0) >= 0 ? "up" : "down"}`}>{s.ev?.toFixed(2)}</td>
@@ -205,10 +205,7 @@ export default function Forecast() {
                   </tbody>
                 </table>
               </div>
-              <p className="card-hint">
-                «ارزش مورد انتظار» = احتمال رسیدن به هدف × R:R منهای احتمال خوردن حد ضرر. مقدار مثبت یعنی
-                ستاپ از منظر آماری به‌صرفه‌تر است (نه تضمین سود).
-              </p>
+              <p className="card-hint">{t("fc.evNote")}</p>
             </div>
           </div>
         </>

@@ -54,9 +54,9 @@ body {
   color: var(--text-primary);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
-  direction: rtl;
   min-height: 100vh;
 }
+/* Direction is controlled on <html> by the language provider (ltr/rtl). */
 
 #root {
   min-height: 100vh;

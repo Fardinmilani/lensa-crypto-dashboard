@@ -2,25 +2,46 @@
 // Thin wrapper around the free CoinGecko public API.
 // No API key needed; CORS is open on the public endpoints.
 
-const BASE = "https://api.coingecko.com/api/v3";
+// Same-origin proxy (Vite dev proxy locally, Cloudflare Function in prod).
+// This avoids browser CORS and lets the edge cache responses to reduce 429s.
+const BASE = "/api/cg";
 
-// Simple in-memory cache to respect the free-tier rate limit (~10-30 calls/min).
+// In-memory cache + in-flight de-duplication to respect the free-tier limit.
 const cache = new Map();
-const CACHE_TTL_MS = 30_000;
+const inflight = new Map();
+const CACHE_TTL_MS = 60_000;
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function cachedFetch(url, ttl = CACHE_TTL_MS) {
   const hit = cache.get(url);
   if (hit && Date.now() - hit.time < ttl) return hit.data;
-  const res = await fetch(url);
-  if (!res.ok) {
-    if (res.status === 429) {
-      throw new Error("محدودیت نرخ CoinGecko (۴۲۹) — چند ثانیه صبر کنید و دوباره تلاش کنید.");
+  if (inflight.has(url)) return inflight.get(url);
+
+  const promise = (async () => {
+    let lastErr;
+    // Retry with backoff on transient rate-limits.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const res = await fetch(url, { headers: { Accept: "application/json" } });
+      if (res.ok) {
+        const data = await res.json();
+        cache.set(url, { data, time: Date.now() });
+        return data;
+      }
+      if (res.status === 429) {
+        lastErr = new Error("rate-limit");
+        await sleep(900 * (attempt + 1));
+        continue;
+      }
+      throw new Error(`CoinGecko request failed: ${res.status}`);
     }
-    throw new Error(`درخواست CoinGecko ناموفق بود: ${res.status}`);
-  }
-  const data = await res.json();
-  cache.set(url, { data, time: Date.now() });
-  return data;
+    // If we exhausted retries but have a stale cache entry, serve it.
+    if (hit) return hit.data;
+    throw lastErr || new Error("CoinGecko request failed");
+  })().finally(() => inflight.delete(url));
+
+  inflight.set(url, promise);
+  return promise;
 }
 
 /** Current price + 24h stats for a list of coin ids. */
@@ -155,12 +176,13 @@ export const DEFAULT_COINS = [
 ];
 
 // Timeframe presets used across Backtest + Forecast. `days` drives the API call.
+// `id` maps to a translation key (tf.<id>); `days` drives the API call.
 export const TIMEFRAMES = [
-  { id: "1d", label: "۱ روز (اینترادی)", days: 1, intraday: true },
-  { id: "7d", label: "۷ روز", days: 7, intraday: true },
-  { id: "14d", label: "۱۴ روز", days: 14, intraday: true },
-  { id: "30d", label: "۳۰ روز", days: 30, intraday: true },
-  { id: "90d", label: "۹۰ روز", days: 90 },
-  { id: "180d", label: "۱۸۰ روز", days: 180 },
-  { id: "365d", label: "۱ سال", days: 365 },
+  { id: "1d", days: 1, intraday: true },
+  { id: "7d", days: 7, intraday: true },
+  { id: "14d", days: 14, intraday: true },
+  { id: "30d", days: 30, intraday: true },
+  { id: "90d", days: 90 },
+  { id: "180d", days: 180 },
+  { id: "365d", days: 365 },
 ];

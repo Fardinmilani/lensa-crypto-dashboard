@@ -2,12 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { createChart, CandlestickSeries, LineSeries } from "lightweight-charts";
 import { getCandles } from "../lib/coingecko";
 import { ema } from "../lib/strategies";
+import { useI18n } from "../i18n/langStore";
 
 /**
  * Native candlestick chart powered by CoinGecko OHLC — works for ANY coin and
  * ANY timeframe (in days), unlike a fixed TradingView symbol mapping.
  */
 export default function PriceChart({ coinId, symbol, days }) {
+  const { t } = useI18n();
   const wrapRef = useRef(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -23,7 +25,7 @@ export default function PriceChart({ coinId, symbol, days }) {
       try {
         const candles = await getCandles(coinId, days);
         if (cancelled || !wrapRef.current) return;
-        if (!candles.length) throw new Error("داده‌ای دریافت نشد.");
+        if (!candles.length) throw new Error(t("chart.noData"));
 
         wrapRef.current.innerHTML = "";
         chart = createChart(wrapRef.current, {
@@ -81,12 +83,13 @@ export default function PriceChart({ coinId, symbol, days }) {
       cancelled = true;
       if (chart) chart.remove();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [coinId, days]);
 
   return (
     <div className="price-chart">
-      {error && <div className="chart-overlay chart-overlay--error">خطا در دریافت چارت: {error}</div>}
-      {loading && !error && <div className="chart-overlay">در حال بارگذاری چارت {symbol}…</div>}
+      {error && <div className="chart-overlay chart-overlay--error">{t("chart.error", { e: error })}</div>}
+      {loading && !error && <div className="chart-overlay">{t("chart.loading", { sym: symbol })}</div>}
       <div className="price-chart__canvas" ref={wrapRef} />
       <div className="price-chart__legend">
         <span><i className="dot dot--gold" /> EMA 21</span>
