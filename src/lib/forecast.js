@@ -70,6 +70,14 @@ export function monteCarlo({
   driftMode = "historical", // "historical" | "zero"
   seed = 12345,
 }) {
+  const safeHorizon = Math.round(Number(horizon));
+  const safeSims = Math.round(Number(sims));
+  if (!Number.isFinite(safeHorizon) || safeHorizon < 1 || safeHorizon > 2000) {
+    return { error: "افق شبیه‌سازی باید بین ۱ تا ۲۰۰۰ کندل باشد." };
+  }
+  if (!Number.isFinite(safeSims) || safeSims < 100 || safeSims > 20000) {
+    return { error: "تعداد مسیرهای شبیه‌سازی باید بین ۱۰۰ تا ۲۰۰۰۰ باشد." };
+  }
   const rets = logReturns(closes);
   if (rets.length < 5 || closes.length < 6) {
     return { error: "داده‌ی کافی برای شبیه‌سازی موجود نیست." };
@@ -80,16 +88,16 @@ export function monteCarlo({
   const rng = mulberry32(seed);
 
   // Per-step collection for the percentile cone.
-  const stepVals = Array.from({ length: horizon }, () => new Array(sims));
-  const finals = new Array(sims);
-  const maxes = new Array(sims);
-  const mins = new Array(sims);
+  const stepVals = Array.from({ length: safeHorizon }, () => new Array(safeSims));
+  const finals = new Array(safeSims);
+  const maxes = new Array(safeSims);
+  const mins = new Array(safeSims);
 
-  for (let s = 0; s < sims; s++) {
+  for (let s = 0; s < safeSims; s++) {
     let price = current;
     let hi = current;
     let lo = current;
-    for (let h = 0; h < horizon; h++) {
+    for (let h = 0; h < safeHorizon; h++) {
       let r;
       if (method === "gbm") {
         r = mu + sigma * randNormal(rng);
@@ -137,8 +145,8 @@ export function monteCarlo({
 
   return {
     current,
-    horizon,
-    sims,
+    horizon: safeHorizon,
+    sims: safeSims,
     method,
     sigmaPerPeriod: sigma,
     cone,
@@ -151,6 +159,22 @@ export function monteCarlo({
     var5Pct,
     upside95Pct,
   };
+}
+
+export function probabilityPriceMap(mc) {
+  if (!mc || mc.error) return [];
+  return [
+    { key: "p10", probability: 10, price: finalPercentile(mc, 0.1), side: "atOrBelow" },
+    { key: "p25", probability: 25, price: mc.dist.p25, side: "atOrBelow" },
+    { key: "p50", probability: 50, price: mc.dist.p50, side: "atOrBelow" },
+    { key: "p75", probability: 25, price: mc.dist.p75, side: "above" },
+    { key: "p90", probability: 10, price: finalPercentile(mc, 0.9), side: "above" },
+  ];
+}
+
+function finalPercentile(mc, p) {
+  const sorted = [...mc.finals].sort((a, b) => a - b);
+  return percentile(sorted, p);
 }
 
 /** Probability the price touches `level` at any point along the horizon. */

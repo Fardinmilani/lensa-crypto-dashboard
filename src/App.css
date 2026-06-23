@@ -726,6 +726,25 @@
   line-height: 1.7;
 }
 
+.guide-card {
+  padding: 16px 18px;
+  margin-bottom: 16px;
+  border-inline-start: 3px solid var(--violet-2);
+}
+.guide-card h2 {
+  margin: 0 0 8px;
+  font-size: 0.98rem;
+}
+.guide-card p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  line-height: 1.75;
+}
+.guide-card p + p {
+  margin-top: 7px;
+}
+
 /* ---- Stat grid ---- */
 .stats-grid {
   display: grid;
@@ -790,6 +809,36 @@
 .hl-card__hint {
   font-size: 0.72rem;
   color: var(--text-secondary);
+}
+
+.probability-card {
+  padding: 18px;
+  margin-bottom: 18px;
+}
+.probability-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+}
+.probability-item {
+  min-height: 92px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  justify-content: center;
+  padding: 12px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+}
+.probability-item strong {
+  color: var(--gold-2);
+  font-size: 1.05rem;
+}
+.probability-item span {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  line-height: 1.55;
 }
 
 /* ---- Chart / table cards ---- */

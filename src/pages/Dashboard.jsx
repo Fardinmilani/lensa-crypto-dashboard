@@ -21,7 +21,7 @@ function fmtCompact(n) {
 export default function Dashboard() {
   const { coin } = useCoin();
   const { t } = useI18n();
-  const [days, setDays] = useState(90);
+  const [days, setDays] = useState("4h");
   const [detail, setDetail] = useState(null);
   const reveal = useStaggerReveal([coin.id]);
 

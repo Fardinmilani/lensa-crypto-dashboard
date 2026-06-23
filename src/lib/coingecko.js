@@ -92,18 +92,52 @@ export async function getCoinDetail(id) {
 // CoinGecko's OHLC endpoint only accepts these `days` values on the free tier.
 const OHLC_ALLOWED = [1, 7, 14, 30, 90, 180, 365];
 
+export const TIMEFRAMES = [
+  { id: "1m", label: "1m", intervalMinutes: 1, days: 1, intraday: true },
+  { id: "3m", label: "3m", intervalMinutes: 3, days: 1, intraday: true },
+  { id: "5m", label: "5m", intervalMinutes: 5, days: 1, intraday: true },
+  { id: "15m", label: "15m", intervalMinutes: 15, days: 2, intraday: true },
+  { id: "30m", label: "30m", intervalMinutes: 30, days: 3, intraday: true },
+  { id: "45m", label: "45m", intervalMinutes: 45, days: 5, intraday: true },
+  { id: "1h", label: "1h", intervalMinutes: 60, days: 7, intraday: true },
+  { id: "2h", label: "2h", intervalMinutes: 120, days: 14, intraday: true },
+  { id: "3h", label: "3h", intervalMinutes: 180, days: 21, intraday: true },
+  { id: "4h", label: "4h", intervalMinutes: 240, days: 30, intraday: true },
+  { id: "1d", label: "1D", intervalMinutes: 1440, days: 180 },
+  { id: "1w", label: "1W", intervalMinutes: 10080, days: 365 },
+  { id: "1M", label: "1M", intervalMinutes: 43200, days: 365 },
+  { id: "3M", label: "3M", intervalMinutes: 129600, days: 1095 },
+  { id: "6M", label: "6M", intervalMinutes: 259200, days: 1825 },
+  { id: "12M", label: "12M", intervalMinutes: 525600, days: 3650 },
+];
+
+export function resolveTimeframe(value) {
+  if (typeof value === "string") {
+    return TIMEFRAMES.find((tf) => tf.id === value) || TIMEFRAMES.find((tf) => tf.id === "1d");
+  }
+  const days = Math.max(1, Math.round(Number(value) || 90));
+  return { id: `custom-${days}`, label: `${days}D`, intervalMinutes: 1440, days };
+}
+
 /**
- * Candle fetcher that works for ANY coin and ANY timeframe (in days).
+ * Candle fetcher that works for any coin and preset/custom timeframe.
  * - For the values CoinGecko's OHLC endpoint supports natively, we use true OHLC.
- * - For any other day count we fetch the fine-grained price series from
- *   market_chart and bucket it into real OHLC candles, so users can pick an
- *   arbitrary window (including short intraday windows).
+ * - For TradingView-style intervals and custom day counts, we fetch the
+ *   available price series and bucket it into OHLC candles at the requested
+ *   interval. The source granularity is bounded by CoinGecko's public data.
  *
  * @param {string} id coin id, e.g. "bitcoin"
- * @param {number} days lookback window in days
+ * @param {string|number} days timeframe id or custom lookback window in days
  */
 export async function getCandles(id, days = 90) {
-  const d = Math.max(1, Math.round(days));
+  const tf = resolveTimeframe(days);
+  const d = Math.max(1, Math.round(tf.days));
+
+  if (tf.intervalMinutes < 1440) {
+    const prices = await getPriceSeries(id, d);
+    return bucketCandlesByInterval(prices, tf.intervalMinutes);
+  }
+
   if (OHLC_ALLOWED.includes(d)) {
     const url = `${BASE}/coins/${id}/ohlc?vs_currency=usd&days=${d}`;
     const data = await cachedFetch(url);
@@ -117,7 +151,7 @@ export async function getCandles(id, days = 90) {
   }
   // Arbitrary window → synthesize candles from the price series.
   const prices = await getPriceSeries(id, d);
-  return bucketCandles(prices, targetCandleCount(d));
+  return bucketCandlesByInterval(prices, tf.intervalMinutes);
 }
 
 // Keep the old name as an alias so nothing breaks.
@@ -136,53 +170,36 @@ export async function getCloseSeries(id, days = 90) {
   return prices.map((p) => ({ time: Math.floor(p.time / 1000), value: p.price }));
 }
 
-function targetCandleCount(days) {
-  if (days <= 2) return 96;
-  if (days <= 30) return 120;
-  if (days <= 120) return 120;
-  return Math.min(365, days);
-}
-
-function bucketCandles(prices, targetCount) {
+function bucketCandlesByInterval(prices, intervalMinutes) {
   if (!prices.length) return [];
-  const size = Math.max(1, Math.floor(prices.length / targetCount));
-  const candles = [];
-  for (let i = 0; i < prices.length; i += size) {
-    const slice = prices.slice(i, i + size);
-    if (!slice.length) continue;
+  const intervalMs = Math.max(60_000, intervalMinutes * 60_000);
+  const buckets = new Map();
+  for (const p of prices) {
+    const key = Math.floor(p.time / intervalMs) * intervalMs;
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(p);
+  }
+  return [...buckets.entries()].map(([time, slice]) => {
     let high = -Infinity;
     let low = Infinity;
     for (const p of slice) {
       if (p.price > high) high = p.price;
       if (p.price < low) low = p.price;
     }
-    candles.push({
-      time: Math.floor(slice[slice.length - 1].time / 1000),
+    return {
+      time: Math.floor(time / 1000),
       open: slice[0].price,
       high,
       low,
       close: slice[slice.length - 1].price,
-    });
-  }
-  return candles;
+    };
+  });
 }
 
 export const DEFAULT_COINS = [
-  { id: "bitcoin", symbol: "BTC", name: "Bitcoin", tvSymbol: "BINANCE:BTCUSDT" },
-  { id: "ethereum", symbol: "ETH", name: "Ethereum", tvSymbol: "BINANCE:ETHUSDT" },
-  { id: "solana", symbol: "SOL", name: "Solana", tvSymbol: "BINANCE:SOLUSDT" },
-  { id: "binancecoin", symbol: "BNB", name: "BNB", tvSymbol: "BINANCE:BNBUSDT" },
-  { id: "ripple", symbol: "XRP", name: "XRP", tvSymbol: "BINANCE:XRPUSDT" },
-];
-
-// Timeframe presets used across Backtest + Forecast. `days` drives the API call.
-// `id` maps to a translation key (tf.<id>); `days` drives the API call.
-export const TIMEFRAMES = [
-  { id: "1d", days: 1, intraday: true },
-  { id: "7d", days: 7, intraday: true },
-  { id: "14d", days: 14, intraday: true },
-  { id: "30d", days: 30, intraday: true },
-  { id: "90d", days: 90 },
-  { id: "180d", days: 180 },
-  { id: "365d", days: 365 },
+  { id: "bitcoin", symbol: "BTC", name: "Bitcoin", thumb: "https://coin-images.coingecko.com/coins/images/1/thumb/bitcoin.png", tvSymbol: "BINANCE:BTCUSDT" },
+  { id: "ethereum", symbol: "ETH", name: "Ethereum", thumb: "https://coin-images.coingecko.com/coins/images/279/thumb/ethereum.png", tvSymbol: "BINANCE:ETHUSDT" },
+  { id: "solana", symbol: "SOL", name: "Solana", thumb: "https://coin-images.coingecko.com/coins/images/4128/thumb/solana.png", tvSymbol: "BINANCE:SOLUSDT" },
+  { id: "binancecoin", symbol: "BNB", name: "BNB", thumb: "https://coin-images.coingecko.com/coins/images/825/thumb/bnb-icon2_2x.png", tvSymbol: "BINANCE:BNBUSDT" },
+  { id: "ripple", symbol: "XRP", name: "XRP", thumb: "https://coin-images.coingecko.com/coins/images/44/thumb/xrp-symbol-white-128.png", tvSymbol: "BINANCE:XRPUSDT" },
 ];

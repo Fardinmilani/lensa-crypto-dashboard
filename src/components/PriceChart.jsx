@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createChart, CandlestickSeries, LineSeries } from "lightweight-charts";
-import { getCandles } from "../lib/coingecko";
+import { getCandles, resolveTimeframe } from "../lib/coingecko";
 import { ema } from "../lib/strategies";
 import { useI18n } from "../i18n/langStore";
 
@@ -40,7 +40,10 @@ export default function PriceChart({ coinId, symbol, days }) {
             horzLines: { color: "rgba(255,255,255,0.04)" },
           },
           rightPriceScale: { borderColor: "rgba(255,255,255,0.08)" },
-          timeScale: { borderColor: "rgba(255,255,255,0.08)", timeVisible: days <= 30 },
+          timeScale: {
+            borderColor: "rgba(255,255,255,0.08)",
+            timeVisible: resolveTimeframe(days).intervalMinutes < 1440,
+          },
           crosshair: { mode: 1 },
         });
 

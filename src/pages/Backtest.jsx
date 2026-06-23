@@ -15,7 +15,7 @@ export default function Backtest() {
   const { t, lang } = useI18n();
   const locale = lang === "fa" ? "fa-IR" : "en-US";
   const [strategyKey, setStrategyKey] = useState("trendMomentumHybrid");
-  const [days, setDays] = useState(180);
+  const [days, setDays] = useState("1d");
   const [params, setParams] = useState(STRATEGIES.trendMomentumHybrid.params);
   const [fee, setFee] = useState(0.1);
   const [result, setResult] = useState(null);
@@ -113,6 +113,12 @@ export default function Backtest() {
         <button className="run-btn" onClick={handleRun} disabled={loading}>
           {loading ? t("bt.running") : t("bt.run")}
         </button>
+      </div>
+
+      <div className="guide-card glass-card reveal">
+        <h2>{t("bt.guide.title")}</h2>
+        <p>{t("bt.guide.body")}</p>
+        <p>{t("bt.guide.metrics")}</p>
       </div>
 
       <p className="strategy-description reveal">{pick(lang, strategy.description)}</p>

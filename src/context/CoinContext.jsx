@@ -6,7 +6,7 @@ const INITIAL = {
   id: DEFAULT_COINS[0].id,
   symbol: DEFAULT_COINS[0].symbol,
   name: DEFAULT_COINS[0].name,
-  thumb: null,
+  thumb: DEFAULT_COINS[0].thumb,
 };
 
 export function CoinProvider({ children }) {

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { getCandles } from "../lib/coingecko";
-import { monteCarlo, outcomeZones, tradeSetups, annualizedVol } from "../lib/forecast";
+import { monteCarlo, outcomeZones, tradeSetups, annualizedVol, probabilityPriceMap } from "../lib/forecast";
 import ConeChart from "../components/ConeChart";
 import TimeframePicker from "../components/TimeframePicker";
 import { useCoin } from "../context/coinStore";
@@ -26,7 +26,7 @@ const PRECISION = [
 export default function Forecast() {
   const { coin } = useCoin();
   const { t } = useI18n();
-  const [days, setDays] = useState(90);
+  const [days, setDays] = useState("4h");
   const [horizon, setHorizon] = useState(30);
   const [method, setMethod] = useState("bootstrap");
   const [driftMode, setDriftMode] = useState("historical");
@@ -55,6 +55,7 @@ export default function Forecast() {
       setExtra({
         zones: outcomeZones(sim, 7),
         setups: tradeSetups(sim),
+        probabilityMap: probabilityPriceMap(sim),
         annVol: annualizedVol(closes, periodsPerYear),
         stepSeconds,
         history: histTail.map((c) => ({ time: c.time, value: c.close })),
@@ -126,6 +127,11 @@ export default function Forecast() {
 
       {error && <p className="news-error reveal">{error}</p>}
 
+      <div className="guide-card glass-card reveal">
+        <h2>{t("fc.guide.title")}</h2>
+        <p>{t("fc.guide.body")}</p>
+      </div>
+
       {mc && extra && (
         <>
           <div className="forecast-hl">
@@ -134,6 +140,25 @@ export default function Forecast() {
             <HlCard label={t("fc.hl.upside")} value={mc.upside95Pct} suffix="%" decimals={1} tone="up" hint={fmtPrice(mc.dist.p95)} />
             <HlCard label={t("fc.hl.downside")} value={mc.var5Pct} suffix="%" decimals={1} tone="down" hint={fmtPrice(mc.dist.p5)} />
             <HlCard label={t("fc.hl.vol")} value={extra.annVol} suffix="%" decimals={0} hint={t("fc.hl.volHint")} />
+          </div>
+
+          <div className="glass-card probability-card reveal">
+            <div className="panel-header">
+              <h2>{t("fc.prob.title")}</h2>
+            </div>
+            <div className="probability-grid">
+              {extra.probabilityMap.map((item) => (
+                <div className="probability-item" key={item.key}>
+                  <strong className="num">{fmtPrice(item.price)}</strong>
+                  <span>
+                    {t(`fc.prob.${item.side}`, {
+                      p: item.probability,
+                      price: fmtPrice(item.price),
+                    })}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
 
           <div className="glass-card chart-card reveal">

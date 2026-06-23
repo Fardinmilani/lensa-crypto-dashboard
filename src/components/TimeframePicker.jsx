@@ -3,13 +3,16 @@ import { TIMEFRAMES } from "../lib/coingecko";
 import { useI18n } from "../i18n/langStore";
 
 /**
- * Lets the user pick a preset timeframe OR type an arbitrary number of days.
- * `value` is the number of days; `onChange(days)` reports changes.
+ * Lets the user pick a TradingView-style preset or type a custom day range.
+ * Presets report a timeframe id; custom ranges report a day count.
  */
 export default function TimeframePicker({ value, onChange }) {
   const { t } = useI18n();
   const [custom, setCustom] = useState("");
-  const isPreset = TIMEFRAMES.some((tf) => tf.days === value);
+  const isNumericValue = typeof value === "number";
+  const isPreset = TIMEFRAMES.some(
+    (tf) => tf.id === value || (isNumericValue && tf.days === value && tf.intervalMinutes >= 1440)
+  );
 
   function applyCustom() {
     const n = Math.round(Number(custom));
@@ -23,14 +26,18 @@ export default function TimeframePicker({ value, onChange }) {
           <button
             key={tf.id}
             type="button"
-            className={`tf-chip ${value === tf.days ? "is-active" : ""}`}
-            onClick={() => onChange(tf.days)}
+            className={`tf-chip ${
+              value === tf.id || (isNumericValue && value === tf.days && tf.intervalMinutes >= 1440) ? "is-active" : ""
+            }`}
+            onClick={() => onChange(tf.id)}
             title={tf.intraday ? t("tf.intraday") : t("tf.daily")}
           >
-            {t(`tf.${tf.id}`)}
+            {t(`tf.${tf.id}`) || tf.label}
           </button>
         ))}
-        {!isPreset && <span className="tf-chip is-active is-custom">{t("tf.days", { n: value })}</span>}
+        {!isPreset && Number.isFinite(Number(value)) && (
+          <span className="tf-chip is-active is-custom">{t("tf.days", { n: value })}</span>
+        )}
       </div>
       <div className="tf-custom">
         <input
