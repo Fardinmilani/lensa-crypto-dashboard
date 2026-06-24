@@ -3,7 +3,7 @@ import { useStaggerReveal } from "../hooks/useAnimations";
 
 const GITHUB = "https://github.com/Fardinmilani";
 const AVATAR = "https://github.com/Fardinmilani.png";
-const STACK = ["React", "Vite", "GSAP", "Lightweight Charts", "Cloudflare Pages", "CoinGecko"];
+const STACK = ["React", "Vite", "GSAP", "Lightweight Charts", "GitHub Pages", "CoinGecko"];
 
 export default function About() {
   const { t } = useI18n();

@@ -1,66 +1,171 @@
-// lib/coingecko.js
-// Thin wrapper around the free CoinGecko public API.
-// No API key needed; CORS is open on the public endpoints.
+// Browser-only market data client for static hosting.
+// Every endpoint below is a public API called directly from the user's browser.
 
-// Same-origin proxy (Vite dev proxy locally, Cloudflare Function in prod).
-// This avoids browser CORS and lets the edge cache responses to reduce 429s.
-const BASE = "/api/cg";
-const BINANCE_BASE = "/api/binance";
-const BYBIT_BASE = "/api/bybit";
-const OKX_BASE = "/api/okx";
-const COINBASE_BASE = "/api/coinbase";
+const API_BASES = {
+  coingecko: "https://api.coingecko.com/api/v3",
+  binance: "https://api.binance.com",
+  bybit: "https://api.bybit.com",
+  okx: "https://www.okx.com",
+  coinbase: "https://api.exchange.coinbase.com",
+};
 
-// In-memory cache + in-flight de-duplication to respect the free-tier limit.
+export const SOURCE_STATUS = {
+  HEALTHY: "Healthy",
+  LIMITED: "Limited",
+  FAILED: "Failed",
+  CORS_BLOCKED: "CORS blocked",
+  RATE_LIMITED: "Rate limited",
+};
+
+const SOURCE_LABELS = {
+  coingecko: "CoinGecko composite",
+  binance: "Binance spot",
+  bybit: "Bybit spot",
+  okx: "OKX spot",
+  coinbase: "Coinbase spot",
+};
+
+export const CHART_SOURCES = [
+  { id: "coingecko", label: SOURCE_LABELS.coingecko },
+  { id: "binance", label: SOURCE_LABELS.binance },
+  { id: "bybit", label: SOURCE_LABELS.bybit },
+  { id: "okx", label: SOURCE_LABELS.okx },
+  { id: "coinbase", label: SOURCE_LABELS.coinbase },
+];
+
 const cache = new Map();
 const inflight = new Map();
+const sourceHealth = new Map(
+  Object.keys(API_BASES).map((id) => [
+    id,
+    {
+      id,
+      label: SOURCE_LABELS[id],
+      status: SOURCE_STATUS.LIMITED,
+      message: "Not checked yet in this browser session.",
+      checkedAt: null,
+    },
+  ])
+);
+
 const CACHE_TTL_MS = 60_000;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const publicPath = (...parts) => `/${parts.join("/")}`;
 
-async function cachedFetch(url, ttl = CACHE_TTL_MS) {
+export function getSourceHealth(source) {
+  if (source) return sourceHealth.get(source) || null;
+  return Object.fromEntries(sourceHealth.entries());
+}
+
+function setSourceHealth(source, status, message = "") {
+  const current = sourceHealth.get(source) || { id: source, label: SOURCE_LABELS[source] || source };
+  const next = { ...current, status, message, checkedAt: new Date().toISOString() };
+  sourceHealth.set(source, next);
+  return next;
+}
+
+function classifyFetchError(err) {
+  if (err?.status === 429) return SOURCE_STATUS.RATE_LIMITED;
+  if (err?.status) return SOURCE_STATUS.FAILED;
+  if (err instanceof TypeError || /failed to fetch|networkerror|load failed/i.test(String(err?.message || err))) {
+    return SOURCE_STATUS.CORS_BLOCKED;
+  }
+  return SOURCE_STATUS.FAILED;
+}
+
+function friendlyMessage(source, status, err) {
+  if (status === SOURCE_STATUS.CORS_BLOCKED) {
+    return `${SOURCE_LABELS[source] || source} is blocked by browser CORS or network policy.`;
+  }
+  if (status === SOURCE_STATUS.RATE_LIMITED) {
+    return `${SOURCE_LABELS[source] || source} is rate limited.`;
+  }
+  if (err?.status) return `${SOURCE_LABELS[source] || source} returned HTTP ${err.status}.`;
+  return `${SOURCE_LABELS[source] || source} is unavailable.`;
+}
+
+async function cachedJson(source, path, ttl = CACHE_TTL_MS) {
+  const url = path.startsWith("http") ? path : `${API_BASES[source]}${path}`;
   const hit = cache.get(url);
   if (hit && Date.now() - hit.time < ttl) return hit.data;
   if (inflight.has(url)) return inflight.get(url);
 
   const promise = (async () => {
     let lastErr;
-    // Retry with backoff on transient rate-limits.
     for (let attempt = 0; attempt < 3; attempt++) {
-      const res = await fetch(url, { headers: { Accept: "application/json" } });
-      if (res.ok) {
-        const data = await res.json();
-        cache.set(url, { data, time: Date.now() });
-        return data;
+      try {
+        const res = await fetch(url, {
+          mode: "cors",
+          headers: { Accept: "application/json" },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          cache.set(url, { data, time: Date.now() });
+          setSourceHealth(source, SOURCE_STATUS.HEALTHY, "Direct browser fetch succeeded.");
+          return data;
+        }
+        const err = new Error(`HTTP ${res.status}`);
+        err.status = res.status;
+        if (res.status === 429) {
+          lastErr = err;
+          setSourceHealth(source, SOURCE_STATUS.RATE_LIMITED, friendlyMessage(source, SOURCE_STATUS.RATE_LIMITED, err));
+          await sleep(900 * (attempt + 1));
+          continue;
+        }
+        throw err;
+      } catch (err) {
+        lastErr = err;
+        const status = classifyFetchError(err);
+        setSourceHealth(source, status, friendlyMessage(source, status, err));
+        if (status !== SOURCE_STATUS.RATE_LIMITED) break;
       }
-      if (res.status === 429) {
-        lastErr = new Error("rate-limit");
-        await sleep(900 * (attempt + 1));
-        continue;
-      }
-      throw new Error(`CoinGecko request failed: ${res.status}`);
     }
-    // If we exhausted retries but have a stale cache entry, serve it.
-    if (hit) return hit.data;
-    throw lastErr || new Error("CoinGecko request failed");
+    if (hit) {
+      setSourceHealth(source, SOURCE_STATUS.LIMITED, "Serving cached data because the live request failed.");
+      return hit.data;
+    }
+    throw lastErr || new Error(`${source} request failed`);
   })().finally(() => inflight.delete(url));
 
   inflight.set(url, promise);
   return promise;
 }
 
+function withMeta(candles, meta) {
+  Object.defineProperty(candles, "meta", {
+    value: meta,
+    enumerable: false,
+    configurable: true,
+  });
+  return candles;
+}
+
+function failureMeta(source, err) {
+  const status = classifyFetchError(err);
+  return {
+    source,
+    sourceLabel: SOURCE_LABELS[source] || source,
+    status,
+    message: friendlyMessage(source, status, err),
+  };
+}
+
 /** Current price + 24h stats for a list of coin ids. */
 export async function getMarketSnapshot(ids) {
   const idsParam = ids.join(",");
-  const url = `${BASE}/coins/markets?vs_currency=usd&ids=${idsParam}&order=market_cap_desc&price_change_percentage=24h,7d`;
-  return cachedFetch(url);
+  const data = await cachedJson(
+    "coingecko",
+    `/coins/markets?vs_currency=usd&ids=${idsParam}&order=market_cap_desc&price_change_percentage=24h,7d`
+  );
+  return data;
 }
 
-/** Free-text coin search → list of matches. */
+/** Free-text coin search -> list of matches. */
 export async function searchCoins(query) {
   const q = query.trim();
   if (!q) return [];
-  const url = `${BASE}/search?query=${encodeURIComponent(q)}`;
-  const data = await cachedFetch(url, 120_000);
+  const data = await cachedJson("coingecko", `/search?query=${encodeURIComponent(q)}`, 120_000);
   return (data.coins || []).map((c) => ({
     id: c.id,
     symbol: (c.symbol || "").toUpperCase(),
@@ -73,8 +178,11 @@ export async function searchCoins(query) {
 
 /** Rich metadata for a single coin (price, image, links). */
 export async function getCoinDetail(id, ttl = 15_000) {
-  const url = `${BASE}/coins/${id}?localization=false&tickers=false&market_data=true&community_data=false&developer_data=false&sparkline=false`;
-  const data = await cachedFetch(url, ttl);
+  const data = await cachedJson(
+    "coingecko",
+    `/coins/${id}?localization=false&tickers=false&market_data=true&community_data=false&developer_data=false&sparkline=false`,
+    ttl
+  );
   return {
     id: data.id,
     symbol: (data.symbol || "").toUpperCase(),
@@ -93,7 +201,6 @@ export async function getCoinDetail(id, ttl = 15_000) {
   };
 }
 
-// CoinGecko's OHLC endpoint only accepts these `days` values on the free tier.
 const OHLC_ALLOWED = [1, 7, 14, 30, 90, 180, 365];
 
 export const TIMEFRAMES = [
@@ -123,29 +230,22 @@ export function resolveTimeframe(value) {
   return { id: `custom-${days}`, label: `${days}D`, intervalMinutes: 1440, days };
 }
 
-export const CHART_SOURCES = [
-  { id: "coingecko", label: "CoinGecko composite" },
-  { id: "binance", label: "Binance spot" },
-  { id: "bybit", label: "Bybit spot" },
-  { id: "okx", label: "OKX spot" },
-  { id: "coinbase", label: "Coinbase spot" },
-];
-
 export function defaultPairForSymbol(symbol) {
   return `${String(symbol || "BTC").replace(/[^a-z0-9]/gi, "").toUpperCase()}USDT`;
 }
 
-/**
- * Candle fetcher that works for any coin and preset/custom timeframe.
- * - For the values CoinGecko's OHLC endpoint supports natively, we use true OHLC.
- * - For TradingView-style intervals and custom day counts, we fetch the
- *   available price series and bucket it into OHLC candles at the requested
- *   interval. The source granularity is bounded by CoinGecko's public data.
- *
- * @param {string} id coin id, e.g. "bitcoin"
- * @param {string|number} days timeframe id or custom lookback window in days
- */
 export async function getCandles(id, days = 90) {
+  const candles = await getCoinGeckoCandles(id, days);
+  return withMeta(candles, {
+    source: "coingecko",
+    sourceLabel: SOURCE_LABELS.coingecko,
+    status: getSourceHealth("coingecko")?.status || SOURCE_STATUS.HEALTHY,
+    confidence: 1,
+    warnings: [],
+  });
+}
+
+async function getCoinGeckoCandles(id, days = 90) {
   const tf = resolveTimeframe(days);
   const d = Math.max(1, Math.round(tf.days));
 
@@ -155,8 +255,7 @@ export async function getCandles(id, days = 90) {
   }
 
   if (OHLC_ALLOWED.includes(d)) {
-    const url = `${BASE}/coins/${id}/ohlc?vs_currency=usd&days=${d}`;
-    const data = await cachedFetch(url);
+    const data = await cachedJson("coingecko", `/coins/${id}/ohlc?vs_currency=usd&days=${d}`);
     return data.map(([time, open, high, low, close]) => ({
       time: Math.floor(time / 1000),
       open,
@@ -165,53 +264,48 @@ export async function getCandles(id, days = 90) {
       close,
     }));
   }
-  // Arbitrary window → synthesize candles from the price series.
+
   const prices = await getPriceSeries(id, d);
   return bucketCandlesByInterval(prices, tf.intervalMinutes);
 }
 
 export async function getChartCandles({ id, symbol, timeframe = "4h", source = "coingecko", pair }) {
-  if (source === "binance") {
+  const requested = source || "coingecko";
+  const warnings = [];
+  const candidates =
+    requested === "coingecko"
+      ? [resolveTimeframe(timeframe).intervalMinutes < 1440 ? "binance" : "coingecko", "coingecko"]
+      : [requested, "binance", "coingecko"];
+
+  const uniqueCandidates = [...new Set(candidates)];
+  for (const candidate of uniqueCandidates) {
     try {
-      return await getBinanceCandles(pair || defaultPairForSymbol(symbol), timeframe);
-    } catch {
-      return getCandles(id, timeframe);
-    }
-  }
-  if (source === "bybit") {
-    try {
-      return await getBybitCandles(pair || defaultPairForSymbol(symbol), timeframe);
-    } catch {
-      return getCandles(id, timeframe);
-    }
-  }
-  if (source === "okx") {
-    try {
-      return await getOkxCandles(pair || defaultPairForSymbol(symbol), timeframe);
-    } catch {
-      return getCandles(id, timeframe);
-    }
-  }
-  if (source === "coinbase") {
-    try {
-      return await getCoinbaseCandles(pair || defaultPairForSymbol(symbol), timeframe);
-    } catch {
-      return getCandles(id, timeframe);
+      const candles =
+        candidate === "binance"
+          ? await getBinanceCandles(pair || defaultPairForSymbol(symbol), timeframe)
+          : candidate === "bybit"
+            ? await getBybitCandles(pair || defaultPairForSymbol(symbol), timeframe)
+            : candidate === "okx"
+              ? await getOkxCandles(pair || defaultPairForSymbol(symbol), timeframe)
+              : candidate === "coinbase"
+                ? await getCoinbaseCandles(pair || defaultPairForSymbol(symbol), timeframe)
+                : await getCoinGeckoCandles(id, timeframe);
+
+      return withMeta(candles, {
+        source: candidate,
+        sourceLabel: SOURCE_LABELS[candidate],
+        requestedSource: requested,
+        status: getSourceHealth(candidate)?.status || SOURCE_STATUS.HEALTHY,
+        confidence: Math.max(0.55, 1 - warnings.length * 0.2),
+        warnings,
+      });
+    } catch (err) {
+      warnings.push(failureMeta(candidate, err));
     }
   }
 
-  // For coingecko (composite): if timeframe is intraday (< 1D), to avoid gaps
-  // we automatically fetch from Binance spot.
-  const tf = resolveTimeframe(timeframe);
-  if (tf.intervalMinutes < 1440) {
-    try {
-      return await getBinanceCandles(defaultPairForSymbol(symbol), timeframe);
-    } catch {
-      return getCandles(id, timeframe);
-    }
-  }
-
-  return getCandles(id, timeframe);
+  const message = warnings.map((w) => `${w.sourceLabel}: ${w.status}`).join("; ");
+  throw new Error(`No browser-accessible market source is available. ${message}`);
 }
 
 async function getBybitCandles(pair, timeframe) {
@@ -219,8 +313,7 @@ async function getBybitCandles(pair, timeframe) {
   const interval = bybitInterval(tf.id);
   const symbol = String(pair || "").replace(/[^a-z0-9]/gi, "").toUpperCase();
   if (!symbol) throw new Error("Missing Bybit symbol");
-  const url = `${BYBIT_BASE}/v5/market/kline?category=spot&symbol=${symbol}&interval=${interval}&limit=1000`;
-  const resData = await cachedFetch(url, Math.min(CACHE_TTL_MS, 12_000));
+  const resData = await cachedJson("bybit", `/v5/market/kline?category=spot&symbol=${symbol}&interval=${interval}&limit=1000`, 12_000);
   if (resData.retCode !== 0 || !resData.result || !Array.isArray(resData.result.list)) {
     throw new Error("Invalid Bybit response");
   }
@@ -259,29 +352,9 @@ function bybitInterval(id) {
 async function getOkxCandles(pair, timeframe) {
   const tf = resolveTimeframe(timeframe);
   const bar = okxInterval(tf.id);
-  let symbol = String(pair || "").replace(/[^a-z0-9]/gi, "").toUpperCase();
+  const symbol = pairToDashSymbol(pair);
   if (!symbol) throw new Error("Missing OKX symbol");
-  if (!symbol.includes("-")) {
-    const commonQuotes = ["USDT", "USDC", "FDUSD", "BTC", "ETH", "USD", "EUR"];
-    let mapped = false;
-    for (const q of commonQuotes) {
-      if (symbol.endsWith(q) && symbol.length > q.length) {
-        symbol = `${symbol.slice(0, -q.length)}-${q}`;
-        mapped = true;
-        break;
-      }
-    }
-    if (!mapped) {
-      if (symbol.endsWith("USDT") || symbol.endsWith("USDC")) {
-        symbol = `${symbol.slice(0, -4)}-${symbol.slice(-4)}`;
-      } else {
-        symbol = `${symbol.slice(0, 3)}-${symbol.slice(3)}`;
-      }
-    }
-  }
-
-  const url = `${OKX_BASE}/api/v5/market/candles?instId=${symbol}&bar=${bar}&limit=1000`;
-  const resData = await cachedFetch(url, Math.min(CACHE_TTL_MS, 12_000));
+  const resData = await cachedJson("okx", `${publicPath("api", "v5", "market", "candles")}?instId=${symbol}&bar=${bar}&limit=1000`, 12_000);
   if (resData.code !== "0" || !Array.isArray(resData.data)) {
     throw new Error("Invalid OKX response");
   }
@@ -320,28 +393,10 @@ function okxInterval(id) {
 async function getCoinbaseCandles(pair, timeframe) {
   const tf = resolveTimeframe(timeframe);
   const granularity = coinbaseGranularity(tf.id);
-  let symbol = String(pair || "").replace(/[^a-z0-9]/gi, "").toUpperCase();
+  const symbol = pairToDashSymbol(pair, ["USDT", "USDC", "USD", "EUR", "BTC"]);
   if (!symbol) throw new Error("Missing Coinbase symbol");
-  if (!symbol.includes("-")) {
-    const commonQuotes = ["USDT", "USDC", "USD", "EUR", "BTC"];
-    let mapped = false;
-    for (const q of commonQuotes) {
-      if (symbol.endsWith(q) && symbol.length > q.length) {
-        symbol = `${symbol.slice(0, -q.length)}-${q}`;
-        mapped = true;
-        break;
-      }
-    }
-    if (!mapped) {
-      symbol = `${symbol.slice(0, 3)}-${symbol.slice(3)}`;
-    }
-  }
-
-  const url = `${COINBASE_BASE}/products/${symbol}/candles?granularity=${granularity}`;
-  const data = await cachedFetch(url, Math.min(CACHE_TTL_MS, 12_000));
-  if (!Array.isArray(data)) {
-    throw new Error("Invalid Coinbase response");
-  }
+  const data = await cachedJson("coinbase", `/products/${symbol}/candles?granularity=${granularity}`, 12_000);
+  if (!Array.isArray(data)) throw new Error("Invalid Coinbase response");
   return [...data].reverse().map((k) => ({
     time: Number(k[0]),
     low: Number(k[1]),
@@ -371,17 +426,15 @@ function coinbaseGranularity(id) {
   return map[id] || 86400;
 }
 
-// Keep the old name as an alias so nothing breaks.
 export const getOHLC = getCandles;
 
 /** Raw price series [{ time(ms), price }] from market_chart. */
 export async function getPriceSeries(id, days = 90) {
-  const url = `${BASE}/coins/${id}/market_chart?vs_currency=usd&days=${Math.max(1, Math.round(days))}`;
-  const data = await cachedFetch(url);
+  const data = await cachedJson("coingecko", `/coins/${id}/market_chart?vs_currency=usd&days=${Math.max(1, Math.round(days))}`);
   return (data.prices || []).map(([t, price]) => ({ time: t, price }));
 }
 
-/** Close-only series (seconds + value) — handy for charts/forecasting. */
+/** Close-only series (seconds + value) for charts/forecasting. */
 export async function getCloseSeries(id, days = 90) {
   const prices = await getPriceSeries(id, days);
   return prices.map((p) => ({ time: Math.floor(p.time / 1000), value: p.price }));
@@ -393,8 +446,7 @@ async function getBinanceCandles(pair, timeframe) {
   const limit = binanceLimit(tf);
   const symbol = String(pair || "").replace(/[^a-z0-9]/gi, "").toUpperCase();
   if (!symbol) throw new Error("Missing Binance symbol");
-  const url = `${BINANCE_BASE}/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
-  const data = await cachedFetch(url, Math.min(CACHE_TTL_MS, 12_000));
+  const data = await cachedJson("binance", `${publicPath("api", "v3", "klines")}?symbol=${symbol}&interval=${interval}&limit=${limit}`, 12_000);
   if (!Array.isArray(data)) throw new Error("Invalid Binance response");
   return data.map((k) => ({
     time: Math.floor(k[0] / 1000),
@@ -431,6 +483,16 @@ function binanceInterval(id) {
 function binanceLimit(tf) {
   const approx = Math.ceil((tf.days * 24 * 60) / Math.max(1, tf.intervalMinutes));
   return Math.min(1000, Math.max(80, approx));
+}
+
+function pairToDashSymbol(pair, quotes = ["USDT", "USDC", "FDUSD", "BTC", "ETH", "USD", "EUR"]) {
+  const raw = String(pair || "").toUpperCase();
+  if (raw.includes("-")) return raw.replace(/[^A-Z0-9-]/g, "");
+  const symbol = raw.replace(/[^A-Z0-9]/g, "");
+  for (const q of quotes) {
+    if (symbol.endsWith(q) && symbol.length > q.length) return `${symbol.slice(0, -q.length)}-${q}`;
+  }
+  return symbol.length > 3 ? `${symbol.slice(0, 3)}-${symbol.slice(3)}` : symbol;
 }
 
 function bucketCandlesByInterval(prices, intervalMinutes) {

@@ -1,66 +1,72 @@
-# سامانه تصمیم‌یاری کریپتو
+# Lensa Crypto Dashboard
 
-ابزار تحلیلی شخصی برای رصد بازار کریپتو — **بدون سیگنال خرید/فروش**. این پروژه به‌جای پیش‌بینی قیمت، چهار ابزار شفاف و قابل‌بررسی در اختیارت می‌گذارد تا خودت تصمیم بگیری.
+Lensa is a static Vite + React crypto market analysis app. It is designed for GitHub Pages deployment from the root of a custom domain, for example `https://lensa.example.com`, with DNS managed separately through Cloudflare.
 
-## ماژول‌ها
+The production app is front-end-only. It does not use backend routes, Cloudflare Workers, Pages Functions, server proxies, private API keys, databases, exchange account connections, order execution, ML training, or always-on server alerts.
 
-| بخش | کاری که می‌کند | کاری که نمی‌کند |
-|---|---|---|
-| **داشبورد** | قیمت لحظه‌ای ۵ کوین اصلی (CoinGecko)، چارت زنده (TradingView)، اخبار ترکیبی از ۳ منبع RSS | هیچ سیگنال خرید/فروش یا برچسب احساسی روی اخبار نمی‌گذارد |
-| **بک‌تست** | اجرای دو استراتژی قانون‌محور (تقاطع SMA، آستانه RSI) روی داده‌ی تاریخی واقعی و مقایسه با خرید-و-نگهداری | نتیجه‌ی گذشته را به آینده تعمیم نمی‌دهد — همیشه با هشدار صریح نمایش داده می‌شود |
-| **مدیریت ریسک** | محاسبه‌ی حجم پوزیشن بر اساس % ریسک، پیشنهاد حد ضرر بر اساس ATR واقعی، نسبت ریسک:ریوارد | هیچ عددی را پیش‌بینی نمی‌کند — همه‌چیز فرمول استاندارد روی ورودی‌های خودت است |
+## Features
 
-## معماری فنی
+| Area | Supported in static mode | Limitation |
+| --- | --- | --- |
+| Overview | Watchlist ticker, coin search, public market stats, interactive charting, drawing tools | Public APIs can be CORS blocked or rate limited by the provider |
+| Market data | Direct browser fetches to public sources such as CoinGecko, Binance, Bybit, OKX, and Coinbase where available | If a provider fails, Lensa marks it unavailable and falls back when possible |
+| Analysis | Long/Short style decision support, adaptive price precision, risk engine, Monte Carlo, lightweight backtesting, Decision Center workflows | Confidence is reduced when data is stale, limited, or served by a fallback |
+| News | Static links to external market news sources and query-specific Google News search | Browser RSS aggregation is disabled because most RSS feeds do not support CORS |
+| Local tools | Watchlist, journal/report storage, in-browser alerts while the app is open | No always-on server alerts while the browser tab is closed |
 
-- **Frontend:** React 19 + Vite — کاملاً سمت کلاینت، بدون بک‌اند جدا
-- **چارت بصری:** TradingView Advanced Chart Widget (iframe)
-- **داده‌ی عددی:** CoinGecko Public API (رایگان، بدون نیاز به کلید)
-- **اخبار:** سه فید RSS (CoinDesk, Cointelegraph, Decrypt) که توسط یک **Cloudflare Pages Function** (`functions/api/news.js`) واکشی، پارس، و یکجا (deduplicated) برگردانده می‌شوند — این تنها بخش «سمت سرور» پروژه است و صرفاً برای دور زدن محدودیت CORS مرورگر لازم بود.
-- **چارت بک‌تست:** `lightweight-charts` (همان کتابخانه‌ی TradingView، نسخه‌ی سبک و رایگان)
+## Static Data Policy
 
-## اجرای محلی
+All production data requests originate from the browser and target public third-party APIs directly. The app keeps an in-memory cache and in-flight request de-duplication to reduce repeated calls.
+
+Source health states are surfaced in the UI:
+
+- `Healthy`
+- `Limited`
+- `Failed`
+- `CORS blocked`
+- `Rate limited`
+
+When a source fails, the app does not crash. It shows a user-facing warning, marks that source health, attempts another public source where possible, and lowers the confidence shown for related chart analysis.
+
+## Local Development
 
 ```bash
 npm install
 npm run dev
 ```
 
-⚠️ نکته: در حالت `npm run dev` معمولی (فقط Vite)، مسیر `/api/news` کار نمی‌کند چون Cloudflare Pages Function نیاز به محیط Wrangler دارد. برای تست کامل از جمله اخبار:
+There is no local API proxy. Development and production both use the same browser-only data path.
+
+## Build And Preview
 
 ```bash
-npm install -g wrangler
 npm run build
-wrangler pages dev dist
+npm run preview
 ```
 
-## دیپلوی روی Cloudflare Pages
+The Vite config uses `base: "/"`, which is compatible with a custom domain served from the root.
 
-۱. ریپازیتوری را به GitHub پوش کن (مثل روند fardinmilani.ir).
-۲. در Cloudflare Pages یک پروژه‌ی جدید از روی همین ریپازیتوری بساز.
-۳. تنظیمات بیلد:
-   - **Build command:** `npm run build`
-   - **Output directory:** `dist`
-۴. پوشه‌ی `functions/` به‌صورت خودکار توسط Cloudflare Pages شناسایی و به‌عنوان Pages Function دیپلوی می‌شود — هیچ تنظیم اضافه‌ای لازم نیست.
+## GitHub Pages Deployment
 
-## محدودیت‌های شناخته‌شده (مهم)
+1. Push the repository to GitHub.
+2. Configure GitHub Pages to publish the built `dist` folder, usually through a GitHub Actions workflow that runs `npm ci` and `npm run build`.
+3. Add your custom domain in GitHub Pages settings.
+4. In Cloudflare DNS, point the hostname to GitHub Pages using the records recommended by GitHub.
 
-- **CoinGecko Free Tier:** نرخ درخواست محدود دارد (rate limit). در کد یک کش ۳۰ ثانیه‌ای ساده گذاشته شده تا فشار کمتر شود، اما در ترافیک بالا ممکن است نیاز به ارتقا به پلن Demo/Paid یا جابجایی به Binance API باشد.
-- **داده‌ی OHLC رایگان:** گرانولاریتی کندل‌ها (روزانه/۴ساعته/۳۰دقیقه‌ای) بر اساس بازه‌ی انتخابی به‌صورت خودکار توسط CoinGecko تعیین می‌شود، نه دستی.
-- **فیدهای RSS:** اگر یک منبع تغییر ساختار دهد یا غیرفعال شود، فقط همان منبع از نتایج حذف می‌شود (مدیریت خطا per-feed با `Promise.allSettled`)؛ بقیه‌ی فیدها کار می‌کنند.
-- **استراتژی‌های بک‌تست:** فقط دو الگوی کلاسیک (SMA Crossover, RSI Threshold) پیاده‌سازی شده — افزودن استراتژی جدید یعنی اضافه کردن یک تابع `generateSignals` در `src/lib/strategies.js`.
+No `functions/` directory, Pages Function, Worker, backend route, or production proxy is required.
 
-## ساختار پوشه‌ها
+## Project Structure
 
-```
+```text
 src/
-  lib/           ← منطق خالص (بدون UI): coingecko.js, risk.js, strategies.js, backtest.js, news.js
-  hooks/         ← useMarketSnapshot.js (polling قیمت زنده)
-  components/    ← TickerTape, TradingViewChart, NewsFeed, EquityChart
-  pages/         ← Dashboard, Backtest, RiskTools
-functions/api/
-  news.js        ← Cloudflare Pages Function (تنها بخش سمت سرور)
+  components/    UI components such as charts, ticker, news links, reports
+  context/       active coin state
+  hooks/         local storage, animations, market polling
+  i18n/          bilingual app strings
+  lib/           browser-only market client, risk, forecast, reports, backtest
+  pages/         dashboard, forecast, backtest, risk, about
 ```
 
-## یادآوری
+## Reminder
 
-این ابزار صرفاً برای تحلیل و آموزش طراحی شده و **توصیه‌ی مالی محسوب نمی‌شود**. تمام پارامترها (استراتژی، حجم پوزیشن، حد ضرر) را خودت تعیین می‌کنی؛ سیستم فقط محاسبات شفاف روی ورودی‌های تو انجام می‌دهد.
+Lensa is for analysis and education only. It is not financial advice, it does not connect to real exchange accounts, and it cannot execute trades.

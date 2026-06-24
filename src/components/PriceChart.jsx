@@ -51,6 +51,7 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
   const [activeSettings, setActiveSettings] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [sourceMeta, setSourceMeta] = useState(null);
   const [last, setLast] = useState(null);
   const [drawTool, setDrawTool] = useState("select");
   const [drawStyle, setDrawStyle] = useLocalStorageState("lensa.chartDrawingStyle", {
@@ -101,10 +102,12 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
     (async () => {
       setLoading(true);
       setError(null);
+      setSourceMeta(null);
       try {
         const candles = await getChartCandles({ id: coinId, symbol, timeframe: days, source, pair });
         if (cancelled || !wrapRef.current) return;
         if (!candles.length) throw new Error(t("chart.noData"));
+        setSourceMeta(candles.meta || null);
 
         wrapRef.current.innerHTML = "";
         chart = createChart(wrapRef.current, {
@@ -134,6 +137,7 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
       } catch (err) {
         if (!cancelled) {
           setError(err.message);
+          setSourceMeta(null);
           setLoading(false);
         }
       }
@@ -299,10 +303,25 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
 
       <div className="price-chart__legend">
         <span><i className="dot dot--gold" /> {t("chart.indicators")}: {normalizedIndicators.length}</span>
+        {sourceMeta && (
+          <span className={`source-health source-health--${statusClass(sourceMeta.status)}`}>
+            {sourceMeta.sourceLabel}: {sourceMeta.status} · confidence {Math.round((sourceMeta.confidence ?? 1) * 100)}%
+          </span>
+        )}
         {last != null && <span className="num">${last.toLocaleString("en-US", { maximumFractionDigits: 6 })}</span>}
       </div>
+      {sourceMeta?.warnings?.length > 0 && (
+        <div className="source-warning">
+          {sourceMeta.warnings.map((warning) => `${warning.sourceLabel}: ${warning.status}`).join(" · ")}
+          {sourceMeta.source && ` · using ${sourceMeta.sourceLabel} fallback`}
+        </div>
+      )}
     </div>
   );
+}
+
+function statusClass(status = "") {
+  return status.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
 function IndicatorEditor({ item, active, onToggleSettings, onChange, onParamChange, onRemove, t }) {

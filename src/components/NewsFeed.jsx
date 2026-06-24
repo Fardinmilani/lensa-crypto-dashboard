@@ -66,6 +66,7 @@ export default function NewsFeed({ query = "", coinSymbol = "" }) {
 
       {loading && <p className="news-loading">{t("news.loading")}</p>}
       {error && !loading && <p className="news-error">{t("news.error", { e: error })}</p>}
+      {news?.warning && !loading && <p className="news-warning">{news.warning}</p>}
 
       {showGlobalFallback && (
         <p className="news-note">{t("news.fallback", { sym: coinSymbol })}</p>
