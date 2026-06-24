@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AreaSeries, BarSeries, createChart, CandlestickSeries, HistogramSeries, LineSeries } from "lightweight-charts";
 import { getChartCandles, resolveTimeframe } from "../lib/coingecko";
+import { formatPrice } from "../lib/priceFormat";
+import { useMarket } from "../context/MarketContext";
 import { bollinger, ema, macd, roc, rsi, sma } from "../lib/strategies";
 import { useI18n } from "../i18n/langStore";
 import { useLocalStorageState } from "../hooks/useLocalStorageState";
@@ -38,8 +40,9 @@ const DRAWING_TOOLS = [
   { id: "ruler", icon: "⟺", label: "Measure" },
 ];
 
-export default function PriceChart({ coinId, symbol, days, source = "coingecko", pair = "", chartType = "candles" }) {
+export default function PriceChart({ coinId, symbol, days, source = "coingecko", pair = "", marketType = "Spot", chartType = "candles" }) {
   const { t } = useI18n();
+  const { market, updateFromCandles } = useMarket();
   const wrapRef = useRef(null);
   const overlayRef = useRef(null);
   const chartApiRef = useRef(null);
@@ -61,7 +64,7 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
   });
   const [draftPoint, setDraftPoint] = useState(null);
   const normalizedIndicators = useMemo(() => normalizeIndicators(indicators), [indicators]);
-  const drawingKey = `lensa.drawings.${source}.${pair || symbol}.${days}`;
+  const drawingKey = `lensa.drawings.${source}.${marketType}.${pair || symbol}.${days}`;
   const drawings = Array.isArray(drawingsByChart[drawingKey]) ? drawingsByChart[drawingKey] : [];
 
   function setChartDrawings(updater) {
@@ -104,10 +107,11 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
       setError(null);
       setSourceMeta(null);
       try {
-        const candles = await getChartCandles({ id: coinId, symbol, timeframe: days, source, pair });
+        const candles = await getChartCandles({ id: coinId, symbol, timeframe: days, source, pair, marketType });
         if (cancelled || !wrapRef.current) return;
         if (!candles.length) throw new Error(t("chart.noData"));
         setSourceMeta(candles.meta || null);
+        updateFromCandles(candles);
 
         wrapRef.current.innerHTML = "";
         chart = createChart(wrapRef.current, {
@@ -124,7 +128,7 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
           crosshair: { mode: 1 },
         });
 
-        const priceFormat = priceFormatFor(candles[candles.length - 1].close);
+        const priceFormat = priceFormatFor(candles[candles.length - 1].close, candles.meta?.precision || market.precision);
         const mainSeries = addMainSeries(chart, chartType, priceFormat);
         mainSeries.setData(toMainSeriesData(candles, chartType));
         addVolumeSeries(chart, candles);
@@ -148,7 +152,7 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
       chartApiRef.current = null;
       mainSeriesRef.current = null;
     };
-  }, [coinId, symbol, days, source, pair, chartType, normalizedIndicators, t]);
+  }, [coinId, symbol, days, source, pair, marketType, chartType, normalizedIndicators, t, updateFromCandles]);
 
   function handleDrawClick(e) {
     if (drawTool === "select" || !overlayRef.current) return;
@@ -308,7 +312,7 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
             {sourceMeta.sourceLabel}: {sourceMeta.status} · confidence {Math.round((sourceMeta.confidence ?? 1) * 100)}%
           </span>
         )}
-        {last != null && <span className="num">${last.toLocaleString("en-US", { maximumFractionDigits: 6 })}</span>}
+        {last != null && <span className="num">{formatPrice(last, market.precision, { currency: true, mode: "trading" })}</span>}
       </div>
       {sourceMeta?.warnings?.length > 0 && (
         <div className="source-warning">
@@ -551,8 +555,9 @@ function toMainSeriesData(candles, chartType) {
   return candles;
 }
 
-function priceFormatFor(price) {
-  const precision = price < 0.01 ? 8 : price < 1 ? 6 : price < 10 ? 4 : 2;
+function priceFormatFor(price, precisionMeta) {
+  const sample = formatPrice(price, precisionMeta, { mode: "trading" }).replace(/,/g, "");
+  const precision = Math.min(12, Math.max(0, (sample.split(".")[1] || "").length));
   return { type: "price", precision, minMove: 10 ** -precision };
 }
 

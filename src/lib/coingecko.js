@@ -4,6 +4,8 @@
 const API_BASES = {
   coingecko: "https://api.coingecko.com/api/v3",
   binance: "https://api.binance.com",
+  binanceUsdFutures: "https://fapi.binance.com",
+  binanceCoinFutures: "https://dapi.binance.com",
   bybit: "https://api.bybit.com",
   okx: "https://www.okx.com",
   coinbase: "https://api.exchange.coinbase.com",
@@ -23,6 +25,8 @@ const SOURCE_LABELS = {
   bybit: "Bybit spot",
   okx: "OKX spot",
   coinbase: "Coinbase spot",
+  binanceUsdFutures: "Binance USD-M futures",
+  binanceCoinFutures: "Binance Coin-M futures",
 };
 
 export const CHART_SOURCES = [
@@ -141,6 +145,23 @@ function withMeta(candles, meta) {
   return candles;
 }
 
+function inferPrecisionFromCandles(candles) {
+  const last = candles?.at?.(-1)?.close;
+  return { tickSize: null, stepSize: null, pricePrecision: null, referencePrice: last ?? null };
+}
+
+async function getPrecisionMetadata(source, pair, marketType = "Spot") {
+  try {
+    if (source === "binance" || source === "binanceUsdFutures" || source === "binanceCoinFutures") return getBinancePrecision(pair, marketType);
+    if (source === "okx") return getOkxPrecision(pair);
+    if (source === "bybit") return getBybitPrecision(pair);
+    if (source === "coinbase") return getCoinbasePrecision(pair);
+  } catch {
+    return {};
+  }
+  return {};
+}
+
 function failureMeta(source, err) {
   const status = classifyFetchError(err);
   return {
@@ -242,6 +263,7 @@ export async function getCandles(id, days = 90) {
     status: getSourceHealth("coingecko")?.status || SOURCE_STATUS.HEALTHY,
     confidence: 1,
     warnings: [],
+    precision: inferPrecisionFromCandles(candles),
   });
 }
 
@@ -269,20 +291,23 @@ async function getCoinGeckoCandles(id, days = 90) {
   return bucketCandlesByInterval(prices, tf.intervalMinutes);
 }
 
-export async function getChartCandles({ id, symbol, timeframe = "4h", source = "coingecko", pair }) {
+export async function getChartCandles({ id, symbol, timeframe = "4h", source = "coingecko", pair, marketType = "Spot" }) {
   const requested = source || "coingecko";
   const warnings = [];
   const candidates =
-    requested === "coingecko"
+    marketType !== "Spot"
+      ? ["binance"]
+      : requested === "coingecko"
       ? [resolveTimeframe(timeframe).intervalMinutes < 1440 ? "binance" : "coingecko", "coingecko"]
       : [requested, "binance", "coingecko"];
 
   const uniqueCandidates = [...new Set(candidates)];
   for (const candidate of uniqueCandidates) {
+    const healthSource = candidate === "binance" ? binancePrecisionSource(marketType) : candidate;
     try {
       const candles =
         candidate === "binance"
-          ? await getBinanceCandles(pair || defaultPairForSymbol(symbol), timeframe)
+          ? await getBinanceCandles(pair || defaultPairForSymbol(symbol), timeframe, marketType)
           : candidate === "bybit"
             ? await getBybitCandles(pair || defaultPairForSymbol(symbol), timeframe)
             : candidate === "okx"
@@ -291,21 +316,78 @@ export async function getChartCandles({ id, symbol, timeframe = "4h", source = "
                 ? await getCoinbaseCandles(pair || defaultPairForSymbol(symbol), timeframe)
                 : await getCoinGeckoCandles(id, timeframe);
 
+      const precisionSource = healthSource;
+      const precision = {
+        ...inferPrecisionFromCandles(candles),
+        ...(await getPrecisionMetadata(precisionSource, pair || defaultPairForSymbol(symbol), marketType)),
+      };
       return withMeta(candles, {
-        source: candidate,
-        sourceLabel: SOURCE_LABELS[candidate],
+        source: healthSource,
+        sourceLabel: SOURCE_LABELS[healthSource],
         requestedSource: requested,
-        status: getSourceHealth(candidate)?.status || SOURCE_STATUS.HEALTHY,
+        status: getSourceHealth(healthSource)?.status || SOURCE_STATUS.HEALTHY,
         confidence: Math.max(0.55, 1 - warnings.length * 0.2),
         warnings,
+        precision,
       });
     } catch (err) {
-      warnings.push(failureMeta(candidate, err));
+      warnings.push(failureMeta(healthSource, err));
     }
   }
 
   const message = warnings.map((w) => `${w.sourceLabel}: ${w.status}`).join("; ");
   throw new Error(`No browser-accessible market source is available. ${message}`);
+}
+
+async function getBinancePrecision(pair, marketType = "Spot") {
+  const source = binancePrecisionSource(marketType);
+  const symbol = binanceSymbolForMarket(pair, marketType);
+  if (!symbol) return {};
+  const path = marketType === "Spot" ? publicPath("api", "v3", "exchangeInfo") : marketType === "Coin-M Futures" ? publicPath("dapi", "v1", "exchangeInfo") : publicPath("fapi", "v1", "exchangeInfo");
+  const data = await cachedJson(source, `${path}?symbol=${symbol}`, 300_000);
+  const info = data?.symbols?.[0];
+  const priceFilter = info?.filters?.find((f) => f.filterType === "PRICE_FILTER");
+  const lotFilter = info?.filters?.find((f) => f.filterType === "LOT_SIZE");
+  return {
+    tickSize: priceFilter?.tickSize,
+    stepSize: lotFilter?.stepSize,
+    pricePrecision: info?.quotePrecision ?? info?.pricePrecision ?? null,
+  };
+}
+
+async function getBybitPrecision(pair) {
+  const symbol = String(pair || "").replace(/[^a-z0-9]/gi, "").toUpperCase();
+  if (!symbol) return {};
+  const data = await cachedJson("bybit", `/v5/market/instruments-info?category=spot&symbol=${symbol}`, 300_000);
+  const info = data?.result?.list?.[0];
+  return {
+    tickSize: info?.priceFilter?.tickSize,
+    stepSize: info?.lotSizeFilter?.basePrecision,
+    pricePrecision: null,
+  };
+}
+
+async function getOkxPrecision(pair) {
+  const symbol = pairToDashSymbol(pair);
+  if (!symbol) return {};
+  const data = await cachedJson("okx", `${publicPath("api", "v5", "public", "instruments")}?instType=SPOT&instId=${symbol}`, 300_000);
+  const info = data?.data?.[0];
+  return {
+    tickSize: info?.tickSz,
+    stepSize: info?.lotSz,
+    pricePrecision: null,
+  };
+}
+
+async function getCoinbasePrecision(pair) {
+  const symbol = pairToDashSymbol(pair, ["USDT", "USDC", "USD", "EUR", "BTC"]);
+  if (!symbol) return {};
+  const data = await cachedJson("coinbase", `/products/${symbol}`, 300_000);
+  return {
+    tickSize: data?.quote_increment,
+    stepSize: data?.base_increment,
+    pricePrecision: null,
+  };
 }
 
 async function getBybitCandles(pair, timeframe) {
@@ -440,13 +522,15 @@ export async function getCloseSeries(id, days = 90) {
   return prices.map((p) => ({ time: Math.floor(p.time / 1000), value: p.price }));
 }
 
-async function getBinanceCandles(pair, timeframe) {
+async function getBinanceCandles(pair, timeframe, marketType = "Spot") {
   const tf = resolveTimeframe(timeframe);
   const interval = binanceInterval(tf.id);
   const limit = binanceLimit(tf);
-  const symbol = String(pair || "").replace(/[^a-z0-9]/gi, "").toUpperCase();
+  const source = binancePrecisionSource(marketType);
+  const symbol = binanceSymbolForMarket(pair, marketType);
   if (!symbol) throw new Error("Missing Binance symbol");
-  const data = await cachedJson("binance", `${publicPath("api", "v3", "klines")}?symbol=${symbol}&interval=${interval}&limit=${limit}`, 12_000);
+  const path = marketType === "Spot" ? publicPath("api", "v3", "klines") : marketType === "Coin-M Futures" ? publicPath("dapi", "v1", "klines") : publicPath("fapi", "v1", "klines");
+  const data = await cachedJson(source, `${path}?symbol=${symbol}&interval=${interval}&limit=${limit}`, 12_000);
   if (!Array.isArray(data)) throw new Error("Invalid Binance response");
   return data.map((k) => ({
     time: Math.floor(k[0] / 1000),
@@ -456,6 +540,21 @@ async function getBinanceCandles(pair, timeframe) {
     close: Number(k[4]),
     volume: Number(k[5]),
   }));
+}
+
+function binancePrecisionSource(marketType) {
+  if (marketType === "USD-M Futures") return "binanceUsdFutures";
+  if (marketType === "Coin-M Futures") return "binanceCoinFutures";
+  return "binance";
+}
+
+function binanceSymbolForMarket(pair, marketType) {
+  const symbol = String(pair || "").replace(/[^a-z0-9]/gi, "").toUpperCase();
+  if (marketType === "Coin-M Futures") {
+    const base = symbol.replace(/(USDT|USDC|BUSD|USD)$/, "");
+    return base ? `${base}USD_PERP` : symbol;
+  }
+  return symbol;
 }
 
 function binanceInterval(id) {

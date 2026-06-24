@@ -1,11 +1,6 @@
 import { useMarketSnapshot } from "../hooks/useMarketSnapshot";
 import { useI18n } from "../i18n/langStore";
-
-function formatPrice(price) {
-  if (price >= 1000) return price.toLocaleString("en-US", { maximumFractionDigits: 0 });
-  if (price >= 1) return price.toFixed(2);
-  return price.toFixed(4);
-}
+import { formatPrice } from "../lib/priceFormat";
 
 export default function TickerTape() {
   const { data, loading, error } = useMarketSnapshot();
@@ -26,7 +21,7 @@ export default function TickerTape() {
         return (
           <div className="ticker-item" key={coin.id}>
             <span className="ticker-symbol">{coin.symbol.toUpperCase()}</span>
-            <span className="ticker-price num">${formatPrice(coin.current_price)}</span>
+            <span className="ticker-price num">{formatPrice(coin.current_price, {}, { currency: true })}</span>
             <span className={`ticker-change num ${isUp ? "up" : "down"}`}>
               {isUp ? "▲" : "▼"} {Math.abs(change).toFixed(2)}%
             </span>

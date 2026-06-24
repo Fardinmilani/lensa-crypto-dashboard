@@ -1,21 +1,19 @@
 import { useState } from "react";
-import { getCandles } from "../lib/coingecko";
+import { getChartCandles } from "../lib/coingecko";
 import { monteCarlo, tradeSetups, annualizedVol, probabilityPriceMap } from "../lib/forecast";
+import { formatUsd } from "../lib/priceFormat";
 import ConeChart from "../components/ConeChart";
 import ReportActions from "../components/ReportActions";
 import TimeframePicker from "../components/TimeframePicker";
+import MarketContextBar from "../components/MarketContextBar";
 import { useCoin } from "../context/coinStore";
+import { useMarket } from "../context/MarketContext";
 import { useI18n } from "../i18n/langStore";
 import { useStaggerReveal, useCountUp } from "../hooks/useAnimations";
 import { useLocalStorageState } from "../hooks/useLocalStorageState";
 
-function fmtPrice(n) {
-  if (n == null) return "—";
-  if (n >= 1) return `$${n.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
-  return `$${n.toLocaleString("en-US", { maximumFractionDigits: 6 })}`;
-}
 function pct(n, d = 1) {
-  if (n == null || !Number.isFinite(n)) return "—";
+  if (n == null || !Number.isFinite(n)) return "-";
   return `${n >= 0 ? "+" : ""}${n.toFixed(d)}%`;
 }
 
@@ -27,8 +25,8 @@ const PRECISION = [
 
 export default function Forecast() {
   const { coin } = useCoin();
+  const { market, setTimeframe, updateFromCandles } = useMarket();
   const { t } = useI18n();
-  const [days, setDays] = useLocalStorageState("lensa.forecast.timeframe", "4h");
   const [horizon, setHorizon] = useLocalStorageState("lensa.forecast.horizon", 30);
   const [method, setMethod] = useLocalStorageState("lensa.forecast.method", "bootstrap");
   const [driftMode, setDriftMode] = useLocalStorageState("lensa.forecast.drift", "historical");
@@ -43,14 +41,20 @@ export default function Forecast() {
     setLoading(true);
     setError(null);
     try {
-      const candles = await getCandles(coin.id, days);
+      const candles = await getChartCandles({
+        id: coin.id,
+        symbol: coin.symbol,
+        timeframe: market.timeframe,
+        source: market.exchange,
+        pair: market.pair,
+        marketType: market.marketType,
+      });
       if (candles.length < 20) throw new Error(t("fc.noData"));
+      updateFromCandles(candles);
       const closes = candles.map((c) => c.close);
       const stepSeconds = Math.max(1, candles[1].time - candles[0].time);
-
       const sim = monteCarlo({ closes, horizon: Number(horizon), sims, method, driftMode });
       if (sim.error) throw new Error(sim.error);
-
       const periodsPerYear = (365 * 86400) / stepSeconds;
       const histTail = candles.slice(-Math.min(candles.length, Math.max(40, horizon)));
       setMc(sim);
@@ -69,13 +73,13 @@ export default function Forecast() {
       setLoading(false);
     }
   }
+
   const report =
     mc && extra
       ? {
           type: "forecast",
           generatedAt: new Date().toISOString(),
-          coin,
-          timeframe: days,
+          marketContext: market,
           horizon,
           method,
           driftMode,
@@ -97,6 +101,7 @@ export default function Forecast() {
   return (
     <div className="forecast-page" ref={reveal}>
       <div className="disclaimer-banner reveal">{t("fc.disclaimer")}</div>
+      <MarketContextBar module="Prediction + Monte Carlo" lastPrice={mc?.current} />
 
       <div className="backtest-controls glass-card reveal">
         <div className="control-group control-group--wide">
@@ -107,12 +112,10 @@ export default function Forecast() {
             <span>{coin.name}</span>
           </div>
         </div>
-
         <div className="control-group">
           <label>{t("fc.horizon")}</label>
           <input type="number" min="5" max="365" value={horizon} onChange={(e) => setHorizon(e.target.value)} />
         </div>
-
         <div className="control-group">
           <label>{t("fc.method")}</label>
           <select value={method} onChange={(e) => setMethod(e.target.value)}>
@@ -120,7 +123,6 @@ export default function Forecast() {
             <option value="gbm">{t("fc.method.gbm")}</option>
           </select>
         </div>
-
         <div className="control-group">
           <label>{t("fc.drift")}</label>
           <select value={driftMode} onChange={(e) => setDriftMode(e.target.value)}>
@@ -128,7 +130,6 @@ export default function Forecast() {
             <option value="zero">{t("fc.drift.zero")}</option>
           </select>
         </div>
-
         <div className="control-group">
           <label>{t("fc.precision")}</label>
           <select value={sims} onChange={(e) => setSims(Number(e.target.value))}>
@@ -139,12 +140,10 @@ export default function Forecast() {
             ))}
           </select>
         </div>
-
         <div className="control-group control-group--full">
           <label>{t("fc.dataRange")}</label>
-          <TimeframePicker value={days} onChange={setDays} />
+          <TimeframePicker value={market.timeframe} onChange={setTimeframe} />
         </div>
-
         <button className="run-btn" onClick={handleRun} disabled={loading}>
           {loading ? t("fc.running") : t("fc.run")}
         </button>
@@ -163,42 +162,37 @@ export default function Forecast() {
           <div className="forecast-hl">
             <HlCard label={t("fc.hl.prob")} value={mc.probProfit * 100} suffix="%" decimals={0} tone={mc.probProfit >= 0.5 ? "up" : "down"} hint={t("fc.hl.probHint", { n: extra.horizonDaysApprox.toFixed(1) })} />
             <HlCard label={t("fc.hl.expected")} value={mc.expectedReturnPct} suffix="%" decimals={1} tone={mc.expectedReturnPct >= 0 ? "up" : "down"} hint={t("fc.hl.expectedHint")} />
-            <HlCard label={t("fc.hl.upside")} value={mc.upside95Pct} suffix="%" decimals={1} tone="up" hint={fmtPrice(mc.dist.p95)} />
-            <HlCard label={t("fc.hl.downside")} value={mc.var5Pct} suffix="%" decimals={1} tone="down" hint={fmtPrice(mc.dist.p5)} />
+            <HlCard label={t("fc.hl.upside")} value={mc.upside95Pct} suffix="%" decimals={1} tone="up" hint={formatUsd(mc.dist.p95, market.precision, { mode: "futures" })} />
+            <HlCard label={t("fc.hl.downside")} value={mc.var5Pct} suffix="%" decimals={1} tone="down" hint={formatUsd(mc.dist.p5, market.precision, { mode: "futures" })} />
             <HlCard label={t("fc.hl.vol")} value={extra.annVol} suffix="%" decimals={0} hint={t("fc.hl.volHint")} />
           </div>
 
           <div className="glass-card probability-card reveal">
-            <div className="panel-header">
-              <h2>{t("fc.prob.title")}</h2>
-            </div>
+            <div className="panel-header"><h2>{t("fc.prob.title")}</h2></div>
             <div className="probability-grid">
               {extra.probabilityMap.map((item) => (
                 <div className="probability-item" key={item.key}>
-                  <strong className="num">{fmtPrice(item.price)}</strong>
-                  <span>
-                    {t(`fc.prob.${item.side}`, {
-                      p: item.probability,
-                      price: fmtPrice(item.price),
-                    })}
-                  </span>
+                  <strong className="num">{formatUsd(item.price, market.precision, { mode: "futures" })}</strong>
+                  <span>{t(`fc.prob.${item.side}`, { p: item.probability, price: formatUsd(item.price, market.precision, { mode: "futures" }) })}</span>
                 </div>
               ))}
             </div>
           </div>
 
           <div className="glass-card chart-card reveal">
+            <MarketContextBar module="Monte Carlo chart" lastPrice={mc.current} />
             <div className="panel-header">
               <div>
                 <h2>{t("fc.cone")}</h2>
                 <span className="panel-subtitle">{t("fc.coneSub")}</span>
               </div>
             </div>
-            <ConeChart history={extra.history} cone={mc.cone} stepSeconds={extra.stepSeconds} />
+            <ConeChart history={extra.history} cone={mc.cone} stepSeconds={extra.stepSeconds} precision={market.precision} />
           </div>
 
           <div className="forecast-cols forecast-cols--single">
             <div className="glass-card reveal">
+              <MarketContextBar module="Long/Short analysis" lastPrice={mc.current} />
               <div className="panel-header">
                 <div>
                   <h2>{t("fc.setups")}</h2>
@@ -220,8 +214,8 @@ export default function Forecast() {
                   <tbody>
                     {extra.setups.map((s, i) => (
                       <tr key={i}>
-                        <td className="num up">{fmtPrice(s.target)}<br /><small>{pct(s.targetPct)}</small></td>
-                        <td className="num down">{fmtPrice(s.stop)}<br /><small>{pct(s.stopPct)}</small></td>
+                        <td className="num up">{formatUsd(s.target, market.precision, { mode: "futures" })}<br /><small>{pct(s.targetPct)}</small></td>
+                        <td className="num down">{formatUsd(s.stop, market.precision, { mode: "futures" })}<br /><small>{pct(s.stopPct)}</small></td>
                         <td className="num"><strong>1:{s.rr?.toFixed(2)}</strong></td>
                         <td className="num up">{(s.pTarget * 100).toFixed(0)}%</td>
                         <td className="num down">{(s.pStop * 100).toFixed(0)}%</td>

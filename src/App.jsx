@@ -3,15 +3,18 @@ import Dashboard from "./pages/Dashboard";
 import Backtest from "./pages/Backtest";
 import Forecast from "./pages/Forecast";
 import RiskTools from "./pages/RiskTools";
+import DecisionCenter from "./pages/DecisionCenter";
 import About from "./pages/About";
 import CoinSearch from "./components/CoinSearch";
 import { CoinProvider } from "./context/CoinContext";
+import { MarketProvider } from "./context/MarketContext";
 import { useI18n } from "./i18n/langStore";
 import "./App.css";
 
 const TABS = [
   { id: "dashboard", labelKey: "tab.dashboard", component: Dashboard, icon: GridIcon },
   { id: "forecast", labelKey: "tab.forecast", component: Forecast, icon: WaveIcon, badge: "Premium" },
+  { id: "decision", labelKey: "tab.decision", component: DecisionCenter, icon: ShieldIcon },
   { id: "backtest", labelKey: "tab.backtest", component: Backtest, icon: ChartIcon },
   { id: "risk", labelKey: "tab.risk", component: RiskTools, icon: ShieldIcon },
   { id: "about", labelKey: "tab.about", component: About, icon: InfoIcon },
@@ -24,11 +27,12 @@ export default function App() {
 
   return (
     <CoinProvider>
-      <div className="app-shell">
-        <div className="aurora" aria-hidden="true">
-          <span className="aurora__blob aurora__blob--gold" />
-          <span className="aurora__blob aurora__blob--violet" />
-        </div>
+      <MarketProvider>
+        <div className="app-shell">
+          <div className="aurora" aria-hidden="true">
+            <span className="aurora__blob aurora__blob--gold" />
+            <span className="aurora__blob aurora__blob--violet" />
+          </div>
 
         <header className="app-header">
           <div className="brand">
@@ -75,7 +79,8 @@ export default function App() {
         </main>
 
         <footer className="app-footer">{t("footer")}</footer>
-      </div>
+        </div>
+      </MarketProvider>
     </CoinProvider>
   );
 }
