@@ -154,6 +154,8 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
       chartApiRef.current = null;
       mainSeriesRef.current = null;
     };
+  // market.precision is a fallback before fetched symbol metadata arrives; including it would refetch after storing that metadata.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [coinId, symbol, days, source, pair, marketType, chartType, normalizedIndicators, t, updateFromCandles]);
 
   function handleDrawClick(e) {

@@ -89,6 +89,7 @@ export function monteCarlo({
 
   // Per-step collection for the percentile cone.
   const stepVals = Array.from({ length: safeHorizon }, () => new Array(safeSims));
+  const paths = Array.from({ length: safeSims }, () => new Array(safeHorizon));
   const finals = new Array(safeSims);
   const maxes = new Array(safeSims);
   const mins = new Array(safeSims);
@@ -109,6 +110,7 @@ export function monteCarlo({
       if (price > hi) hi = price;
       if (price < lo) lo = price;
       stepVals[h][s] = price;
+      paths[s][h] = price;
     }
     finals[s] = price;
     maxes[s] = hi;
@@ -152,6 +154,7 @@ export function monteCarlo({
     cone,
     dist,
     finals,
+    paths,
     maxes,
     mins,
     probProfit,
@@ -186,6 +189,47 @@ export function touchProbability(mc, level, direction) {
     if (direction === "up" ? v >= level : v <= level) count++;
   }
   return count / arr.length;
+}
+
+export function firstTouchProbabilities(mc, { target, stop, side = "Long" }) {
+  if (!mc || mc.error || !Array.isArray(mc.paths)) return null;
+  let targetFirst = 0;
+  let stopFirst = 0;
+  for (const path of mc.paths) {
+    let resolved = false;
+    for (const price of path) {
+      if (side === "Long") {
+        if (price >= target) {
+          targetFirst++;
+          resolved = true;
+          break;
+        }
+        if (price <= stop) {
+          stopFirst++;
+          resolved = true;
+          break;
+        }
+      } else {
+        if (price <= target) {
+          targetFirst++;
+          resolved = true;
+          break;
+        }
+        if (price >= stop) {
+          stopFirst++;
+          resolved = true;
+          break;
+        }
+      }
+    }
+    if (!resolved) {
+      /* unresolved paths count toward neither side */
+    }
+  }
+  return {
+    targetBeforeStop: targetFirst / mc.paths.length,
+    stopBeforeTarget: stopFirst / mc.paths.length,
+  };
 }
 
 /** Probability the FINAL price lands inside [low, high]. */

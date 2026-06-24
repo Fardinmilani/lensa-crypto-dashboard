@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import { createContext, useCallback, useContext, useEffect, useMemo } from "react";
 import { defaultPairForSymbol, getSourceHealth, resolveTimeframe } from "../lib/coingecko";
 import { useLocalStorageState } from "../hooks/useLocalStorageState";
