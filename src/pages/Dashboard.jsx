@@ -3,7 +3,8 @@ import TickerTape from "../components/TickerTape";
 import PriceChart from "../components/PriceChart";
 import NewsFeed from "../components/NewsFeed";
 import TimeframePicker from "../components/TimeframePicker";
-import { getCoinDetail } from "../lib/coingecko";
+import SymbolSearch from "../components/SymbolSearch";
+import { defaultPairForSymbol, getCoinDetail } from "../lib/coingecko";
 import { useCoin } from "../context/coinStore";
 import { useI18n } from "../i18n/langStore";
 import { useStaggerReveal } from "../hooks/useAnimations";
@@ -23,6 +24,9 @@ export default function Dashboard() {
   const { coin } = useCoin();
   const { t } = useI18n();
   const [days, setDays] = useLocalStorageState("lensa.dashboardTimeframe", "4h");
+  const [chartSource, setChartSource] = useLocalStorageState("lensa.chartSource", "binance");
+  const [chartPair, setChartPair] = useLocalStorageState("lensa.chartPair", defaultPairForSymbol(coin.symbol));
+  const [chartType, setChartType] = useLocalStorageState("lensa.chartType", "candles");
   const [detail, setDetail] = useState(null);
   const [updatedAt, setUpdatedAt] = useState(null);
   const reveal = useStaggerReveal([coin.id]);
@@ -49,6 +53,14 @@ export default function Dashboard() {
       window.clearInterval(timer);
     };
   }, [coin.id]);
+
+  useEffect(() => {
+    const base = String(coin.symbol || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const currentBase = String(chartPair || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (!currentBase.startsWith(base)) {
+      setChartPair(defaultPairForSymbol(coin.symbol));
+    }
+  }, [coin.symbol, setChartPair, chartPair]);
 
   const change24 = detail?.change24h;
   const up = (change24 ?? 0) >= 0;
@@ -91,8 +103,35 @@ export default function Dashboard() {
           <div className="panel-header">
             <h2>{t("chart.title", { sym: coin.symbol })}</h2>
           </div>
-          <TimeframePicker value={days} onChange={setDays} />
-          <PriceChart coinId={coin.id} symbol={coin.symbol} days={days} />
+          <div className="chart-toolbar no-print">
+            <TimeframePicker value={days} onChange={setDays} />
+            <SymbolSearch
+              coin={coin}
+              source={chartSource}
+              pair={chartPair}
+              onSelect={({ source, pair }) => {
+                setChartSource(source);
+                setChartPair(pair);
+              }}
+            />
+            <div className="chart-toolbar__field">
+              <label>{t("chart.type")}</label>
+              <select value={chartType} onChange={(e) => setChartType(e.target.value)}>
+                <option value="candles">{t("chart.type.candles")}</option>
+                <option value="bars">{t("chart.type.bars")}</option>
+                <option value="line">{t("chart.type.line")}</option>
+                <option value="area">{t("chart.type.area")}</option>
+              </select>
+            </div>
+          </div>
+          <PriceChart
+            coinId={coin.id}
+            symbol={coin.symbol}
+            days={days}
+            source={chartSource}
+            pair={chartPair}
+            chartType={chartType}
+          />
         </div>
 
         <div className="reveal">

@@ -5,6 +5,10 @@
 // Same-origin proxy (Vite dev proxy locally, Cloudflare Function in prod).
 // This avoids browser CORS and lets the edge cache responses to reduce 429s.
 const BASE = "/api/cg";
+const BINANCE_BASE = "/api/binance";
+const BYBIT_BASE = "/api/bybit";
+const OKX_BASE = "/api/okx";
+const COINBASE_BASE = "/api/coinbase";
 
 // In-memory cache + in-flight de-duplication to respect the free-tier limit.
 const cache = new Map();
@@ -119,6 +123,18 @@ export function resolveTimeframe(value) {
   return { id: `custom-${days}`, label: `${days}D`, intervalMinutes: 1440, days };
 }
 
+export const CHART_SOURCES = [
+  { id: "coingecko", label: "CoinGecko composite" },
+  { id: "binance", label: "Binance spot" },
+  { id: "bybit", label: "Bybit spot" },
+  { id: "okx", label: "OKX spot" },
+  { id: "coinbase", label: "Coinbase spot" },
+];
+
+export function defaultPairForSymbol(symbol) {
+  return `${String(symbol || "BTC").replace(/[^a-z0-9]/gi, "").toUpperCase()}USDT`;
+}
+
 /**
  * Candle fetcher that works for any coin and preset/custom timeframe.
  * - For the values CoinGecko's OHLC endpoint supports natively, we use true OHLC.
@@ -154,6 +170,207 @@ export async function getCandles(id, days = 90) {
   return bucketCandlesByInterval(prices, tf.intervalMinutes);
 }
 
+export async function getChartCandles({ id, symbol, timeframe = "4h", source = "coingecko", pair }) {
+  if (source === "binance") {
+    try {
+      return await getBinanceCandles(pair || defaultPairForSymbol(symbol), timeframe);
+    } catch {
+      return getCandles(id, timeframe);
+    }
+  }
+  if (source === "bybit") {
+    try {
+      return await getBybitCandles(pair || defaultPairForSymbol(symbol), timeframe);
+    } catch {
+      return getCandles(id, timeframe);
+    }
+  }
+  if (source === "okx") {
+    try {
+      return await getOkxCandles(pair || defaultPairForSymbol(symbol), timeframe);
+    } catch {
+      return getCandles(id, timeframe);
+    }
+  }
+  if (source === "coinbase") {
+    try {
+      return await getCoinbaseCandles(pair || defaultPairForSymbol(symbol), timeframe);
+    } catch {
+      return getCandles(id, timeframe);
+    }
+  }
+
+  // For coingecko (composite): if timeframe is intraday (< 1D), to avoid gaps
+  // we automatically fetch from Binance spot.
+  const tf = resolveTimeframe(timeframe);
+  if (tf.intervalMinutes < 1440) {
+    try {
+      return await getBinanceCandles(defaultPairForSymbol(symbol), timeframe);
+    } catch {
+      return getCandles(id, timeframe);
+    }
+  }
+
+  return getCandles(id, timeframe);
+}
+
+async function getBybitCandles(pair, timeframe) {
+  const tf = resolveTimeframe(timeframe);
+  const interval = bybitInterval(tf.id);
+  const symbol = String(pair || "").replace(/[^a-z0-9]/gi, "").toUpperCase();
+  if (!symbol) throw new Error("Missing Bybit symbol");
+  const url = `${BYBIT_BASE}/v5/market/kline?category=spot&symbol=${symbol}&interval=${interval}&limit=1000`;
+  const resData = await cachedFetch(url, Math.min(CACHE_TTL_MS, 12_000));
+  if (resData.retCode !== 0 || !resData.result || !Array.isArray(resData.result.list)) {
+    throw new Error("Invalid Bybit response");
+  }
+  return [...resData.result.list].reverse().map((k) => ({
+    time: Math.floor(Number(k[0]) / 1000),
+    open: Number(k[1]),
+    high: Number(k[2]),
+    low: Number(k[3]),
+    close: Number(k[4]),
+    volume: Number(k[5]),
+  }));
+}
+
+function bybitInterval(id) {
+  const map = {
+    "1m": "1",
+    "3m": "3",
+    "5m": "5",
+    "15m": "15",
+    "30m": "30",
+    "45m": "60",
+    "1h": "60",
+    "2h": "120",
+    "3h": "240",
+    "4h": "240",
+    "1d": "D",
+    "1w": "W",
+    "1M": "M",
+    "3M": "M",
+    "6M": "M",
+    "12M": "M",
+  };
+  return map[id] || "D";
+}
+
+async function getOkxCandles(pair, timeframe) {
+  const tf = resolveTimeframe(timeframe);
+  const bar = okxInterval(tf.id);
+  let symbol = String(pair || "").replace(/[^a-z0-9]/gi, "").toUpperCase();
+  if (!symbol) throw new Error("Missing OKX symbol");
+  if (!symbol.includes("-")) {
+    const commonQuotes = ["USDT", "USDC", "FDUSD", "BTC", "ETH", "USD", "EUR"];
+    let mapped = false;
+    for (const q of commonQuotes) {
+      if (symbol.endsWith(q) && symbol.length > q.length) {
+        symbol = `${symbol.slice(0, -q.length)}-${q}`;
+        mapped = true;
+        break;
+      }
+    }
+    if (!mapped) {
+      if (symbol.endsWith("USDT") || symbol.endsWith("USDC")) {
+        symbol = `${symbol.slice(0, -4)}-${symbol.slice(-4)}`;
+      } else {
+        symbol = `${symbol.slice(0, 3)}-${symbol.slice(3)}`;
+      }
+    }
+  }
+
+  const url = `${OKX_BASE}/api/v5/market/candles?instId=${symbol}&bar=${bar}&limit=1000`;
+  const resData = await cachedFetch(url, Math.min(CACHE_TTL_MS, 12_000));
+  if (resData.code !== "0" || !Array.isArray(resData.data)) {
+    throw new Error("Invalid OKX response");
+  }
+  return [...resData.data].reverse().map((k) => ({
+    time: Math.floor(Number(k[0]) / 1000),
+    open: Number(k[1]),
+    high: Number(k[2]),
+    low: Number(k[3]),
+    close: Number(k[4]),
+    volume: Number(k[5]),
+  }));
+}
+
+function okxInterval(id) {
+  const map = {
+    "1m": "1m",
+    "3m": "3m",
+    "5m": "5m",
+    "15m": "15m",
+    "30m": "30m",
+    "45m": "1H",
+    "1h": "1H",
+    "2h": "2H",
+    "3h": "4H",
+    "4h": "4H",
+    "1d": "1D",
+    "1w": "1W",
+    "1M": "1M",
+    "3M": "1M",
+    "6M": "1M",
+    "12M": "1M",
+  };
+  return map[id] || "1D";
+}
+
+async function getCoinbaseCandles(pair, timeframe) {
+  const tf = resolveTimeframe(timeframe);
+  const granularity = coinbaseGranularity(tf.id);
+  let symbol = String(pair || "").replace(/[^a-z0-9]/gi, "").toUpperCase();
+  if (!symbol) throw new Error("Missing Coinbase symbol");
+  if (!symbol.includes("-")) {
+    const commonQuotes = ["USDT", "USDC", "USD", "EUR", "BTC"];
+    let mapped = false;
+    for (const q of commonQuotes) {
+      if (symbol.endsWith(q) && symbol.length > q.length) {
+        symbol = `${symbol.slice(0, -q.length)}-${q}`;
+        mapped = true;
+        break;
+      }
+    }
+    if (!mapped) {
+      symbol = `${symbol.slice(0, 3)}-${symbol.slice(3)}`;
+    }
+  }
+
+  const url = `${COINBASE_BASE}/products/${symbol}/candles?granularity=${granularity}`;
+  const data = await cachedFetch(url, Math.min(CACHE_TTL_MS, 12_000));
+  if (!Array.isArray(data)) {
+    throw new Error("Invalid Coinbase response");
+  }
+  return [...data].reverse().map((k) => ({
+    time: Number(k[0]),
+    low: Number(k[1]),
+    high: Number(k[2]),
+    open: Number(k[3]),
+    close: Number(k[4]),
+    volume: Number(k[5]),
+  }));
+}
+
+function coinbaseGranularity(id) {
+  const map = {
+    "1m": 60,
+    "3m": 60,
+    "5m": 300,
+    "15m": 900,
+    "30m": 900,
+    "45m": 3600,
+    "1h": 3600,
+    "2h": 3600,
+    "3h": 21600,
+    "4h": 21600,
+    "1d": 86400,
+    "1w": 86400,
+    "1M": 86400,
+  };
+  return map[id] || 86400;
+}
+
 // Keep the old name as an alias so nothing breaks.
 export const getOHLC = getCandles;
 
@@ -168,6 +385,52 @@ export async function getPriceSeries(id, days = 90) {
 export async function getCloseSeries(id, days = 90) {
   const prices = await getPriceSeries(id, days);
   return prices.map((p) => ({ time: Math.floor(p.time / 1000), value: p.price }));
+}
+
+async function getBinanceCandles(pair, timeframe) {
+  const tf = resolveTimeframe(timeframe);
+  const interval = binanceInterval(tf.id);
+  const limit = binanceLimit(tf);
+  const symbol = String(pair || "").replace(/[^a-z0-9]/gi, "").toUpperCase();
+  if (!symbol) throw new Error("Missing Binance symbol");
+  const url = `${BINANCE_BASE}/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+  const data = await cachedFetch(url, Math.min(CACHE_TTL_MS, 12_000));
+  if (!Array.isArray(data)) throw new Error("Invalid Binance response");
+  return data.map((k) => ({
+    time: Math.floor(k[0] / 1000),
+    open: Number(k[1]),
+    high: Number(k[2]),
+    low: Number(k[3]),
+    close: Number(k[4]),
+    volume: Number(k[5]),
+  }));
+}
+
+function binanceInterval(id) {
+  const map = {
+    "1m": "1m",
+    "3m": "3m",
+    "5m": "5m",
+    "15m": "15m",
+    "30m": "30m",
+    "45m": "1h",
+    "1h": "1h",
+    "2h": "2h",
+    "3h": "4h",
+    "4h": "4h",
+    "1d": "1d",
+    "1w": "1w",
+    "1M": "1M",
+    "3M": "1M",
+    "6M": "1M",
+    "12M": "1M",
+  };
+  return map[id] || "1d";
+}
+
+function binanceLimit(tf) {
+  const approx = Math.ceil((tf.days * 24 * 60) / Math.max(1, tf.intervalMinutes));
+  return Math.min(1000, Math.max(80, approx));
 }
 
 function bucketCandlesByInterval(prices, intervalMinutes) {

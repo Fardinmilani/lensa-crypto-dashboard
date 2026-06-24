@@ -117,6 +117,30 @@ export default defineConfig({
         secure: true,
         rewrite: (p) => p.replace(/^\/api\/cg/, ""),
       },
+      "/api/binance": {
+        target: "https://api.binance.com",
+        changeOrigin: true,
+        secure: true,
+        rewrite: (p) => p.replace(/^\/api\/binance/, ""),
+      },
+      "/api/bybit": {
+        target: "https://api.bybit.com",
+        changeOrigin: true,
+        secure: true,
+        rewrite: (p) => p.replace(/^\/api\/bybit/, ""),
+      },
+      "/api/okx": {
+        target: "https://www.okx.com",
+        changeOrigin: true,
+        secure: true,
+        rewrite: (p) => p.replace(/^\/api\/okx/, ""),
+      },
+      "/api/coinbase": {
+        target: "https://api.exchange.coinbase.com",
+        changeOrigin: true,
+        secure: true,
+        rewrite: (p) => p.replace(/^\/api\/coinbase/, ""),
+      },
     },
   },
 });
