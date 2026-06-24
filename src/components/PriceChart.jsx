@@ -28,14 +28,14 @@ const LINE_STYLES = {
 const SOURCES = ["close", "open", "high", "low", "hl2", "ohlc4"];
 const DEFAULT_INDICATORS = [makeIndicator("ema", { id: "ema-21", params: { period: 21 } })];
 const DRAWING_TOOLS = [
-  { id: "select", icon: "S", label: "Select" },
-  { id: "trendline", icon: "/", label: "Trend line" },
-  { id: "horizontal", icon: "H", label: "Horizontal line" },
-  { id: "vertical", icon: "V", label: "Vertical line" },
-  { id: "rectangle", icon: "R", label: "Rectangle" },
-  { id: "brush", icon: "B", label: "Brush stroke" },
+  { id: "select", icon: "↖", label: "Select" },
+  { id: "trendline", icon: "╱", label: "Trend line" },
+  { id: "horizontal", icon: "─", label: "Horizontal line" },
+  { id: "vertical", icon: "│", label: "Vertical line" },
+  { id: "rectangle", icon: "▭", label: "Rectangle" },
+  { id: "brush", icon: "✏", label: "Free draw" },
   { id: "text", icon: "T", label: "Text note" },
-  { id: "ruler", icon: "%", label: "Measure" },
+  { id: "ruler", icon: "⟺", label: "Measure" },
 ];
 
 export default function PriceChart({ coinId, symbol, days, source = "coingecko", pair = "", chartType = "candles" }) {
@@ -175,26 +175,41 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
 
   return (
     <div className="price-chart">
+      {/* Top indicator panel */}
       <div className="indicator-panel no-print">
         <div className="indicator-add">
           <button type="button" className="indicator-add__trigger" onClick={() => setMenuOpen((open) => !open)}>
-            <span>{INDICATOR_TYPES[addType].label}</span>
             <b>+</b>
+            <span>{INDICATOR_TYPES[addType].label}</span>
           </button>
           {menuOpen && (
-            <div className="indicator-menu">
-              {groupIndicatorTypes().map(([group, items]) => (
-                <div className="indicator-menu__group" key={group}>
-                  <span>{group}</span>
-                  {items.map(([key, meta]) => (
-                    <button type="button" key={key} className={key === addType ? "is-selected" : ""} onClick={() => setAddType(key)}>
-                      {meta.label}
-                    </button>
+            <>
+              <div className="indicator-menu-backdrop" onClick={() => setMenuOpen(false)} />
+              <div className="indicator-menu">
+                <div className="indicator-menu__header">
+                  <span>{t("chart.addIndicator")}</span>
+                  <button type="button" className="indicator-menu__close" onClick={() => setMenuOpen(false)}>✕</button>
+                </div>
+                <div className="indicator-menu__body">
+                  {groupIndicatorTypes().map(([group, items]) => (
+                    <div className="indicator-menu__group" key={group}>
+                      <span>{group}</span>
+                      {items.map(([key, meta]) => (
+                        <button type="button" key={key} className={key === addType ? "is-selected" : ""} onClick={() => setAddType(key)}>
+                          <i className="indicator-dot" style={{ background: INDICATOR_TYPES[key].color }} />
+                          {meta.label}
+                        </button>
+                      ))}
+                    </div>
                   ))}
                 </div>
-              ))}
-              <button type="button" className="indicator-menu__add" onClick={addIndicator}>{t("chart.addIndicator")}</button>
-            </div>
+                <div className="indicator-menu__footer">
+                  <button type="button" className="indicator-menu__add" onClick={addIndicator}>
+                    + {t("chart.addIndicator")}: {INDICATOR_TYPES[addType].label}
+                  </button>
+                </div>
+              </div>
+            </>
           )}
         </div>
         <div className="indicator-list">
@@ -213,60 +228,75 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
         </div>
       </div>
 
-      {error && <div className="chart-overlay chart-overlay--error">{t("chart.error", { e: error })}</div>}
-      {loading && !error && <div className="chart-overlay">{t("chart.loading", { sym: symbol })}</div>}
-      <div className={`price-chart__stage ${drawTool !== "select" ? "is-drawing" : ""}`}>
-        <aside className="drawing-sidebar no-print">
-          {DRAWING_TOOLS.map((tool) => (
+      {/* Chart area: drawing toolbar + canvas side by side */}
+      <div className="price-chart__body">
+        {/* TradingView-style vertical drawing toolbar */}
+        <aside className="drawing-toolbar no-print">
+          <div className="drawing-toolbar__tools">
+            {DRAWING_TOOLS.map((tool) => (
+              <button
+                type="button"
+                key={tool.id}
+                className={`drawing-tool-btn${drawTool === tool.id ? " is-active" : ""}`}
+                onClick={() => {
+                  setDrawTool(tool.id);
+                  setDraftPoint(null);
+                }}
+                title={tool.label}
+              >
+                <span className="drawing-tool-icon">{tool.icon}</span>
+                <span className="drawing-tool-label">{tool.label}</span>
+              </button>
+            ))}
+          </div>
+          <div className="drawing-toolbar__sep" />
+          <div className="drawing-toolbar__style">
+            <label className="drawing-tool-btn" title={t("chart.color")}>
+              <span className="drawing-color-dot" style={{ background: drawStyle.color }} />
+              <input
+                type="color"
+                value={drawStyle.color}
+                onChange={(e) => setDrawStyle((prev) => ({ ...prev, color: e.target.value }))}
+              />
+            </label>
+            <div className="drawing-width-picker">
+              {[1, 2, 3].map((w) => (
+                <button
+                  key={w}
+                  type="button"
+                  className={`drawing-width-btn${drawStyle.width === w ? " is-active" : ""}`}
+                  onClick={() => setDrawStyle((prev) => ({ ...prev, width: w }))}
+                  title={`${t("chart.width")} ${w}`}
+                >
+                  <span style={{ height: `${w + 1}px` }} />
+                </button>
+              ))}
+            </div>
             <button
               type="button"
-              key={tool.id}
-              className={drawTool === tool.id ? "is-active" : ""}
-              onClick={() => {
-                setDrawTool(tool.id);
-                setDraftPoint(null);
-              }}
-              title={tool.label}
+              className="drawing-tool-btn drawing-tool-btn--danger"
+              onClick={() => setChartDrawings([])}
+              title={t("chart.clearDrawings")}
             >
-              {tool.icon}
+              <span className="drawing-tool-icon">🗑</span>
             </button>
-          ))}
-          <span />
-          <label title={t("chart.color")}>
-            <input
-              type="color"
-              value={drawStyle.color}
-              onChange={(e) => setDrawStyle((prev) => ({ ...prev, color: e.target.value }))}
-            />
-          </label>
-          <select
-            value={drawStyle.width}
-            onChange={(e) => setDrawStyle((prev) => ({ ...prev, width: Number(e.target.value) }))}
-            title={t("chart.width")}
-          >
-            {[1, 2, 3, 4, 5, 6].map((width) => (
-              <option key={width} value={width}>{width}</option>
-            ))}
-          </select>
-          <select
-            value={drawStyle.style}
-            onChange={(e) => setDrawStyle((prev) => ({ ...prev, style: e.target.value }))}
-            title={t("chart.style")}
-          >
-            {Object.entries(LINE_STYLES).map(([key, style]) => (
-              <option key={key} value={key}>{style.label}</option>
-            ))}
-          </select>
-          <button type="button" onClick={() => setChartDrawings([])} title={t("chart.clearDrawings")}>X</button>
+          </div>
         </aside>
-        <div className="price-chart__canvas" ref={wrapRef} />
-        <svg className="drawing-layer" ref={overlayRef} onClick={handleDrawClick}>
-          {drawings.map((drawing) => <DrawingShape key={drawing.id} drawing={drawing} />)}
-          {draftPoint && (
-            <circle cx={`${draftPoint.x * 100}%`} cy={`${draftPoint.y * 100}%`} r="4" fill="#f59e0b" />
-          )}
-        </svg>
+
+        {/* Canvas + SVG drawing layer */}
+        {error && <div className="chart-overlay chart-overlay--error">{t("chart.error", { e: error })}</div>}
+        {loading && !error && <div className="chart-overlay">{t("chart.loading", { sym: symbol })}</div>}
+        <div className={`price-chart__stage${drawTool !== "select" ? " is-drawing" : ""}`}>
+          <div className="price-chart__canvas" ref={wrapRef} />
+          <svg className="drawing-layer" ref={overlayRef} onClick={handleDrawClick}>
+            {drawings.map((drawing) => <DrawingShape key={drawing.id} drawing={drawing} />)}
+            {draftPoint && (
+              <circle cx={`${draftPoint.x * 100}%`} cy={`${draftPoint.y * 100}%`} r="4" fill="#f59e0b" />
+            )}
+          </svg>
+        </div>
       </div>
+
       <div className="price-chart__legend">
         <span><i className="dot dot--gold" /> {t("chart.indicators")}: {normalizedIndicators.length}</span>
         {last != null && <span className="num">${last.toLocaleString("en-US", { maximumFractionDigits: 6 })}</span>}
