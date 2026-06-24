@@ -1,5 +1,6 @@
 // Browser-only market data client for static hosting.
 // Every endpoint below is a public API called directly from the user's browser.
+import { analyzeCandleQuality, fillCandleGaps } from "./dataQuality";
 
 const API_BASES = {
   coingecko: "https://api.coingecko.com/api/v3",
@@ -257,13 +258,23 @@ export function defaultPairForSymbol(symbol) {
 
 export async function getCandles(id, days = 90) {
   const candles = await getCoinGeckoCandles(id, days);
-  return withMeta(candles, {
+  const tf = resolveTimeframe(days);
+  const baseMeta = {
     source: "coingecko",
     sourceLabel: SOURCE_LABELS.coingecko,
     status: getSourceHealth("coingecko")?.status || SOURCE_STATUS.HEALTHY,
-    confidence: 1,
     warnings: [],
     precision: inferPrecisionFromCandles(candles),
+  };
+  const quality = analyzeCandleQuality({
+    candles,
+    intervalSeconds: tf.intervalMinutes * 60,
+    sourceMeta: baseMeta,
+  });
+  return withMeta(candles, {
+    ...baseMeta,
+    quality,
+    confidence: quality.confidenceFactor,
   });
 }
 
@@ -294,18 +305,19 @@ async function getCoinGeckoCandles(id, days = 90) {
 export async function getChartCandles({ id, symbol, timeframe = "4h", source = "coingecko", pair, marketType = "Spot" }) {
   const requested = source || "coingecko";
   const warnings = [];
+  const tf = resolveTimeframe(timeframe);
   const candidates =
     marketType !== "Spot"
       ? ["binance"]
       : requested === "coingecko"
-      ? [resolveTimeframe(timeframe).intervalMinutes < 1440 ? "binance" : "coingecko", "coingecko"]
+      ? [tf.intervalMinutes < 1440 ? "binance" : "coingecko", "coingecko"]
       : [requested, "binance", "coingecko"];
 
   const uniqueCandidates = [...new Set(candidates)];
   for (const candidate of uniqueCandidates) {
     const healthSource = candidate === "binance" ? binancePrecisionSource(marketType) : candidate;
     try {
-      const candles =
+      const rawCandles =
         candidate === "binance"
           ? await getBinanceCandles(pair || defaultPairForSymbol(symbol), timeframe, marketType)
           : candidate === "bybit"
@@ -316,20 +328,29 @@ export async function getChartCandles({ id, symbol, timeframe = "4h", source = "
                 ? await getCoinbaseCandles(pair || defaultPairForSymbol(symbol), timeframe)
                 : await getCoinGeckoCandles(id, timeframe);
 
+      const filled = fillCandleGaps(rawCandles, tf.intervalMinutes * 60);
+      const candles = filled.candles;
       const precisionSource = healthSource;
       const precision = {
         ...inferPrecisionFromCandles(candles),
         ...(await getPrecisionMetadata(precisionSource, pair || defaultPairForSymbol(symbol), marketType)),
       };
-      return withMeta(candles, {
+      const baseMeta = {
         source: healthSource,
         sourceLabel: SOURCE_LABELS[healthSource],
         requestedSource: requested,
         status: getSourceHealth(healthSource)?.status || SOURCE_STATUS.HEALTHY,
-        confidence: Math.max(0.55, 1 - warnings.length * 0.2),
         warnings,
         precision,
+        syntheticCandles: filled.syntheticCount,
+      };
+      const quality = analyzeCandleQuality({
+        candles,
+        intervalSeconds: tf.intervalMinutes * 60,
+        sourceMeta: baseMeta,
       });
+      const confidence = Math.max(0.2, Math.max(0.55, 1 - warnings.length * 0.2) * quality.confidenceFactor);
+      return withMeta(candles, { ...baseMeta, quality, confidence });
     } catch (err) {
       warnings.push(failureMeta(healthSource, err));
     }

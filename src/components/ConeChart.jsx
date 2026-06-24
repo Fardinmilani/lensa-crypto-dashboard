@@ -33,13 +33,15 @@ export default function ConeChart({ history, cone, stepSeconds, precision }) {
     const priceFormat = { type: "price", precision: pricePrecision, minMove: 10 ** -pricePrecision };
 
     const lastTime = history[history.length - 1].time;
+    const lastPrice = history[history.length - 1].value;
 
     const mk = (offset) => cone.map((c) => ({ time: lastTime + c.step * stepSeconds, ...c, offset }));
-    const futP95 = mk().map((c) => ({ time: c.time, value: c.p95 }));
-    const futP75 = mk().map((c) => ({ time: c.time, value: c.p75 }));
-    const futP50 = mk().map((c) => ({ time: c.time, value: c.p50 }));
-    const futP25 = mk().map((c) => ({ time: c.time, value: c.p25 }));
-    const futP5 = mk().map((c) => ({ time: c.time, value: c.p5 }));
+    const anchor = { time: lastTime, value: lastPrice };
+    const futP95 = [anchor, ...mk().map((c) => ({ time: c.time, value: c.p95 }))];
+    const futP75 = [anchor, ...mk().map((c) => ({ time: c.time, value: c.p75 }))];
+    const futP50 = [anchor, ...mk().map((c) => ({ time: c.time, value: c.p50 }))];
+    const futP25 = [anchor, ...mk().map((c) => ({ time: c.time, value: c.p25 }))];
+    const futP5 = [anchor, ...mk().map((c) => ({ time: c.time, value: c.p5 }))];
 
     // Shade the p25–p75 band: an area to p75 over a masking area to p25.
     const upper = chart.addSeries(AreaSeries, {
@@ -80,7 +82,7 @@ export default function ConeChart({ history, cone, stepSeconds, precision }) {
       color: "#f59e0b", lineWidth: 2, priceLineVisible: false, lastValueVisible: true,
       priceFormat,
     });
-    median.setData([{ time: lastTime, value: history[history.length - 1].value }, ...futP50]);
+    median.setData(futP50);
 
     chart.timeScale().fitContent();
     return () => chart.remove();

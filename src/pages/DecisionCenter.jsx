@@ -1,9 +1,11 @@
 import { useMemo, useState } from "react";
 import MarketContextBar from "../components/MarketContextBar";
+import DataQualityGuard from "../components/DataQualityGuard";
 import { getChartCandles } from "../lib/coingecko";
 import { ema, macd, rsi } from "../lib/strategies";
 import { calculateATR } from "../lib/risk";
 import { formatPrice, formatUsd } from "../lib/priceFormat";
+import { qualityMetaFromError } from "../lib/dataQuality";
 import { useMarket } from "../context/MarketContext";
 import { useLocalStorageState } from "../hooks/useLocalStorageState";
 import { useStaggerReveal } from "../hooks/useAnimations";
@@ -11,6 +13,8 @@ import { useStaggerReveal } from "../hooks/useAnimations";
 export default function DecisionCenter() {
   const { market, updateFromCandles } = useMarket();
   const [decision, setDecision] = useState(null);
+  const [dataMeta, setDataMeta] = useState(null);
+  const [analysisMarket, setAnalysisMarket] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [journal, setJournal] = useLocalStorageState("lensa.journal", []);
@@ -33,10 +37,14 @@ export default function DecisionCenter() {
       });
       if (candles.length < 60) throw new Error("Not enough candles for decision analysis.");
       updateFromCandles(candles);
+      setDataMeta(candles.meta || null);
+      setAnalysisMarket(snapshotContext(market));
       setDecision(analyzeDecision(candles, candles.meta, market));
     } catch (err) {
       setError(err.message);
       setDecision(null);
+      setDataMeta(qualityMetaFromError(err, market.exchange));
+      setAnalysisMarket(null);
     } finally {
       setLoading(false);
     }
@@ -92,6 +100,7 @@ export default function DecisionCenter() {
 
       <div className="glass-card decision-hero reveal">
         <MarketContextBar module="Decision Center" lastPrice={decision?.lastPrice} />
+        <DataQualityGuard module="Decision Center" meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
         <div className="decision-hero__main">
           <div>
             <span className="panel-subtitle">Selected setup</span>
@@ -177,7 +186,8 @@ function analyzeDecision(candles, meta, market) {
   if (hist > 0 && hist > prevHist) { score += 1; reasons.push("MACD momentum rising"); }
   if (hist < 0 && hist < prevHist) { score -= 1; reasons.push("MACD momentum falling"); }
 
-  const confidence = Math.max(20, Math.min(92, 45 + Math.abs(score) * 9 - (meta?.warnings?.length || 0) * 8));
+  const rawConfidence = Math.max(20, Math.min(92, 45 + Math.abs(score) * 9 - (meta?.warnings?.length || 0) * 8));
+  const confidence = Math.round(rawConfidence * (meta?.quality?.confidenceFactor ?? meta?.confidence ?? 1));
   const action = confidence < 45 ? "No Trade" : score >= 3 ? "Long" : score <= -3 ? "Short" : "Wait";
   const risk = atr || last.close * 0.015;
   return {

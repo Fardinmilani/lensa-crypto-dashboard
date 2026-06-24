@@ -6,6 +6,8 @@ import ConeChart from "../components/ConeChart";
 import ReportActions from "../components/ReportActions";
 import TimeframePicker from "../components/TimeframePicker";
 import MarketContextBar from "../components/MarketContextBar";
+import DataQualityGuard from "../components/DataQualityGuard";
+import { checkForecastAnchor, qualityMetaFromError, readableDuration } from "../lib/dataQuality";
 import { useCoin } from "../context/coinStore";
 import { useMarket } from "../context/MarketContext";
 import { useI18n } from "../i18n/langStore";
@@ -33,6 +35,8 @@ export default function Forecast() {
   const [sims, setSims] = useLocalStorageState("lensa.forecast.sims", 3000);
   const [mc, setMc] = useState(null);
   const [extra, setExtra] = useState(null);
+  const [dataMeta, setDataMeta] = useState(null);
+  const [analysisMarket, setAnalysisMarket] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const reveal = useStaggerReveal([mc, error]);
@@ -51,6 +55,8 @@ export default function Forecast() {
       });
       if (candles.length < 20) throw new Error(t("fc.noData"));
       updateFromCandles(candles);
+      setDataMeta(candles.meta || null);
+      setAnalysisMarket(snapshotMarket(market));
       const closes = candles.map((c) => c.close);
       const stepSeconds = Math.max(1, candles[1].time - candles[0].time);
       const sim = monteCarlo({ closes, horizon: Number(horizon), sims, method, driftMode });
@@ -64,11 +70,13 @@ export default function Forecast() {
         annVol: annualizedVol(closes, periodsPerYear),
         stepSeconds,
         history: histTail.map((c) => ({ time: c.time, value: c.close })),
-        horizonDaysApprox: (Number(horizon) * stepSeconds) / 86400,
+        horizonLabel: readableDuration(Number(horizon) * stepSeconds),
       });
     } catch (err) {
       setError(err.message);
       setMc(null);
+      setDataMeta(qualityMetaFromError(err, market.exchange));
+      setAnalysisMarket(null);
     } finally {
       setLoading(false);
     }
@@ -102,6 +110,7 @@ export default function Forecast() {
     <div className="forecast-page" ref={reveal}>
       <div className="disclaimer-banner reveal">{t("fc.disclaimer")}</div>
       <MarketContextBar module="Prediction + Monte Carlo" lastPrice={mc?.current} />
+      <DataQualityGuard module="Prediction + Monte Carlo" meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
 
       <div className="backtest-controls glass-card reveal">
         <div className="control-group control-group--wide">
@@ -160,7 +169,7 @@ export default function Forecast() {
         <>
           <ReportActions report={report} type="forecast" symbol={coin.symbol} allowSave={false} />
           <div className="forecast-hl">
-            <HlCard label={t("fc.hl.prob")} value={mc.probProfit * 100} suffix="%" decimals={0} tone={mc.probProfit >= 0.5 ? "up" : "down"} hint={t("fc.hl.probHint", { n: extra.horizonDaysApprox.toFixed(1) })} />
+            <HlCard label={t("fc.hl.prob")} value={mc.probProfit * 100} suffix="%" decimals={0} tone={mc.probProfit >= 0.5 ? "up" : "down"} hint={t("fc.hl.probHint", { n: extra.horizonLabel })} />
             <HlCard label={t("fc.hl.expected")} value={mc.expectedReturnPct} suffix="%" decimals={1} tone={mc.expectedReturnPct >= 0 ? "up" : "down"} hint={t("fc.hl.expectedHint")} />
             <HlCard label={t("fc.hl.upside")} value={mc.upside95Pct} suffix="%" decimals={1} tone="up" hint={formatUsd(mc.dist.p95, market.precision, { mode: "futures" })} />
             <HlCard label={t("fc.hl.downside")} value={mc.var5Pct} suffix="%" decimals={1} tone="down" hint={formatUsd(mc.dist.p5, market.precision, { mode: "futures" })} />
@@ -181,6 +190,7 @@ export default function Forecast() {
 
           <div className="glass-card chart-card reveal">
             <MarketContextBar module="Monte Carlo chart" lastPrice={mc.current} />
+            <DataQualityGuard module="Monte Carlo chart" meta={dataMeta} analysisMarket={analysisMarket} forecastAnchor={checkForecastAnchor({ history: extra.history, cone: mc.cone, stepSeconds: extra.stepSeconds })} />
             <div className="panel-header">
               <div>
                 <h2>{t("fc.cone")}</h2>
@@ -193,6 +203,7 @@ export default function Forecast() {
           <div className="forecast-cols forecast-cols--single">
             <div className="glass-card reveal">
               <MarketContextBar module="Long/Short analysis" lastPrice={mc.current} />
+              <DataQualityGuard module="Long/Short analysis" meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
               <div className="panel-header">
                 <div>
                   <h2>{t("fc.setups")}</h2>
@@ -232,6 +243,15 @@ export default function Forecast() {
       )}
     </div>
   );
+}
+
+function snapshotMarket(market) {
+  return {
+    exchange: market.exchange,
+    pair: market.pair,
+    marketType: market.marketType,
+    timeframe: market.timeframe,
+  };
 }
 
 function HlCard({ label, value, suffix = "", decimals = 1, tone = "", hint }) {

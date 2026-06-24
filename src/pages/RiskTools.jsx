@@ -2,7 +2,9 @@ import { useState } from "react";
 import { positionSize, riskRewardRatio, calculateATR, atrStopSuggestion } from "../lib/risk";
 import { getChartCandles } from "../lib/coingecko";
 import { formatPrice, formatUsd } from "../lib/priceFormat";
+import { qualityMetaFromError } from "../lib/dataQuality";
 import MarketContextBar from "../components/MarketContextBar";
+import DataQualityGuard from "../components/DataQualityGuard";
 import { useCoin } from "../context/coinStore";
 import { useMarket } from "../context/MarketContext";
 import { useI18n } from "../i18n/langStore";
@@ -65,6 +67,8 @@ function ATRStopCalculator() {
   const [multiplier, setMultiplier] = useState(2);
   const [direction, setDirection] = useState("long");
   const [atr, setAtr] = useState(null);
+  const [dataMeta, setDataMeta] = useState(null);
+  const [analysisMarket, setAnalysisMarket] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
@@ -74,9 +78,13 @@ function ATRStopCalculator() {
     try {
       const candles = await getChartCandles({ id: coin.id, symbol: coin.symbol, timeframe: market.timeframe, source: market.exchange, pair: market.pair, marketType: market.marketType });
       updateFromCandles(candles);
+      setDataMeta(candles.meta || null);
+      setAnalysisMarket(snapshotMarket(market));
       setAtr(calculateATR(candles, 14));
     } catch (err) {
       setError(err.message);
+      setDataMeta(qualityMetaFromError(err, market.exchange));
+      setAnalysisMarket(null);
     } finally {
       setLoading(false);
     }
@@ -87,6 +95,7 @@ function ATRStopCalculator() {
   return (
     <div className="risk-card glass-card reveal">
       <MarketContextBar module="ATR stop" />
+      <DataQualityGuard module="ATR stop" meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
       <h3>{t("risk.atr.title")}</h3>
       <p className="card-hint">{t("risk.atr.hint")}</p>
       <button className="run-btn" onClick={handleCalculate} disabled={loading}>
@@ -160,4 +169,13 @@ function Row({ label, value }) {
       <span className="num">{value}</span>
     </div>
   );
+}
+
+function snapshotMarket(market) {
+  return {
+    exchange: market.exchange,
+    pair: market.pair,
+    marketType: market.marketType,
+    timeframe: market.timeframe,
+  };
 }

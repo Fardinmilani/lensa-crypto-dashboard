@@ -16,6 +16,7 @@ export function MarketProvider({ children }) {
   const [historicalRange, setHistoricalRange] = useLocalStorageState("lensa.market.range", "4h");
   const [lastValidCandleTime, setLastValidCandleTime] = useLocalStorageState("lensa.market.lastCandle", null);
   const [dataSourceStatus, setDataSourceStatus] = useLocalStorageState("lensa.market.sourceStatus", "Limited");
+  const [dataQualityStatus, setDataQualityStatus] = useLocalStorageState("lensa.market.qualityStatus", "Limited");
   const [precision, setPrecision] = useLocalStorageState("lensa.market.precision", {});
 
   useEffect(() => {
@@ -37,17 +38,19 @@ export function MarketProvider({ children }) {
       timeframeMeta: tf,
       lastValidCandleTime,
       dataSourceStatus,
+      dataQualityStatus,
       sourceHealth: getSourceHealth(),
       precision,
     };
-  }, [coin, exchange, pair, marketType, timeframe, historicalRange, lastValidCandleTime, dataSourceStatus, precision]);
+  }, [coin, exchange, pair, marketType, timeframe, historicalRange, lastValidCandleTime, dataSourceStatus, dataQualityStatus, precision]);
 
   const updateFromCandles = useCallback((candles) => {
     const last = candles?.at?.(-1);
     if (last?.time) setLastValidCandleTime(last.time);
     if (candles?.meta?.status) setDataSourceStatus(candles.meta.status);
+    if (candles?.meta?.quality?.status) setDataQualityStatus(candles.meta.quality.status);
     if (candles?.meta?.precision) setPrecision(candles.meta.precision);
-  }, [setLastValidCandleTime, setDataSourceStatus, setPrecision]);
+  }, [setLastValidCandleTime, setDataSourceStatus, setDataQualityStatus, setPrecision]);
 
   const updatePrecision = useCallback((next) => {
     setPrecision(next || {});

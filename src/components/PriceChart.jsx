@@ -3,6 +3,8 @@ import { AreaSeries, BarSeries, createChart, CandlestickSeries, HistogramSeries,
 import { getChartCandles, resolveTimeframe } from "../lib/coingecko";
 import { formatPrice } from "../lib/priceFormat";
 import { useMarket } from "../context/MarketContext";
+import DataQualityGuard from "./DataQualityGuard";
+import { qualityMetaFromError } from "../lib/dataQuality";
 import { bollinger, ema, macd, roc, rsi, sma } from "../lib/strategies";
 import { useI18n } from "../i18n/langStore";
 import { useLocalStorageState } from "../hooks/useLocalStorageState";
@@ -141,7 +143,7 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
       } catch (err) {
         if (!cancelled) {
           setError(err.message);
-          setSourceMeta(null);
+          setSourceMeta(qualityMetaFromError(err, source));
           setLoading(false);
         }
       }
@@ -320,6 +322,7 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
           {sourceMeta.source && ` · using ${sourceMeta.sourceLabel} fallback`}
         </div>
       )}
+      {sourceMeta && <DataQualityGuard module="Chart" meta={sourceMeta} expectedTimeframe={days} />}
     </div>
   );
 }

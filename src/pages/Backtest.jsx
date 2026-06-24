@@ -3,10 +3,12 @@ import { STRATEGIES, PARAM_LABELS } from "../lib/strategies";
 import { runBacktest } from "../lib/backtest";
 import { getChartCandles } from "../lib/coingecko";
 import { formatUsd } from "../lib/priceFormat";
+import { qualityMetaFromError } from "../lib/dataQuality";
 import EquityChart from "../components/EquityChart";
 import ReportActions from "../components/ReportActions";
 import TimeframePicker from "../components/TimeframePicker";
 import MarketContextBar from "../components/MarketContextBar";
+import DataQualityGuard from "../components/DataQualityGuard";
 import { useCoin } from "../context/coinStore";
 import { useMarket } from "../context/MarketContext";
 import { useI18n, pick } from "../i18n/langStore";
@@ -25,6 +27,8 @@ export default function Backtest() {
   const [fee, setFee] = useLocalStorageState("lensa.backtest.fee", 0.1);
   const [result, setResult] = useState(null);
   const [benchmarkResult, setBenchmarkResult] = useState(null);
+  const [dataMeta, setDataMeta] = useState(null);
+  const [analysisMarket, setAnalysisMarket] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const reveal = useStaggerReveal([result, error]);
@@ -50,6 +54,8 @@ export default function Backtest() {
       });
       if (candles.length < 30) throw new Error(t("bt.noData"));
       updateFromCandles(candles);
+      setDataMeta(candles.meta || null);
+      setAnalysisMarket(snapshotMarket(market));
       const signals = strategy.generateSignals(candles, params);
       const strategyResult = runBacktest({ candles, signals, feePercent: Number(fee) });
       const benchmark = runBacktest({
@@ -61,6 +67,8 @@ export default function Backtest() {
       setBenchmarkResult(benchmark);
     } catch (err) {
       setError(err.message);
+      setDataMeta(qualityMetaFromError(err, market.exchange));
+      setAnalysisMarket(null);
     } finally {
       setLoading(false);
     }
@@ -89,6 +97,7 @@ export default function Backtest() {
     <div className="backtest-page" ref={reveal}>
       <div className="disclaimer-banner reveal">{t("bt.disclaimer")}</div>
       <MarketContextBar module="Backtest" />
+      <DataQualityGuard module="Backtest" meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
 
       <div className="backtest-controls glass-card reveal">
         <div className="control-group control-group--wide">
@@ -155,12 +164,14 @@ export default function Backtest() {
           </div>
           <div className="glass-card chart-card">
             <MarketContextBar module="Backtest equity" />
+            <DataQualityGuard module="Backtest equity" meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
             <div className="panel-header"><h2>{t("bt.equity")}</h2></div>
             <EquityChart equityCurve={result.equityCurve} benchmarkCurve={benchmarkResult?.equityCurve} />
           </div>
           {result.trades.length > 0 && (
             <div className="glass-card table-card">
               <MarketContextBar module="Backtest trades" />
+              <DataQualityGuard module="Backtest trades" meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
               <div className="panel-header"><h2>{t("bt.trades", { n: result.tradeCount })}</h2></div>
               <div className="table-scroll">
                 <table className="trades-table">
@@ -192,6 +203,15 @@ export default function Backtest() {
       )}
     </div>
   );
+}
+
+function snapshotMarket(market) {
+  return {
+    exchange: market.exchange,
+    pair: market.pair,
+    marketType: market.marketType,
+    timeframe: market.timeframe,
+  };
 }
 
 function Stat({ label, value, suffix = "", prefix = "", decimals = 1, tone = "", abs = false, fallback = "-" }) {

@@ -13,7 +13,8 @@ export default function MarketContextBar({ module, lastPrice }) {
       <span>{market.pair}</span>
       <span>{market.marketType}</span>
       <span>{market.timeframeMeta.label || market.timeframe}</span>
-      <span>{market.dataSourceStatus}</span>
+      <span>Source {market.dataSourceStatus}</span>
+      <span>Quality {market.dataQualityStatus}</span>
       <span>{lastTime}</span>
       {lastPrice != null && <span className="num">{formatPrice(lastPrice, market.precision, { currency: true, mode: "trading" })}</span>}
     </div>

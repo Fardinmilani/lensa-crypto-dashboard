@@ -521,16 +521,16 @@
   position: relative;
 }
 .symbol-search__trigger {
-  min-width: 210px;
-  min-height: 40px;
+  min-width: 168px;
+  height: 34px;
   display: inline-flex;
   align-items: center;
-  gap: 9px;
+  gap: 7px;
   border: 1px solid var(--border-strong);
   background: var(--bg-raised);
   color: var(--text-primary);
   border-radius: var(--radius-sm);
-  padding: 7px 10px;
+  padding: 6px 9px;
   font-family: inherit;
   cursor: pointer;
 }
@@ -542,16 +542,19 @@
 }
 .symbol-search__trigger span {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 1px;
+  flex-direction: row;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
 }
 .symbol-search__trigger strong {
-  font-size: 0.86rem;
+  font-size: 0.82rem;
+  white-space: nowrap;
 }
 .symbol-search__trigger small {
   color: var(--text-tertiary);
-  font-size: 0.68rem;
+  font-size: 0.66rem;
+  white-space: nowrap;
 }
 .symbol-search__backdrop {
   position: fixed;
@@ -1207,6 +1210,54 @@
   background: rgba(245, 158, 11, 0.07);
   color: var(--gold-2);
   font-size: 0.76rem;
+  line-height: 1.55;
+}
+.data-quality {
+  margin: 8px 0 12px;
+  padding: 10px 11px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.035);
+  font-size: 0.76rem;
+}
+.data-quality--healthy {
+  border-color: rgba(34, 197, 94, 0.24);
+  background: rgba(34, 197, 94, 0.055);
+}
+.data-quality--limited,
+.data-quality--waiting {
+  border-color: rgba(245, 158, 11, 0.24);
+  background: rgba(245, 158, 11, 0.055);
+}
+.data-quality--failed {
+  border-color: rgba(239, 68, 68, 0.28);
+  background: rgba(239, 68, 68, 0.06);
+}
+.data-quality__top,
+.data-quality__meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.data-quality__top {
+  margin-bottom: 7px;
+}
+.data-quality__top strong {
+  color: var(--text-primary);
+}
+.data-quality__top span,
+.data-quality__meta span {
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  padding: 2px 7px;
+  color: var(--text-secondary);
+  background: rgba(8, 11, 20, 0.28);
+}
+.data-quality ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--gold-2);
   line-height: 1.55;
 }
 .dot {
