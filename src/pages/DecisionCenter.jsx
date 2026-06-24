@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import MarketContextBar from "../components/MarketContextBar";
 import DataQualityGuard from "../components/DataQualityGuard";
 import { getChartCandles } from "../lib/coingecko";
@@ -18,6 +18,8 @@ const DEFAULT_RISK = {
   feePercent: 0.08,
   slippagePercent: 0.05,
 };
+const WATCH_CACHE_MS = 60_000;
+const JOURNAL_STORE = "paperTrades";
 
 export default function DecisionCenter() {
   const { market, updateFromCandles } = useMarket();
@@ -29,9 +31,29 @@ export default function DecisionCenter() {
   const [riskInputs, setRiskInputs] = useLocalStorageState("lensa.decision.risk", DEFAULT_RISK);
   const [journal, setJournal] = useLocalStorageState("lensa.journal", []);
   const [alerts, setAlerts] = useLocalStorageState("lensa.alerts", []);
+  const [watchlist, setWatchlist] = useLocalStorageState("lensa.decision.watchlist", ["BTCUSDT", "ETHUSDT", "XRPUSDT", "DOGEUSDT"]);
+  const [watchSymbol, setWatchSymbol] = useState("");
+  const [watchSort, setWatchSort] = useState("long");
+  const [watchResults, setWatchResults] = useState([]);
+  const [watchLoading, setWatchLoading] = useState(false);
+  const [paperTrades, setPaperTrades] = useState([]);
+  const [alertDraft, setAlertDraft] = useState({ type: "price", level: "", score: 70, rr: 2 });
   const [note, setNote] = useState("");
   const [alertPrice, setAlertPrice] = useState("");
+  const watchCache = useRef(new Map());
   const reveal = useStaggerReveal([decision, error]);
+
+  useEffect(() => {
+    loadPaperTrades().then(setPaperTrades);
+  }, []);
+
+  useEffect(() => {
+    if (!decision || !alerts.length) return;
+    const triggered = alerts.map((item) => evaluateBrowserAlert(item, decision, market)).filter(Boolean);
+    if (triggered.length) {
+      setAlerts((prev) => prev.map((item) => triggered.some((hit) => hit.id === item.id) ? { ...item, status: "Triggered while app was open", triggeredAt: new Date().toISOString() } : item));
+    }
+  }, [decision, alerts, market, setAlerts]);
 
   async function runDecision() {
     setLoading(true);
@@ -118,6 +140,113 @@ export default function DecisionCenter() {
     setAlertPrice("");
   }
 
+  async function scanWatchlist() {
+    setWatchLoading(true);
+    const rows = [];
+    for (const symbol of watchlist.slice(0, 12)) {
+      const cacheKey = `${market.exchange}|${market.marketType}|${symbol}|${market.timeframe}`;
+      const cached = watchCache.current.get(cacheKey);
+      if (cached && Date.now() - cached.time < WATCH_CACHE_MS) {
+        rows.push(cached.row);
+        continue;
+      }
+      try {
+        const candles = await getChartCandles({
+          id: market.coin.id,
+          symbol,
+          timeframe: market.timeframe,
+          source: market.exchange,
+          pair: symbol,
+          marketType: market.marketType,
+        });
+        const rowDecision = analyzeDecision(candles, candles.meta, { ...market, pair: symbol, symbol: symbol.replace(/USDT$/i, "") });
+        const row = {
+          symbol,
+          price: candles.at(-1)?.close,
+          longScore: rowDecision.longScore,
+          shortScore: rowDecision.shortScore,
+          trend: rowDecision.tests.trend.summary,
+          volatility: rowDecision.tests.volatility.summary,
+          dataQuality: rowDecision.dataQualityScore,
+          source: candles.meta?.status || "Limited",
+          riskScore: rowDecision.riskScore,
+          precision: candles.meta?.precision || market.precision,
+        };
+        watchCache.current.set(cacheKey, { time: Date.now(), row });
+        rows.push(row);
+      } catch (err) {
+        rows.push({ symbol, error: err.message, source: "Failed", dataQuality: 20, longScore: 0, shortScore: 0, riskScore: 100, precision: market.precision });
+      }
+    }
+    setWatchResults(rows);
+    setWatchLoading(false);
+  }
+
+  function addWatchSymbol() {
+    const clean = watchSymbol.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (!clean) return;
+    setWatchlist((prev) => [...new Set([...prev, clean.endsWith("USDT") ? clean : `${clean}USDT`])].slice(0, 20));
+    setWatchSymbol("");
+  }
+
+  async function savePaperTrade(setup = activeSetup) {
+    if (!setup || !decision) return;
+    const trade = {
+      id: crypto.randomUUID?.() || `${Date.now()}`,
+      createdAt: new Date().toISOString(),
+      context: snapshotContext(market),
+      symbol: market.pair,
+      marketType: market.marketType,
+      timeframe: market.timeframe,
+      direction: setup.side,
+      entry: setup.entryMid,
+      stop: setup.stop,
+      target1: setup.target1,
+      target2: setup.target2,
+      reason: decision.mainReason,
+      score: setup.score,
+      outcome: "Open",
+      precision: decision.precision,
+    };
+    await putPaperTrade(trade);
+    setPaperTrades(await loadPaperTrades());
+  }
+
+  async function importPaperTrades(file) {
+    if (!file) return;
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+    const rows = Array.isArray(parsed) ? parsed : parsed.trades || [];
+    for (const trade of rows) await putPaperTrade({ ...trade, id: trade.id || `${Date.now()}-${Math.random()}` });
+    setPaperTrades(await loadPaperTrades());
+  }
+
+  function exportPaperTrades(format) {
+    const data = paperTrades.filter((item) => item.context?.pair === market.pair || item.symbol === market.pair);
+    const blob = new Blob([format === "csv" ? paperTradesCsv(data, market.precision) : JSON.stringify(data, null, 2)], { type: format === "csv" ? "text/csv" : "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `lensa-paper-trades-${market.pair}.${format}`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function saveDecisionAlert() {
+    const alert = {
+      id: crypto.randomUUID?.() || `${Date.now()}`,
+      contextKey: contextKey(market),
+      context: snapshotContext(market),
+      type: alertDraft.type,
+      level: Number(alertDraft.level || alertPrice || decision?.lastPrice),
+      score: Number(alertDraft.score),
+      rr: Number(alertDraft.rr),
+      createdAt: new Date().toISOString(),
+      status: "Active while app is open",
+    };
+    setAlerts((prev) => [alert, ...prev]);
+  }
+
   return (
     <div className="decision-page" ref={reveal}>
       <div className="disclaimer-banner reveal">
@@ -154,6 +283,9 @@ export default function DecisionCenter() {
       {decision && (
         <>
           <TradeDecisionPanel decision={decision} precision={decision.precision} market={market} meta={dataMeta} />
+          <DecisionTestsPanel decision={decision} />
+          <SimulationCards cards={decision.simulationCards} />
+          <BacktestSummary backtest={decision.backtest} precision={decision.precision} />
 
           <div className="decision-grid decision-grid--setups">
             <SetupCard setup={decision.longSetup} precision={decision.precision} market={market} meta={dataMeta} />
@@ -172,28 +304,44 @@ export default function DecisionCenter() {
 
           <SetupComparison decision={decision} precision={decision.precision} market={market} meta={dataMeta} />
 
+          <WatchlistScreener
+            watchlist={watchlist}
+            watchSymbol={watchSymbol}
+            setWatchSymbol={setWatchSymbol}
+            addWatchSymbol={addWatchSymbol}
+            removeSymbol={(symbol) => setWatchlist((prev) => prev.filter((item) => item !== symbol))}
+            scanWatchlist={scanWatchlist}
+            watchLoading={watchLoading}
+            rows={sortWatchRows(watchResults, watchSort)}
+            sort={watchSort}
+            setSort={setWatchSort}
+            precision={market.precision}
+          />
+
           <div className="decision-grid">
-            <LocalPanel title="Journal" module="Journal">
-              <textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Write a note for this exact market context..." />
-              <button className="ghost-btn" onClick={saveNote}>Save journal note</button>
-              {scopedJournal.map((item) => (
-                <div className="local-item" key={item.id}>
-                  <strong>{item.decision}</strong>
-                  <span>{new Date(item.createdAt).toLocaleString()}</span>
-                  <p>{item.note}</p>
-                </div>
-              ))}
-            </LocalPanel>
-            <LocalPanel title="Alerts" module="Alerts">
-              <input type="number" value={alertPrice} onChange={(e) => setAlertPrice(e.target.value)} placeholder="Alert price while app is open" />
-              <button className="ghost-btn" onClick={saveAlert}>Save in-browser alert</button>
-              {scopedAlerts.map((item) => (
-                <div className="local-item" key={item.id}>
-                  <strong>{formatUsd(item.price, market.precision, { mode: "trading" })}</strong>
-                  <span>{item.status}</span>
-                </div>
-              ))}
-            </LocalPanel>
+            <PaperTradePanel
+              note={note}
+              setNote={setNote}
+              saveNote={saveNote}
+              scopedJournal={scopedJournal}
+              savePaperTrade={() => savePaperTrade(activeSetup)}
+              paperTrades={paperTrades}
+              market={market}
+              precision={decision.precision}
+              exportPaperTrades={exportPaperTrades}
+              importPaperTrades={importPaperTrades}
+            />
+            <BrowserAlertsPanel
+              alertPrice={alertPrice}
+              setAlertPrice={setAlertPrice}
+              saveAlert={saveAlert}
+              alertDraft={alertDraft}
+              setAlertDraft={setAlertDraft}
+              saveDecisionAlert={saveDecisionAlert}
+              scopedAlerts={scopedAlerts}
+              market={market}
+              precision={decision.precision}
+            />
           </div>
         </>
       )}
@@ -203,6 +351,7 @@ export default function DecisionCenter() {
 
 function analyzeDecision(candles, meta, market) {
   const closes = candles.map((c) => c.close);
+  const volumes = candles.map((c) => c.volume || 0);
   const last = candles.at(-1);
   const fast = ema(closes, 9).at(-1);
   const slow = ema(closes, 21).at(-1);
@@ -215,6 +364,14 @@ function analyzeDecision(candles, meta, market) {
   const precision = meta?.precision || market.precision;
   const qualityFactor = meta?.quality?.confidenceFactor ?? meta?.confidence ?? 1;
   const mc = monteCarlo({ closes, horizon: 48, sims: 2500, method: "bootstrap", driftMode: "zero" });
+  const backtest = lightweightBacktest(candles, { feePercent: 0.08, slippagePercent: 0.05 });
+  const avgVolume = mean(volumes.slice(-30));
+  const currentVolume = volumes.at(-1) || 0;
+  const atrPct = last.close > 0 ? atr / last.close : 0;
+  const higherFrame = approximateHigherFrame(candles, 4);
+  const higherCloses = higherFrame.map((c) => c.close);
+  const hFast = ema(higherCloses, 9).at(-1);
+  const hSlow = ema(higherCloses, 21).at(-1);
 
   const trendLong = fast > slow && last.close > trend;
   const trendShort = fast < slow && last.close < trend;
@@ -222,6 +379,10 @@ function analyzeDecision(candles, meta, market) {
   const momentumShort = hist < 0 && hist < prevHist;
   const rsiLong = r > 50 && r < 74;
   const rsiShort = r < 50 && r > 26;
+  const volumeSupports = currentVolume > avgVolume * 1.05;
+  const volumeFades = currentVolume < avgVolume * 0.7;
+  const mtfLong = hFast > hSlow;
+  const mtfShort = hFast < hSlow;
 
   const longSetup = buildSetup({
     side: "Long",
@@ -238,6 +399,8 @@ function analyzeDecision(candles, meta, market) {
       rsiExtreme: r >= 74,
       opposingTrend: trendShort,
       qualityWeak: qualityFactor < 0.75,
+      volumeOk: volumeSupports,
+      mtfOk: mtfLong,
       spotShort: false,
     },
   });
@@ -255,31 +418,51 @@ function analyzeDecision(candles, meta, market) {
       rsiExtreme: r <= 26,
       opposingTrend: trendLong,
       qualityWeak: qualityFactor < 0.75,
+      volumeOk: volumeSupports,
+      mtfOk: mtfShort,
       spotShort: market.marketType === "Spot",
     },
   });
 
   const finalDecision = chooseFinalDecision(longSetup, shortSetup, qualityFactor);
   const selected = finalDecision === "Long" ? longSetup : finalDecision === "Short" ? shortSetup : longSetup.score >= shortSetup.score ? longSetup : shortSetup;
+  const tests = buildTestSuite({
+    trendLong, trendShort, momentumLong, momentumShort, r, hist, prevHist,
+    atrPct, volumeSupports, volumeFades, currentVolume, avgVolume, mtfLong, mtfShort,
+    mc, backtest, qualityFactor, meta, longSetup, shortSetup,
+  });
+  const dataQualityScore = Math.round(Math.max(0, Math.min(100, qualityFactor * 100)));
+  const riskScore = riskScoreFrom({ atrPct, selected, qualityFactor, backtest });
   const riskLevel = riskLevelFrom({ atr, price: last.close, qualityFactor, selected });
-  const confidence = Math.round(Math.max(longSetup.score, shortSetup.score) * qualityFactor);
+  const confidence = aggregateConfidence({ longSetup, shortSetup, tests, qualityFactor, backtest });
   const mainReason =
     finalDecision === "No Trade"
       ? "Data quality or setup quality is not strong enough for a trade recommendation."
       : selected.reasonsFor[0] || "No dominant directional edge.";
+  const simulationCards = buildSimulationCards(mc, precision);
+  const mainReasons = aggregateReasons({ tests, selected, finalDecision });
 
   return {
     finalDecision,
     longScore: longSetup.score,
     shortScore: shortSetup.score,
+    riskScore,
+    dataQualityScore,
     riskLevel,
     confidence,
     mainReason,
+    mainReasons,
+    changeDecision: whatWouldChangeDecision({ finalDecision, longSetup, shortSetup, tests }),
     conditionRequired: selected.conditionRequired,
     scenarioInvalidation: selected.invalidation,
     lastPrice: last.close,
+    lastCandleTime: last.time,
     atr,
     precision,
+    tests,
+    mc,
+    simulationCards,
+    backtest,
     sourceLabel: meta?.sourceLabel || market.exchange,
     status: meta?.status || market.dataSourceStatus,
     longSetup,
@@ -316,6 +499,10 @@ function buildSetup({ side, lastPrice, atr, precision, mc, qualityFactor, facts 
   else reasonsAgainst.push("Momentum confirmation is weak or absent.");
   if (facts.rsiOk) reasonsFor.push("RSI is supportive without being extreme.");
   else reasonsAgainst.push("RSI is not in a clean confirmation zone.");
+  if (facts.mtfOk) reasonsFor.push("Higher-timeframe structure confirms the setup direction.");
+  else reasonsAgainst.push("Higher-timeframe confirmation is missing.");
+  if (facts.volumeOk) reasonsFor.push("Recent volume supports active participation.");
+  else reasonsAgainst.push("Volume behavior is not confirming the move.");
   if (rr >= 1.2) reasonsFor.push("Target 1 offers acceptable reward relative to stop distance.");
   else reasonsAgainst.push("Reward-to-risk is not attractive enough.");
   if (ev != null && ev > 0) reasonsFor.push("Monte Carlo touch probabilities produce positive expected value.");
@@ -329,6 +516,8 @@ function buildSetup({ side, lastPrice, atr, precision, mc, qualityFactor, facts 
     (facts.trendOk ? 25 : 0) +
     (facts.momentumOk ? 18 : 0) +
     (facts.rsiOk ? 14 : 0) +
+    (facts.mtfOk ? 12 : 0) +
+    (facts.volumeOk ? 7 : 0) +
     Math.min(18, rr * 8) +
     (ev == null ? 8 : ev > 0 ? 18 : 2);
   const penalty = (facts.rsiExtreme ? 10 : 0) + (facts.opposingTrend ? 12 : 0) + (facts.spotShort ? 22 : 0);
@@ -357,6 +546,191 @@ function buildSetup({ side, lastPrice, atr, precision, mc, qualityFactor, facts 
     invalidation,
     conditionRequired: conditionFor({ side, status, facts, entryLow, entryHigh, precision }),
   };
+}
+
+function buildTestSuite({ trendLong, trendShort, momentumLong, momentumShort, r, hist, prevHist, atrPct, volumeSupports, volumeFades, currentVolume, avgVolume, mtfLong, mtfShort, mc, backtest, qualityFactor, meta, longSetup, shortSetup }) {
+  return {
+    trend: {
+      score: trendLong ? 75 : trendShort ? 25 : 50,
+      summary: trendLong ? "Bullish EMA structure" : trendShort ? "Bearish EMA structure" : "Mixed trend",
+      impact: trendLong ? "Favors Long." : trendShort ? "Favors Short." : "Supports waiting.",
+    },
+    momentum: {
+      score: momentumLong ? 72 : momentumShort ? 28 : 50,
+      summary: `RSI ${Math.round(r)} with MACD histogram ${hist > prevHist ? "improving" : "weakening"}`,
+      impact: momentumLong ? "Momentum adds Long confirmation." : momentumShort ? "Momentum adds Short confirmation." : "Momentum is not decisive.",
+    },
+    volatility: {
+      score: atrPct < 0.018 ? 72 : atrPct < 0.045 ? 52 : 28,
+      summary: atrPct < 0.018 ? "Calm volatility" : atrPct < 0.045 ? "Elevated volatility" : "High volatility",
+      impact: atrPct > 0.045 ? "Position sizing should be reduced or skipped." : "Volatility is usable for structured risk.",
+    },
+    volume: {
+      score: volumeSupports ? 70 : volumeFades ? 30 : 50,
+      summary: volumeSupports ? "Volume is above recent average" : volumeFades ? "Volume is fading" : "Volume is neutral",
+      impact: volumeSupports ? "Breakout/follow-through evidence improves." : "Conviction is weaker without volume.",
+      detail: `${Math.round(currentVolume)} vs avg ${Math.round(avgVolume || 0)}`,
+    },
+    multiTimeframe: {
+      score: mtfLong ? 70 : mtfShort ? 30 : 50,
+      summary: mtfLong ? "Higher timeframe leans bullish" : mtfShort ? "Higher timeframe leans bearish" : "Higher timeframe mixed",
+      impact: mtfLong ? "Long setups get confirmation." : mtfShort ? "Short setups get confirmation." : "No extra confirmation.",
+    },
+    monteCarlo: {
+      score: mc?.error ? 35 : Math.round((mc.probProfit || 0.5) * 100),
+      summary: mc?.error ? "Simulation unavailable" : `Positive close probability ${Math.round(mc.probProfit * 100)}%`,
+      impact: mc?.error ? "Confidence is reduced." : mc.probProfit > 0.58 ? "Simulation supports upside." : mc.probProfit < 0.42 ? "Simulation warns about downside." : "Simulation is not strong enough by itself.",
+    },
+    backtest: {
+      score: backtest.tradeCount < 8 ? 45 : backtest.profitFactor > 1.25 ? 68 : backtest.profitFactor < 0.9 ? 32 : 50,
+      summary: `${backtest.tradeCount} trades, ${Math.round(backtest.winRate || 0)}% win rate`,
+      impact: backtest.reliabilityWarning || (backtest.profitFactor > 1 ? "Historical rule is supportive." : "Historical rule is not supportive."),
+    },
+    riskReward: {
+      score: Math.round(Math.max(longSetup.riskReward, shortSetup.riskReward) * 35),
+      summary: `Best R:R 1:${formatPrice(Math.max(longSetup.riskReward, shortSetup.riskReward), {}, { mode: "display" })}`,
+      impact: Math.max(longSetup.riskReward, shortSetup.riskReward) >= 1.4 ? "Reward is acceptable for consideration." : "Reward is too thin for a strong decision.",
+    },
+    expectedValue: {
+      score: Math.round(Math.max(0, Math.min(100, ((Math.max(longSetup.expectedValue ?? -1, shortSetup.expectedValue ?? -1) + 1) / 2) * 100))),
+      summary: `Best EV ${formatPrice(Math.max(longSetup.expectedValue ?? 0, shortSetup.expectedValue ?? 0), {}, { mode: "display" })}`,
+      impact: Math.max(longSetup.expectedValue ?? -1, shortSetup.expectedValue ?? -1) > 0 ? "Probability-adjusted payoff is positive." : "Probability-adjusted payoff is not convincing.",
+    },
+    dataQuality: {
+      score: Math.round(qualityFactor * 100),
+      summary: meta?.quality?.status || meta?.status || "Limited",
+      impact: qualityFactor < 0.75 ? "Decision confidence is capped by data quality." : "Data quality is acceptable.",
+    },
+  };
+}
+
+function buildSimulationCards(mc, precision) {
+  if (!mc || mc.error) {
+    return [{ label: "Simulation unavailable", number: "N/A", explanation: mc?.error || "Monte Carlo could not run.", impact: "The Decision Center lowers confidence and avoids a strong recommendation." }];
+  }
+  const profitPct = Math.round(mc.probProfit * 100);
+  return [
+    {
+      label: "Positive close probability",
+      number: `${profitPct}%`,
+      explanation: `Around ${profitPct} out of 100 simulated paths ended positive over the selected horizon.`,
+      impact: profitPct >= 58 ? "This supports a Long bias, but still needs trend and risk confirmation." : profitPct <= 42 ? "This weakens Long entries and favors caution or Short analysis." : "This is not strong enough by itself to justify entry.",
+    },
+    {
+      label: "Pessimistic scenario",
+      number: formatUsd(mc.dist.p5, precision, { mode: "futures" }),
+      explanation: `Only about 5 out of 100 simulated paths closed below this level.`,
+      impact: "Use this as a downside stress level, not as a guaranteed stop.",
+    },
+    {
+      label: "Median simulated close",
+      number: formatUsd(mc.dist.p50, precision, { mode: "futures" }),
+      explanation: "Half of simulated paths closed above this price and half below it.",
+      impact: mc.dist.p50 > mc.current ? "The median path leans mildly constructive." : "The median path does not support chasing upside.",
+    },
+    {
+      label: "Optimistic scenario",
+      number: formatUsd(mc.dist.p95, precision, { mode: "futures" }),
+      explanation: `Only about 5 out of 100 simulated paths closed above this level.`,
+      impact: "This helps judge whether targets are realistic for the current horizon.",
+    },
+  ];
+}
+
+function aggregateReasons({ tests, selected, finalDecision }) {
+  const reasons = [selected.reasonsFor[0], tests.trend.impact, tests.momentum.impact, tests.dataQuality.impact].filter(Boolean);
+  if (finalDecision === "Wait") reasons.unshift("Long and Short scores are not separated enough for a clean trade.");
+  if (finalDecision === "No Trade") reasons.unshift("The combined evidence is too weak or too unreliable.");
+  return [...new Set(reasons)].slice(0, 6);
+}
+
+function whatWouldChangeDecision({ finalDecision, longSetup, shortSetup, tests }) {
+  if (finalDecision === "Long") return "A momentum rollover, loss of higher-timeframe confirmation, or price moving through the Long invalidation level would downgrade the decision.";
+  if (finalDecision === "Short") return "A bullish trend reclaim, improving volume into upside, or price moving through the Short invalidation level would downgrade the decision.";
+  const better = longSetup.score >= shortSetup.score ? "Long" : "Short";
+  return `A cleaner ${better} decision needs stronger trend/momentum alignment, better expected value, and data quality above ${tests.dataQuality.score < 75 ? "75%" : "the current level"}.`;
+}
+
+function aggregateConfidence({ longSetup, shortSetup, tests, qualityFactor, backtest }) {
+  const edge = Math.abs(longSetup.score - shortSetup.score);
+  const testAvg = mean(Object.values(tests).map((test) => test.score));
+  const samplePenalty = backtest.tradeCount < 8 ? 10 : 0;
+  return Math.round(Math.max(0, Math.min(100, (testAvg * 0.45 + Math.max(longSetup.score, shortSetup.score) * 0.45 + edge * 0.25) * qualityFactor - samplePenalty)));
+}
+
+function riskScoreFrom({ atrPct, selected, qualityFactor, backtest }) {
+  let score = 30;
+  if (atrPct > 0.03) score += 20;
+  if (atrPct > 0.06) score += 20;
+  if (selected.score < 55) score += 15;
+  if (qualityFactor < 0.75) score += 15;
+  if (backtest.maxDrawdown > 12) score += 10;
+  return Math.max(0, Math.min(100, Math.round(score)));
+}
+
+function lightweightBacktest(candles, { feePercent = 0.08, slippagePercent = 0.05 } = {}) {
+  const closes = candles.map((c) => c.close);
+  const fast = ema(closes, 9);
+  const slow = ema(closes, 21);
+  const trades = [];
+  let open = null;
+  let losingStreak = 0;
+  let worstLosingStreak = 0;
+  let equity = 100;
+  let peak = 100;
+  let maxDrawdown = 0;
+  for (let i = 22; i < candles.length; i++) {
+    const bullish = fast[i] > slow[i];
+    const bearish = fast[i] < slow[i];
+    if (!open && bullish) open = { entry: candles[i].close * (1 + slippagePercent / 100), time: candles[i].time };
+    if (open && bearish) {
+      const exit = candles[i].close * (1 - slippagePercent / 100);
+      const r = ((exit - open.entry) / open.entry) * 100 - feePercent * 2;
+      trades.push({ entryTime: open.time, exitTime: candles[i].time, entryPrice: open.entry, exitPrice: exit, r });
+      equity *= 1 + r / 100;
+      peak = Math.max(peak, equity);
+      maxDrawdown = Math.max(maxDrawdown, ((peak - equity) / peak) * 100);
+      losingStreak = r <= 0 ? losingStreak + 1 : 0;
+      worstLosingStreak = Math.max(worstLosingStreak, losingStreak);
+      open = null;
+    }
+  }
+  const wins = trades.filter((t) => t.r > 0);
+  const losses = trades.filter((t) => t.r <= 0);
+  const grossWin = wins.reduce((sum, t) => sum + t.r, 0);
+  const grossLoss = Math.abs(losses.reduce((sum, t) => sum + t.r, 0));
+  return {
+    trades,
+    tradeCount: trades.length,
+    winRate: trades.length ? (wins.length / trades.length) * 100 : 0,
+    profitFactor: grossLoss > 0 ? grossWin / grossLoss : wins.length ? Infinity : 0,
+    maxDrawdown,
+    averageR: trades.length ? mean(trades.map((t) => t.r)) / 100 : 0,
+    worstLosingStreak,
+    reliabilityWarning: trades.length < 8 ? "Low sample size: backtest is not statistically reliable." : "",
+  };
+}
+
+function approximateHigherFrame(candles, groupSize = 4) {
+  const out = [];
+  for (let i = 0; i < candles.length; i += groupSize) {
+    const group = candles.slice(i, i + groupSize);
+    if (!group.length) continue;
+    out.push({
+      time: group[0].time,
+      open: group[0].open,
+      high: Math.max(...group.map((c) => c.high)),
+      low: Math.min(...group.map((c) => c.low)),
+      close: group.at(-1).close,
+      volume: group.reduce((sum, c) => sum + (c.volume || 0), 0),
+    });
+  }
+  return out;
+}
+
+function mean(values) {
+  const clean = values.filter(Number.isFinite);
+  return clean.length ? clean.reduce((sum, value) => sum + value, 0) / clean.length : 0;
 }
 
 function chooseFinalDecision(longSetup, shortSetup, qualityFactor) {
@@ -443,10 +817,83 @@ function TradeDecisionPanel({ decision, precision, market, meta }) {
       <div className="decision-metrics">
         <Metric label="Long Score" value={`${decision.longScore}/100`} />
         <Metric label="Short Score" value={`${decision.shortScore}/100`} />
+        <Metric label="Risk score" value={`${decision.riskScore}/100`} />
+        <Metric label="Data quality" value={`${decision.dataQualityScore}/100`} />
         <Metric label="Risk level" value={decision.riskLevel} />
         <Metric label="Confidence" value={`${decision.confidence}%`} />
         <Metric label="Condition before entry" value={decision.conditionRequired} />
         <Metric label="Scenario invalidation" value={formatUsd(decision.scenarioInvalidation, precision, { mode: "futures" })} />
+      </div>
+      <ReasonList title="Main reasons" items={decision.mainReasons} />
+      <p className="card-hint"><strong>What would change it:</strong> {decision.changeDecision}</p>
+    </div>
+  );
+}
+
+function DecisionTestsPanel({ decision }) {
+  return (
+    <div className="glass-card decision-analysis-card reveal">
+      <div className="panel-header"><h2>Aggregated tests</h2><span className="panel-subtitle">One decision from all available front-end checks</span></div>
+      <div className="decision-test-grid">
+        {Object.entries(decision.tests).map(([key, test]) => (
+          <div className="decision-test" key={key}>
+            <span>{labelize(key)}</span>
+            <strong>{test.score}/100</strong>
+            <p>{test.summary}</p>
+            <small>{test.impact}</small>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SimulationCards({ cards }) {
+  return (
+    <div className="decision-grid decision-grid--sim reveal">
+      {cards.map((card) => (
+        <div className="simulation-card glass-card" key={card.label}>
+          <span>{card.label}</span>
+          <strong className="num">{card.number}</strong>
+          <p>{card.explanation}</p>
+          <small>{card.impact}</small>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function BacktestSummary({ backtest, precision }) {
+  const lastTrades = backtest.trades.slice(-5).reverse();
+  return (
+    <div className="glass-card table-card reveal">
+      <div className="panel-header">
+        <h2>Lightweight backtest</h2>
+        <span className="panel-subtitle">EMA 9/21 rule over fetched candles, with fee and slippage included</span>
+      </div>
+      {backtest.reliabilityWarning && <div className="source-warning">{backtest.reliabilityWarning}</div>}
+      <div className="decision-metrics">
+        <Metric label="Trade count" value={backtest.tradeCount} />
+        <Metric label="Win rate" value={`${Math.round(backtest.winRate)}%`} />
+        <Metric label="Profit factor" value={Number.isFinite(backtest.profitFactor) ? formatPrice(backtest.profitFactor, {}, { mode: "display" }) : "Infinite"} />
+        <Metric label="Max drawdown" value={`${formatPrice(backtest.maxDrawdown, {}, { mode: "display" })}%`} />
+        <Metric label="Average R" value={formatPrice(backtest.averageR, {}, { mode: "display" })} />
+        <Metric label="Worst losing streak" value={backtest.worstLosingStreak} />
+      </div>
+      <div className="table-scroll">
+        <table className="trades-table">
+          <thead><tr><th>Entry</th><th>Exit</th><th>Result</th></tr></thead>
+          <tbody>
+            {lastTrades.map((trade) => (
+              <tr key={`${trade.entryTime}-${trade.exitTime}`}>
+                <td className="num">{formatUsd(trade.entryPrice, precision, { mode: "trading" })}</td>
+                <td className="num">{formatUsd(trade.exitPrice, precision, { mode: "trading" })}</td>
+                <td className={`num ${trade.r >= 0 ? "up" : "down"}`}>{formatPrice(trade.r, {}, { mode: "display" })}%</td>
+              </tr>
+            ))}
+            {!lastTrades.length && <tr><td colSpan="3">No completed trades in the fetched range.</td></tr>}
+          </tbody>
+        </table>
       </div>
     </div>
   );
