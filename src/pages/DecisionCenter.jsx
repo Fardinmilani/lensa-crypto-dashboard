@@ -20,6 +20,148 @@ const DEFAULT_RISK = {
 };
 const WATCH_CACHE_MS = 60_000;
 const JOURNAL_STORE = "paperTrades";
+const DB_NAME = "lensa-decision-center";
+const DB_VERSION = 1;
+
+function openTradeDb() {
+  return new Promise((resolve, reject) => {
+    if (typeof indexedDB === "undefined") {
+      reject(new Error("IndexedDB is not available in this browser."));
+      return;
+    }
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(JOURNAL_STORE)) {
+        db.createObjectStore(JOURNAL_STORE, { keyPath: "id" });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("Could not open the local trade journal database."));
+  });
+}
+
+async function putPaperTrade(trade) {
+  try {
+    const db = await openTradeDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(JOURNAL_STORE, "readwrite");
+      tx.objectStore(JOURNAL_STORE).put(trade);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  } catch {
+    /* IndexedDB may be unavailable in private or locked-down contexts; the trade is simply not persisted. */
+  }
+}
+
+async function loadPaperTrades() {
+  try {
+    const db = await openTradeDb();
+    const rows = await new Promise((resolve, reject) => {
+      const tx = db.transaction(JOURNAL_STORE, "readonly");
+      const request = tx.objectStore(JOURNAL_STORE).getAll();
+      request.onsuccess = () => resolve(request.result || []);
+      request.onerror = () => reject(request.error);
+    });
+    db.close();
+    return rows.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  } catch {
+    return [];
+  }
+}
+
+async function deletePaperTrade(id) {
+  try {
+    const db = await openTradeDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(JOURNAL_STORE, "readwrite");
+      tx.objectStore(JOURNAL_STORE).delete(id);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  } catch {
+    /* nothing to clean up if the store never opened */
+  }
+}
+
+async function setPaperTradeOutcome(id, outcome) {
+  try {
+    const db = await openTradeDb();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(JOURNAL_STORE, "readwrite");
+      const store = tx.objectStore(JOURNAL_STORE);
+      const request = store.get(id);
+      request.onsuccess = () => {
+        const record = request.result;
+        if (record) store.put({ ...record, outcome });
+      };
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  } catch {
+    /* outcome update is best-effort only */
+  }
+}
+
+function paperTradesCsv(trades, precision) {
+  const headers = ["id", "createdAt", "symbol", "marketType", "timeframe", "direction", "entry", "stop", "target1", "target2", "reason", "score", "outcome"];
+  const rows = trades.map((trade) =>
+    headers
+      .map((key) => {
+        const raw = key === "entry" || key === "stop" || key === "target1" || key === "target2"
+          ? formatPrice(trade[key], precision, { mode: "trading" })
+          : trade[key];
+        const value = raw == null ? "" : String(raw).replace(/"/g, '""');
+        return /[",\n]/.test(value) ? `"${value}"` : value;
+      })
+      .join(",")
+  );
+  return [headers.join(","), ...rows].join("\n");
+}
+
+function sortWatchRows(rows, sort) {
+  const copy = [...rows];
+  if (sort === "short") return copy.sort((a, b) => (b.shortScore || 0) - (a.shortScore || 0));
+  if (sort === "risk") return copy.sort((a, b) => (b.riskScore || 0) - (a.riskScore || 0));
+  return copy.sort((a, b) => (b.longScore || 0) - (a.longScore || 0));
+}
+
+function evaluateBrowserAlert(alert, decision, market) {
+  if (!alert || alert.status === "Triggered while app was open") return null;
+  if (alert.contextKey && alert.contextKey !== contextKey(market)) return null;
+  const price = decision?.lastPrice;
+  if (price == null) return null;
+
+  if (alert.type === "score") {
+    const best = Math.max(decision.longScore || 0, decision.shortScore || 0);
+    if (best >= Number(alert.score)) return { id: alert.id, reason: `Score crossed ${alert.score}` };
+    return null;
+  }
+  if (alert.type === "rr") {
+    const bestRR = Math.max(decision.longSetup?.riskReward || 0, decision.shortSetup?.riskReward || 0);
+    if (bestRR >= Number(alert.rr)) return { id: alert.id, reason: `Risk/reward reached 1:${alert.rr}` };
+    return null;
+  }
+  if (alert.type === "drawing") {
+    const level = Number(alert.level);
+    if (!Number.isFinite(level)) return null;
+    if (Math.abs(price - level) <= (decision.atr || price * 0.002) * 0.15) {
+      return { id: alert.id, reason: "Price touched the saved drawing level" };
+    }
+    return null;
+  }
+  const level = Number(alert.level ?? alert.price);
+  if (!Number.isFinite(level)) return null;
+  if ((alert.lastSeenPrice != null && alert.lastSeenPrice < level && price >= level) ||
+      (alert.lastSeenPrice != null && alert.lastSeenPrice > level && price <= level)) {
+    return { id: alert.id, reason: `Price crossed ${level}` };
+  }
+  return null;
+}
 
 export default function DecisionCenter() {
   const { market, updateFromCandles } = useMarket();
@@ -49,11 +191,24 @@ export default function DecisionCenter() {
 
   useEffect(() => {
     if (!decision || !alerts.length) return;
-    const triggered = alerts.map((item) => evaluateBrowserAlert(item, decision, market)).filter(Boolean);
-    if (triggered.length) {
-      setAlerts((prev) => prev.map((item) => triggered.some((hit) => hit.id === item.id) ? { ...item, status: "Triggered while app was open", triggeredAt: new Date().toISOString() } : item));
+    const hits = new Map();
+    for (const item of alerts) {
+      const hit = evaluateBrowserAlert(item, decision, market);
+      if (hit) hits.set(hit.id, hit);
     }
-  }, [decision, alerts, market, setAlerts]);
+    setAlerts((prev) =>
+      prev.map((item) => {
+        if (item.contextKey && item.contextKey !== contextKey(market)) return item;
+        const hit = hits.get(item.id);
+        if (hit) {
+          return { ...item, status: "Triggered while app was open", triggerReason: hit.reason, triggeredAt: new Date().toISOString() };
+        }
+        if (item.status === "Triggered while app was open") return item;
+        return { ...item, lastSeenPrice: decision.lastPrice };
+      })
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [decision?.lastPrice]);
 
   async function runDecision() {
     setLoading(true);
@@ -131,7 +286,9 @@ export default function DecisionCenter() {
         id: crypto.randomUUID?.() || `${Date.now()}`,
         contextKey: contextKey(market),
         context: snapshotContext(market),
-        price,
+        type: "price",
+        level: price,
+        lastSeenPrice: decision?.lastPrice ?? null,
         createdAt: new Date().toISOString(),
         status: "Active while app is open",
       },
@@ -221,6 +378,16 @@ export default function DecisionCenter() {
     setPaperTrades(await loadPaperTrades());
   }
 
+  async function removePaperTrade(id) {
+    await deletePaperTrade(id);
+    setPaperTrades(await loadPaperTrades());
+  }
+
+  async function markPaperTrade(id, outcome) {
+    await setPaperTradeOutcome(id, outcome);
+    setPaperTrades(await loadPaperTrades());
+  }
+
   function exportPaperTrades(format) {
     const data = paperTrades.filter((item) => item.context?.pair === market.pair || item.symbol === market.pair);
     const blob = new Blob([format === "csv" ? paperTradesCsv(data, market.precision) : JSON.stringify(data, null, 2)], { type: format === "csv" ? "text/csv" : "application/json" });
@@ -239,6 +406,7 @@ export default function DecisionCenter() {
       context: snapshotContext(market),
       type: alertDraft.type,
       level: Number(alertDraft.level || alertPrice || decision?.lastPrice),
+      lastSeenPrice: decision?.lastPrice ?? null,
       score: Number(alertDraft.score),
       rr: Number(alertDraft.rr),
       createdAt: new Date().toISOString(),
@@ -330,6 +498,8 @@ export default function DecisionCenter() {
               precision={decision.precision}
               exportPaperTrades={exportPaperTrades}
               importPaperTrades={importPaperTrades}
+              removePaperTrade={removePaperTrade}
+              markPaperTrade={markPaperTrade}
             />
             <BrowserAlertsPanel
               alertPrice={alertPrice}
@@ -341,6 +511,7 @@ export default function DecisionCenter() {
               scopedAlerts={scopedAlerts}
               market={market}
               precision={decision.precision}
+              removeAlert={(id) => setAlerts((prev) => prev.filter((item) => item.id !== id))}
             />
           </div>
         </>
@@ -1000,6 +1171,244 @@ function SetupComparison({ decision, precision, market, meta }) {
       </div>
     </div>
   );
+}
+
+function WatchlistScreener({ watchlist, watchSymbol, setWatchSymbol, addWatchSymbol, removeSymbol, scanWatchlist, watchLoading, rows, sort, setSort, precision }) {
+  return (
+    <div className="glass-card table-card reveal watchlist-panel">
+      <div className="panel-header">
+        <div>
+          <h2>Watchlist / Screener</h2>
+          <span className="panel-subtitle">Long Score, Short Score, trend, volatility, and data quality, computed per symbol with cached results</span>
+        </div>
+        <button className="run-btn run-btn--ghost" onClick={scanWatchlist} disabled={watchLoading}>
+          {watchLoading ? "Scanning..." : "Scan watchlist"}
+        </button>
+      </div>
+
+      <div className="backtest-controls watchlist-controls">
+        <div className="control-group control-group--wide">
+          <label>Add symbol</label>
+          <input
+            placeholder="e.g. SOL"
+            value={watchSymbol}
+            onChange={(e) => setWatchSymbol(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && addWatchSymbol()}
+          />
+        </div>
+        <button className="run-btn run-btn--ghost" onClick={addWatchSymbol}>Add</button>
+        <div className="control-group">
+          <label>Sort by</label>
+          <select value={sort} onChange={(e) => setSort(e.target.value)}>
+            <option value="long">Best Long setups</option>
+            <option value="short">Best Short setups</option>
+            <option value="risk">Highest risk</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="watchlist-chips">
+        {watchlist.map((symbol) => (
+          <span className="watchlist-chip" key={symbol}>
+            {symbol}
+            <button onClick={() => removeSymbol(symbol)} aria-label={`Remove ${symbol}`}>×</button>
+          </span>
+        ))}
+        {!watchlist.length && <span className="card-hint">No symbols yet. Add one above.</span>}
+      </div>
+
+      <div className="table-scroll">
+        <table className="trades-table">
+          <thead>
+            <tr>
+              <th>Symbol</th>
+              <th>Price</th>
+              <th>Long</th>
+              <th>Short</th>
+              <th>Trend</th>
+              <th>Volatility</th>
+              <th>Data quality</th>
+              <th>Risk</th>
+              <th>Source health</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.symbol} className={row.error ? "watch-row--degraded" : ""}>
+                <td>{row.symbol}</td>
+                <td className="num">{row.error ? "Unavailable" : formatUsd(row.price, row.precision || precision, { mode: "trading" })}</td>
+                <td className="num">{row.error ? "-" : `${row.longScore}/100`}</td>
+                <td className="num">{row.error ? "-" : `${row.shortScore}/100`}</td>
+                <td>{row.error ? "-" : row.trend}</td>
+                <td>{row.error ? "-" : row.volatility}</td>
+                <td className="num">{row.error ? "-" : `${row.dataQuality}/100`}</td>
+                <td className="num">{row.error ? "-" : `${row.riskScore}/100`}</td>
+                <td className={row.error ? "watch-source watch-source--failed" : "watch-source"}>{row.error ? `Failed: ${row.error}` : row.source}</td>
+              </tr>
+            ))}
+            {!rows.length && (
+              <tr><td colSpan="9">Scan the watchlist to compute Long/Short scores per symbol.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <p className="card-hint">Results are cached for about a minute per symbol/timeframe to avoid excessive API requests; rescanning within that window reuses cached data.</p>
+    </div>
+  );
+}
+
+function PaperTradePanel({ note, setNote, saveNote, scopedJournal, savePaperTrade, paperTrades, market, precision, exportPaperTrades, importPaperTrades, removePaperTrade, markPaperTrade }) {
+  const symbolTrades = paperTrades.filter((item) => item.symbol === market.pair).slice(0, 8);
+  return (
+    <div className="local-panel glass-card reveal">
+      <MarketContextBar module="Trading Journal" />
+      <h2>Trading Journal / Paper Trade</h2>
+      <p className="card-hint">Paper trades are stored locally in this browser's IndexedDB. Nothing is sent to a server and no real orders are placed.</p>
+
+      <button className="run-btn run-btn--ghost" onClick={savePaperTrade}>Save current setup as paper trade</button>
+
+      <div className="local-item-list">
+        {symbolTrades.map((trade) => (
+          <div className="local-item paper-trade-item" key={trade.id}>
+            <div className="paper-trade-item__head">
+              <strong>{trade.direction} · {trade.symbol}</strong>
+              <span>{trade.outcome}</span>
+            </div>
+            <span>{new Date(trade.createdAt).toLocaleString()} · {trade.timeframe} · {trade.marketType}</span>
+            <p>
+              Entry {formatUsd(trade.entry, precision, { mode: "trading" })} · Stop {formatUsd(trade.stop, precision, { mode: "futures" })} · T1 {formatUsd(trade.target1, precision, { mode: "futures" })} · T2 {formatUsd(trade.target2, precision, { mode: "futures" })} · Score {trade.score}/100
+            </p>
+            {trade.reason && <p className="card-hint">{trade.reason}</p>}
+            <div className="paper-trade-item__actions">
+              <button onClick={() => markPaperTrade(trade.id, "Win")}>Mark win</button>
+              <button onClick={() => markPaperTrade(trade.id, "Loss")}>Mark loss</button>
+              <button onClick={() => markPaperTrade(trade.id, "Open")}>Mark open</button>
+              <button className="danger" onClick={() => removePaperTrade(trade.id)}>Delete</button>
+            </div>
+          </div>
+        ))}
+        {!symbolTrades.length && <p className="card-hint">No paper trades saved yet for {market.pair}.</p>}
+      </div>
+
+      <div className="journal-export-row">
+        <button onClick={() => exportPaperTrades("json")}>Export JSON</button>
+        <button onClick={() => exportPaperTrades("csv")}>Export CSV</button>
+        <label className="import-label">
+          Import JSON
+          <input type="file" accept="application/json" onChange={(e) => importPaperTrades(e.target.files?.[0])} />
+        </label>
+      </div>
+
+      <h2 className="journal-subheading">Quick notes</h2>
+      <textarea
+        placeholder="Write a quick journal note about this setup or market read..."
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+      />
+      <button onClick={saveNote}>Save note</button>
+      {scopedJournal.map((item) => (
+        <div className="local-item" key={item.id}>
+          <strong>{item.decision}</strong>
+          <span>{new Date(item.createdAt).toLocaleString()}</span>
+          <p>{item.note}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function BrowserAlertsPanel({ alertPrice, setAlertPrice, saveAlert, alertDraft, setAlertDraft, saveDecisionAlert, scopedAlerts, market, precision, removeAlert }) {
+  return (
+    <div className="local-panel glass-card reveal">
+      <MarketContextBar module="In-browser Alerts" />
+      <h2>In-browser Alerts</h2>
+      <p className="card-hint"><strong>Alerts only work while the app is open in this browser tab.</strong> Closing the tab or losing connectivity stops all checks; nothing is monitored on a server.</p>
+
+      <div className="backtest-controls">
+        <div className="control-group">
+          <label>Alert type</label>
+          <select value={alertDraft.type} onChange={(e) => setAlertDraft((prev) => ({ ...prev, type: e.target.value }))}>
+            <option value="price">Price crosses level</option>
+            <option value="drawing">Price touches drawing</option>
+            <option value="score">Long/Short score crosses threshold</option>
+            <option value="rr">Risk/reward reaches target</option>
+          </select>
+        </div>
+        {(alertDraft.type === "price" || alertDraft.type === "drawing") && (
+          <div className="control-group">
+            <label>{alertDraft.type === "price" ? "Price level" : "Drawing price level"}</label>
+            <input
+              type="number"
+              placeholder={market.pair}
+              value={alertDraft.level}
+              onChange={(e) => setAlertDraft((prev) => ({ ...prev, level: e.target.value }))}
+            />
+          </div>
+        )}
+        {alertDraft.type === "score" && (
+          <div className="control-group">
+            <label>Score threshold</label>
+            <input type="number" value={alertDraft.score} onChange={(e) => setAlertDraft((prev) => ({ ...prev, score: e.target.value }))} />
+          </div>
+        )}
+        {alertDraft.type === "rr" && (
+          <div className="control-group">
+            <label>Risk/reward target</label>
+            <input type="number" step="0.1" value={alertDraft.rr} onChange={(e) => setAlertDraft((prev) => ({ ...prev, rr: e.target.value }))} />
+          </div>
+        )}
+        <button className="run-btn run-btn--ghost" onClick={saveDecisionAlert}>Add alert</button>
+      </div>
+
+      <div className="control-group control-group--full quick-price-alert">
+        <label>Quick price-cross alert</label>
+        <div className="quick-price-alert__row">
+          <input type="number" placeholder="Price level" value={alertPrice} onChange={(e) => setAlertPrice(e.target.value)} />
+          <button onClick={saveAlert}>Add</button>
+        </div>
+      </div>
+
+      {scopedAlerts.map((alert) => (
+        <div className={`local-item alert-item ${alert.status === "Triggered while app was open" ? "alert-item--triggered" : ""}`} key={alert.id}>
+          <strong>{labelize(alert.type || "price")}</strong>
+          <span>
+            {alert.type === "score" ? `Threshold ${alert.score}/100` :
+              alert.type === "rr" ? `Target 1:${alert.rr}` :
+                `Level ${formatUsd(alert.level ?? alert.price, precision, { mode: "trading" })}`}
+            {" · "}{new Date(alert.createdAt).toLocaleString()}
+          </span>
+          <p>{alert.triggerReason || alert.status}</p>
+          <div className="paper-trade-item__actions">
+            <button className="danger" onClick={() => removeAlert(alert.id)}>Remove</button>
+          </div>
+        </div>
+      ))}
+      {!scopedAlerts.length && <p className="card-hint">No alerts saved yet for {market.pair}.</p>}
+    </div>
+  );
+}
+
+function labelize(key) {
+  const labels = {
+    price: "Price crosses level",
+    drawing: "Price touches drawing",
+    score: "Score threshold",
+    rr: "Risk/reward target",
+    trend: "Trend analysis",
+    momentum: "Momentum analysis",
+    volatility: "Volatility regime",
+    volume: "Volume behavior",
+    multiTimeframe: "Multi-timeframe confirmation",
+    monteCarlo: "Monte Carlo simulation",
+    backtest: "Backtest result",
+    riskReward: "Risk/reward quality",
+    expectedValue: "Expected value",
+    dataQuality: "Data quality",
+  };
+  if (labels[key]) return labels[key];
+  return String(key)
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/^./, (c) => c.toUpperCase());
 }
 
 function AnalysisContextMeta({ market, meta, lastCandleTime }) {
