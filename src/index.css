@@ -22,8 +22,8 @@
   --positive: #22c55e;
   --negative: #ef4444;
 
-  --font-mono: "Fira Code", "SF Mono", ui-monospace, Menlo, monospace;
   --font-sans: "Vazirmatn", "Inter", -apple-system, "Segoe UI", sans-serif;
+  --font-mono: var(--font-sans);
 
   --radius-sm: 8px;
   --radius-md: 14px;

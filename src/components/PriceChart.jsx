@@ -99,7 +99,7 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
         wrapRef.current.innerHTML = "";
         chart = createChart(wrapRef.current, {
           autoSize: true,
-          layout: { background: { color: "transparent" }, textColor: "#9aa6b8", fontFamily: "'Fira Code', monospace" },
+          layout: { background: { color: "transparent" }, textColor: "#9aa6b8", fontFamily: "'Vazirmatn', 'Inter', -apple-system, 'Segoe UI', sans-serif" },
           grid: { vertLines: { color: "rgba(255,255,255,0.04)" }, horzLines: { color: "rgba(255,255,255,0.04)" } },
           rightPriceScale: { borderColor: "rgba(255,255,255,0.08)" },
           timeScale: {

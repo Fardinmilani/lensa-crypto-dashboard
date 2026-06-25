@@ -13,7 +13,7 @@ export default function EquityChart({ equityCurve, benchmarkCurve }) {
       layout: {
         background: { color: "transparent" },
         textColor: "#8b96a5",
-        fontFamily: "JetBrains Mono, monospace",
+        fontFamily: "'Vazirmatn', 'Inter', -apple-system, 'Segoe UI', sans-serif",
       },
       grid: {
         vertLines: { color: "#232a36" },

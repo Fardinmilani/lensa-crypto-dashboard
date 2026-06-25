@@ -19,7 +19,7 @@ export default function ConeChart({ history, cone, stepSeconds, precision }) {
       layout: {
         background: { color: "transparent" },
         textColor: "#9aa6b8",
-        fontFamily: "'Fira Code', monospace",
+        fontFamily: "'Vazirmatn', 'Inter', -apple-system, 'Segoe UI', sans-serif",
       },
       grid: {
         vertLines: { color: "rgba(255,255,255,0.04)" },
