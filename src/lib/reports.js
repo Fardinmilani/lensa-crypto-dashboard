@@ -28,6 +28,12 @@ export function getSavedReports() {
 }
 
 export function exportPdf() {
+  document.documentElement.classList.add("print-export");
+  const cleanup = () => {
+    document.documentElement.classList.remove("print-export");
+    window.removeEventListener("afterprint", cleanup);
+  };
+  window.addEventListener("afterprint", cleanup);
   window.print();
 }
 

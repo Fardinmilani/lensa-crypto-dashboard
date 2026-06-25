@@ -252,6 +252,16 @@ export function resolveTimeframe(value) {
   return { id: `custom-${days}`, label: `${days}D`, intervalMinutes: 1440, days };
 }
 
+export function resolveLookbackDays(timeframe, lookbackDays) {
+  const tf = resolveTimeframe(timeframe);
+  if (lookbackDays == null || lookbackDays === "") return tf.days;
+  return Math.max(1, Math.round(Number(lookbackDays) || tf.days));
+}
+
+function candlesNeeded(intervalMinutes, days) {
+  return Math.ceil((days * 24 * 60) / Math.max(1, intervalMinutes));
+}
+
 export function defaultPairForSymbol(symbol) {
   return `${String(symbol || "BTC").replace(/[^a-z0-9]/gi, "").toUpperCase()}USDT`;
 }
@@ -278,9 +288,9 @@ export async function getCandles(id, days = 90) {
   });
 }
 
-async function getCoinGeckoCandles(id, days = 90) {
-  const tf = resolveTimeframe(days);
-  const d = Math.max(1, Math.round(tf.days));
+async function getCoinGeckoCandles(id, timeframe = 90, lookbackDays) {
+  const tf = resolveTimeframe(timeframe);
+  const d = lookbackDays != null ? resolveLookbackDays(timeframe, lookbackDays) : tf.days;
 
   if (tf.intervalMinutes < 1440) {
     const prices = await getPriceSeries(id, d);
@@ -302,10 +312,11 @@ async function getCoinGeckoCandles(id, days = 90) {
   return bucketCandlesByInterval(prices, tf.intervalMinutes);
 }
 
-export async function getChartCandles({ id, symbol, timeframe = "4h", source = "coingecko", pair, marketType = "Spot" }) {
+export async function getChartCandles({ id, symbol, timeframe = "4h", lookbackDays, source = "coingecko", pair, marketType = "Spot" }) {
   const requested = source || "coingecko";
   const warnings = [];
   const tf = resolveTimeframe(timeframe);
+  const effectiveDays = resolveLookbackDays(timeframe, lookbackDays);
   const candidates =
     marketType !== "Spot"
       ? ["binance"]
@@ -319,14 +330,14 @@ export async function getChartCandles({ id, symbol, timeframe = "4h", source = "
     try {
       const rawCandles =
         candidate === "binance"
-          ? await getBinanceCandles(pair || defaultPairForSymbol(symbol), timeframe, marketType)
+          ? await getBinanceCandles(pair || defaultPairForSymbol(symbol), timeframe, marketType, effectiveDays)
           : candidate === "bybit"
-            ? await getBybitCandles(pair || defaultPairForSymbol(symbol), timeframe)
+            ? await getBybitCandles(pair || defaultPairForSymbol(symbol), timeframe, effectiveDays)
             : candidate === "okx"
-              ? await getOkxCandles(pair || defaultPairForSymbol(symbol), timeframe)
+              ? await getOkxCandles(pair || defaultPairForSymbol(symbol), timeframe, effectiveDays)
               : candidate === "coinbase"
-                ? await getCoinbaseCandles(pair || defaultPairForSymbol(symbol), timeframe)
-                : await getCoinGeckoCandles(id, timeframe);
+                ? await getCoinbaseCandles(pair || defaultPairForSymbol(symbol), timeframe, effectiveDays)
+                : await getCoinGeckoCandles(id, timeframe, effectiveDays);
 
       const filled = fillCandleGaps(rawCandles, tf.intervalMinutes * 60);
       const candles = filled.candles;
@@ -411,23 +422,39 @@ async function getCoinbasePrecision(pair) {
   };
 }
 
-async function getBybitCandles(pair, timeframe) {
+async function getBybitCandles(pair, timeframe, lookbackDays) {
   const tf = resolveTimeframe(timeframe);
+  const days = resolveLookbackDays(timeframe, lookbackDays);
+  const needed = candlesNeeded(tf.intervalMinutes, days);
   const interval = bybitInterval(tf.id);
   const symbol = String(pair || "").replace(/[^a-z0-9]/gi, "").toUpperCase();
   if (!symbol) throw new Error("Missing Bybit symbol");
-  const resData = await cachedJson("bybit", `/v5/market/kline?category=spot&symbol=${symbol}&interval=${interval}&limit=1000`, 12_000);
-  if (resData.retCode !== 0 || !resData.result || !Array.isArray(resData.result.list)) {
-    throw new Error("Invalid Bybit response");
+
+  let all = [];
+  let end;
+  while (all.length < needed) {
+    const limit = Math.min(1000, needed - all.length);
+    let query = `/v5/market/kline?category=spot&symbol=${symbol}&interval=${interval}&limit=${limit}`;
+    if (end) query += `&end=${end}`;
+    const resData = await cachedJson("bybit", query, 12_000);
+    if (resData.retCode !== 0 || !resData.result || !Array.isArray(resData.result.list) || !resData.result.list.length) {
+      break;
+    }
+    const batch = [...resData.result.list].reverse().map((k) => ({
+      time: Math.floor(Number(k[0]) / 1000),
+      open: Number(k[1]),
+      high: Number(k[2]),
+      low: Number(k[3]),
+      close: Number(k[4]),
+      volume: Number(k[5]),
+    }));
+    all = [...batch, ...all];
+    if (batch.length < limit) break;
+    end = Number(resData.result.list[resData.result.list.length - 1][0]) - 1;
   }
-  return [...resData.result.list].reverse().map((k) => ({
-    time: Math.floor(Number(k[0]) / 1000),
-    open: Number(k[1]),
-    high: Number(k[2]),
-    low: Number(k[3]),
-    close: Number(k[4]),
-    volume: Number(k[5]),
-  }));
+
+  if (!all.length) throw new Error("Invalid Bybit response");
+  return all.slice(-needed);
 }
 
 function bybitInterval(id) {
@@ -452,23 +479,37 @@ function bybitInterval(id) {
   return map[id] || "D";
 }
 
-async function getOkxCandles(pair, timeframe) {
+async function getOkxCandles(pair, timeframe, lookbackDays) {
   const tf = resolveTimeframe(timeframe);
+  const days = resolveLookbackDays(timeframe, lookbackDays);
+  const needed = candlesNeeded(tf.intervalMinutes, days);
   const bar = okxInterval(tf.id);
   const symbol = pairToDashSymbol(pair);
   if (!symbol) throw new Error("Missing OKX symbol");
-  const resData = await cachedJson("okx", `${publicPath("api", "v5", "market", "candles")}?instId=${symbol}&bar=${bar}&limit=1000`, 12_000);
-  if (resData.code !== "0" || !Array.isArray(resData.data)) {
-    throw new Error("Invalid OKX response");
+
+  let all = [];
+  let before;
+  while (all.length < needed) {
+    const limit = Math.min(1000, needed - all.length);
+    let query = `${publicPath("api", "v5", "market", "candles")}?instId=${symbol}&bar=${bar}&limit=${limit}`;
+    if (before) query += `&before=${before}`;
+    const resData = await cachedJson("okx", query, 12_000);
+    if (resData.code !== "0" || !Array.isArray(resData.data) || !resData.data.length) break;
+    const batch = [...resData.data].reverse().map((k) => ({
+      time: Math.floor(Number(k[0]) / 1000),
+      open: Number(k[1]),
+      high: Number(k[2]),
+      low: Number(k[3]),
+      close: Number(k[4]),
+      volume: Number(k[5]),
+    }));
+    all = [...batch, ...all];
+    if (batch.length < limit) break;
+    before = resData.data[resData.data.length - 1][0];
   }
-  return [...resData.data].reverse().map((k) => ({
-    time: Math.floor(Number(k[0]) / 1000),
-    open: Number(k[1]),
-    high: Number(k[2]),
-    low: Number(k[3]),
-    close: Number(k[4]),
-    volume: Number(k[5]),
-  }));
+
+  if (!all.length) throw new Error("Invalid OKX response");
+  return all.slice(-needed);
 }
 
 function okxInterval(id) {
@@ -493,14 +534,16 @@ function okxInterval(id) {
   return map[id] || "1D";
 }
 
-async function getCoinbaseCandles(pair, timeframe) {
+async function getCoinbaseCandles(pair, timeframe, lookbackDays) {
   const tf = resolveTimeframe(timeframe);
+  const days = resolveLookbackDays(timeframe, lookbackDays);
+  const needed = candlesNeeded(tf.intervalMinutes, days);
   const granularity = coinbaseGranularity(tf.id);
   const symbol = pairToDashSymbol(pair, ["USDT", "USDC", "USD", "EUR", "BTC"]);
   if (!symbol) throw new Error("Missing Coinbase symbol");
   const data = await cachedJson("coinbase", `/products/${symbol}/candles?granularity=${granularity}`, 12_000);
   if (!Array.isArray(data)) throw new Error("Invalid Coinbase response");
-  return [...data].reverse().map((k) => ({
+  const candles = [...data].reverse().map((k) => ({
     time: Number(k[0]),
     low: Number(k[1]),
     high: Number(k[2]),
@@ -508,6 +551,7 @@ async function getCoinbaseCandles(pair, timeframe) {
     close: Number(k[4]),
     volume: Number(k[5]),
   }));
+  return candles.slice(-needed);
 }
 
 function coinbaseGranularity(id) {
@@ -543,24 +587,38 @@ export async function getCloseSeries(id, days = 90) {
   return prices.map((p) => ({ time: Math.floor(p.time / 1000), value: p.price }));
 }
 
-async function getBinanceCandles(pair, timeframe, marketType = "Spot") {
+async function getBinanceCandles(pair, timeframe, marketType = "Spot", lookbackDays) {
   const tf = resolveTimeframe(timeframe);
+  const days = resolveLookbackDays(timeframe, lookbackDays);
   const interval = binanceInterval(tf.id);
-  const limit = binanceLimit(tf);
+  const needed = candlesNeeded(tf.intervalMinutes, days);
   const source = binancePrecisionSource(marketType);
   const symbol = binanceSymbolForMarket(pair, marketType);
   if (!symbol) throw new Error("Missing Binance symbol");
   const path = marketType === "Spot" ? publicPath("api", "v3", "klines") : marketType === "Coin-M Futures" ? publicPath("dapi", "v1", "klines") : publicPath("fapi", "v1", "klines");
-  const data = await cachedJson(source, `${path}?symbol=${symbol}&interval=${interval}&limit=${limit}`, 12_000);
-  if (!Array.isArray(data)) throw new Error("Invalid Binance response");
-  return data.map((k) => ({
-    time: Math.floor(k[0] / 1000),
-    open: Number(k[1]),
-    high: Number(k[2]),
-    low: Number(k[3]),
-    close: Number(k[4]),
-    volume: Number(k[5]),
-  }));
+
+  let all = [];
+  let endTime;
+  while (all.length < needed) {
+    const limit = Math.min(1000, needed - all.length);
+    let query = `${path}?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+    if (endTime) query += `&endTime=${endTime}`;
+    const data = await cachedJson(source, query, 12_000);
+    if (!Array.isArray(data) || !data.length) break;
+    const batch = data.map((k) => ({
+      time: Math.floor(k[0] / 1000),
+      open: Number(k[1]),
+      high: Number(k[2]),
+      low: Number(k[3]),
+      close: Number(k[4]),
+      volume: Number(k[5]),
+    }));
+    all = [...batch, ...all];
+    if (batch.length < limit) break;
+    endTime = data[0][0] - 1;
+  }
+
+  return all.slice(-needed);
 }
 
 function binancePrecisionSource(marketType) {

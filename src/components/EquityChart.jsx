@@ -24,10 +24,12 @@ function toSeriesData(curve) {
   return deduped;
 }
 
-export default function EquityChart({ equityCurve, benchmarkCurve }) {
+export default function EquityChart({ equityCurve, benchmarkCurve, strategyTitle, benchmarkTitle }) {
   const { t } = useI18n();
   const containerRef = useRef(null);
   const chartRef = useRef(null);
+  const equityLabel = strategyTitle ?? t("bt.equity.strategy");
+  const benchmarkLabel = benchmarkTitle ?? t("bt.equity.benchmark");
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -51,7 +53,7 @@ export default function EquityChart({ equityCurve, benchmarkCurve }) {
     const equitySeries = chart.addSeries(LineSeries, {
       color: "#c9a66b",
       lineWidth: 2,
-      title: t("bt.equity.strategy"),
+      title: equityLabel,
     });
     equitySeries.setData(toSeriesData(equityCurve));
 
@@ -60,7 +62,7 @@ export default function EquityChart({ equityCurve, benchmarkCurve }) {
         color: "#5a6472",
         lineWidth: 1,
         lineStyle: 2, // dashed
-        title: t("bt.equity.benchmark"),
+        title: benchmarkLabel,
       });
       benchmarkSeries.setData(toSeriesData(benchmarkCurve));
     }
@@ -70,7 +72,7 @@ export default function EquityChart({ equityCurve, benchmarkCurve }) {
     return () => {
       chart.remove();
     };
-  }, [equityCurve, benchmarkCurve, t]);
+  }, [equityCurve, benchmarkCurve, equityLabel, benchmarkLabel]);
 
   return <div className="equity-chart-container" ref={containerRef} />;
 }

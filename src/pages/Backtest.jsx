@@ -17,6 +17,7 @@ import { useLocalStorageState } from "../hooks/useLocalStorageState";
 import InfoTip from "../components/InfoTip";
 
 const CATEGORY_ORDER = ["trend", "momentum", "reversion", "hybrid"];
+const LOOKBACK_PRESETS = [90, 180, 365, 730];
 
 export default function Backtest() {
   const { coin } = useCoin();
@@ -26,6 +27,7 @@ export default function Backtest() {
   const [strategyKey, setStrategyKey] = useLocalStorageState("lensa.backtest.strategy", "trendMomentumHybrid");
   const [params, setParams] = useLocalStorageState("lensa.backtest.params", STRATEGIES.trendMomentumHybrid.params);
   const [fee, setFee] = useLocalStorageState("lensa.backtest.fee", 0.1);
+  const [lookbackDays, setLookbackDays] = useLocalStorageState("lensa.backtest.lookback", 365);
   const [result, setResult] = useState(null);
   const [benchmarkResult, setBenchmarkResult] = useState(null);
   const [aggregate, setAggregate] = useState(null);
@@ -43,18 +45,24 @@ export default function Backtest() {
     setResult(null);
   }
 
+  async function fetchCandles() {
+    return getChartCandles({
+      id: coin.id,
+      symbol: coin.symbol,
+      timeframe: market.timeframe,
+      lookbackDays: Number(lookbackDays),
+      source: market.exchange,
+      pair: market.pair,
+      marketType: market.marketType,
+    });
+  }
+
   async function handleRun() {
     setLoading(true);
     setError(null);
+    setAggregate(null);
     try {
-      const candles = await getChartCandles({
-        id: coin.id,
-        symbol: coin.symbol,
-        timeframe: market.timeframe,
-        source: market.exchange,
-        pair: market.pair,
-        marketType: market.marketType,
-      });
+      const candles = await fetchCandles();
       if (candles.length < 30) throw new Error(t("bt.noData"));
       updateFromCandles(candles);
       setDataMeta(candles.meta || null);
@@ -81,14 +89,7 @@ export default function Backtest() {
     setLoadingAll(true);
     setError(null);
     try {
-      const candles = await getChartCandles({
-        id: coin.id,
-        symbol: coin.symbol,
-        timeframe: market.timeframe,
-        source: market.exchange,
-        pair: market.pair,
-        marketType: market.marketType,
-      });
+      const candles = await fetchCandles();
       if (candles.length < 30) throw new Error(t("bt.noData"));
       updateFromCandles(candles);
       setDataMeta(candles.meta || null);
@@ -163,8 +164,35 @@ export default function Backtest() {
           </div>
         ))}
         <div className="control-group control-group--full">
-          <label>{t("bt.timeframe")}</label>
+          <label>{t("bt.candleInterval")}</label>
           <TimeframePicker value={market.timeframe} onChange={setTimeframe} />
+        </div>
+        <div className="control-group control-group--wide">
+          <label>{t("bt.lookback")}</label>
+          <div className="lookback-control">
+            <select
+              value={LOOKBACK_PRESETS.includes(Number(lookbackDays)) ? lookbackDays : ""}
+              onChange={(e) => e.target.value && setLookbackDays(Number(e.target.value))}
+            >
+              {!LOOKBACK_PRESETS.includes(Number(lookbackDays)) && (
+                <option value="">{t("tf.days", { n: lookbackDays })}</option>
+              )}
+              {LOOKBACK_PRESETS.map((days) => (
+                <option key={days} value={days}>
+                  {t("tf.days", { n: days })}
+                </option>
+              ))}
+            </select>
+            <input
+              type="number"
+              min="30"
+              max="3650"
+              value={lookbackDays}
+              onChange={(e) => setLookbackDays(e.target.value)}
+              aria-label={t("bt.lookback")}
+            />
+          </div>
+          <small className="control-hint">{t("bt.lookback.hint")}</small>
         </div>
         <button className="run-btn" onClick={handleRun} disabled={loading || loadingAll}>
           {loading ? t("bt.running") : t("bt.run")}
@@ -257,7 +285,7 @@ export default function Backtest() {
 }
 
 function AggregateResults({ aggregate, t, lang, dataMeta, analysisMarket, market, onInspect }) {
-  const { rows, summary } = aggregate;
+  const { rows, summary, benchmark, aggregate: ensemble } = aggregate;
   const fmt = (v, d = 1) => (Number.isFinite(v) ? v.toFixed(d) : "-");
   const signed = (v, d = 1) => (Number.isFinite(v) ? `${v >= 0 ? "+" : ""}${v.toFixed(d)}` : "-");
 
@@ -278,6 +306,13 @@ function AggregateResults({ aggregate, t, lang, dataMeta, analysisMarket, market
             </span>
           </div>
           <div className="agg-kpi">
+            <span className="agg-kpi__label">{t("bt.agg.ensemble")}</span>
+            <strong className={`agg-kpi__value num ${ensemble?.result?.totalReturnPercent >= 0 ? "up" : "down"}`}>
+              {signed(ensemble?.result?.totalReturnPercent)}%
+            </strong>
+            <span className="agg-kpi__sub">{t("bt.agg.ensembleHint")}</span>
+          </div>
+          <div className="agg-kpi">
             <span className="agg-kpi__label">{t("bt.agg.bestSharpe")}</span>
             <strong className="agg-kpi__value">{summary.bestBySharpe ? pick(lang, summary.bestBySharpe.label) : "-"}</strong>
             <span className="agg-kpi__sub">{summary.bestBySharpe ? `${t("bt.stat.sharpe")} ${fmt(summary.bestBySharpe.result.sharpe, 2)}` : ""}</span>
@@ -294,6 +329,41 @@ function AggregateResults({ aggregate, t, lang, dataMeta, analysisMarket, market
           </div>
         </div>
       </div>
+
+      {ensemble?.equityCurve?.length > 1 && (
+        <div className="glass-card chart-card">
+          <div className="panel-header"><h2>{t("bt.agg.equity")}</h2></div>
+          <p className="section-note">{t("bt.agg.equity.note")}</p>
+          <div className="stats-grid stats-grid--compact">
+            <div className="stat-card">
+              <span className="stat-label">{t("bt.agg.ensembleReturn")}</span>
+              <span className={`stat-value num ${ensemble.result?.totalReturnPercent >= 0 ? "up" : "down"}`}>
+                {signed(ensemble.result?.totalReturnPercent)}%
+              </span>
+            </div>
+            <div className="stat-card">
+              <span className="stat-label">{t("bt.stat.bench")}</span>
+              <span className={`stat-value num ${summary.benchmarkReturn >= 0 ? "up" : "down"}`}>{signed(summary.benchmarkReturn)}%</span>
+            </div>
+            <div className="stat-card">
+              <span className="stat-label">{t("bt.stat.dd")}</span>
+              <span className="stat-value num down">-{fmt(ensemble.result?.maxDrawdownPercent)}%</span>
+            </div>
+            <div className="stat-card">
+              <span className="stat-label">{t("bt.stat.sharpe")}</span>
+              <span className={`stat-value num ${Number.isFinite(ensemble.result?.sharpe) && ensemble.result.sharpe >= 1 ? "up" : ""}`}>
+                {fmt(ensemble.result?.sharpe, 2)}
+              </span>
+            </div>
+          </div>
+          <EquityChart
+            equityCurve={ensemble.equityCurve}
+            benchmarkCurve={benchmark?.equityCurve}
+            strategyTitle={t("bt.equity.aggregate")}
+            benchmarkTitle={t("bt.equity.benchmark")}
+          />
+        </div>
+      )}
 
       <div className="glass-card table-card">
         <div className="panel-header"><h2>{t("bt.agg.tableTitle")}</h2></div>

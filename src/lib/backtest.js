@@ -170,7 +170,88 @@ export function runAllStrategies({ candles, strategies, feePercent = 0.1 }) {
     avgReturn: mean(returns),
   };
 
-  return { benchmark, rows, summary };
+  const aggregateEquityCurve = averageEquityCurves(rows);
+  const aggregateResult = summarizeEquityCurve(aggregateEquityCurve, {
+    initialCapital: benchmark.initialCapital,
+    candles,
+    benchmarkReturnPercent: benchmark.totalReturnPercent,
+  });
+
+  return { benchmark, rows, summary, aggregateEquityCurve, aggregate: { equityCurve: aggregateEquityCurve, result: aggregateResult } };
+}
+
+/** Equal-weight average of normalized equity curves (each starts at the same capital). */
+export function averageEquityCurves(rows, initialCapital = 10000) {
+  if (!rows?.length) return [];
+
+  const times = [
+    ...new Set(rows.flatMap((row) => row.result.equityCurve.map((point) => point.time))),
+  ].sort((a, b) => a - b);
+
+  function valueAt(curve, time) {
+    if (!curve.length) return initialCapital;
+    let value = curve[0].equity;
+    for (const point of curve) {
+      if (point.time > time) break;
+      value = point.equity;
+    }
+    return value;
+  }
+
+  return times.map((time) => {
+    const normalized = rows.map((row) => valueAt(row.result.equityCurve, time) / row.result.initialCapital);
+    const avgNorm = mean(normalized);
+    return { time, equity: avgNorm * initialCapital };
+  });
+}
+
+export function summarizeEquityCurve(equityCurve, { initialCapital = 10000, candles = [], benchmarkReturnPercent = null } = {}) {
+  if (!equityCurve?.length) {
+    return {
+      equityCurve: [],
+      initialCapital,
+      finalEquity: initialCapital,
+      totalReturnPercent: 0,
+      maxDrawdownPercent: 0,
+      sharpe: null,
+      sortino: null,
+      benchmarkReturnPercent,
+    };
+  }
+
+  const finalEquity = equityCurve[equityCurve.length - 1].equity;
+  const totalReturnPercent = ((finalEquity - initialCapital) / initialCapital) * 100;
+
+  let peak = -Infinity;
+  let maxDrawdownPercent = 0;
+  for (const point of equityCurve) {
+    if (point.equity > peak) peak = point.equity;
+    const dd = peak > 0 ? ((peak - point.equity) / peak) * 100 : 0;
+    if (dd > maxDrawdownPercent) maxDrawdownPercent = dd;
+  }
+
+  const periodReturns = [];
+  for (let i = 1; i < equityCurve.length; i++) {
+    const prev = equityCurve[i - 1].equity;
+    if (prev > 0) periodReturns.push(equityCurve[i].equity / prev - 1);
+  }
+  const meanRet = mean(periodReturns);
+  const stdRet = std(periodReturns, meanRet);
+  const downside = std(periodReturns.filter((r) => r < 0), 0);
+  const periodsPerYear = estimatePeriodsPerYear(candles);
+  const sharpe = stdRet > 0 ? (meanRet / stdRet) * Math.sqrt(periodsPerYear) : null;
+  const sortino = downside > 0 ? (meanRet / downside) * Math.sqrt(periodsPerYear) : null;
+
+  return {
+    equityCurve,
+    initialCapital,
+    finalEquity,
+    totalReturnPercent,
+    maxDrawdownPercent,
+    sharpe,
+    sortino,
+    benchmarkReturnPercent,
+  };
 }
 
 function mean(arr) {
