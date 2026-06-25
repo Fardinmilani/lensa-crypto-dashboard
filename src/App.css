@@ -2089,6 +2089,76 @@
   font-size: 0.7rem;
 }
 
+/* ---- Section explanatory note ---- */
+.section-note {
+  margin: 0 0 14px;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.7;
+  max-width: 70ch;
+}
+
+/* ---- Aggregate backtest ---- */
+.aggregate-results {
+  margin-top: 8px;
+}
+.agg-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+}
+.agg-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-raised);
+}
+.agg-kpi--accent {
+  border-color: var(--border-glow);
+  background: linear-gradient(135deg, rgba(201, 166, 107, 0.12), var(--bg-raised));
+}
+.agg-kpi__label {
+  font-size: 0.72rem;
+  color: var(--text-tertiary);
+}
+.agg-kpi__value {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.agg-kpi__sub {
+  font-size: 0.76rem;
+  color: var(--text-secondary);
+}
+.agg-table__name {
+  white-space: normal;
+  min-width: 180px;
+}
+.agg-name {
+  display: block;
+  color: var(--text-primary);
+}
+.agg-table__name small {
+  color: var(--text-tertiary);
+  font-size: 0.68rem;
+}
+.agg-table__rank {
+  color: var(--text-tertiary);
+}
+.agg-row {
+  cursor: pointer;
+}
+.agg-row:hover {
+  background: var(--bg-raised);
+}
+.agg-row:first-child .agg-name {
+  color: var(--gold-2);
+  font-weight: 700;
+}
+
 /* ---- Forecast columns ---- */
 .forecast-cols {
   display: grid;

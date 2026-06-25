@@ -125,6 +125,54 @@ export function runBacktest({ candles, signals, feePercent = 0.1, initialCapital
   };
 }
 
+// Run every non-benchmark strategy (with its default params) on the same
+// candles and compare them against a single Buy & Hold benchmark. Returns the
+// per-strategy rows plus a set of aggregate KPIs for a portfolio-level view.
+export function runAllStrategies({ candles, strategies, feePercent = 0.1 }) {
+  const benchmarkDef = strategies.buyAndHold;
+  const benchmark = runBacktest({
+    candles,
+    signals: benchmarkDef.generateSignals(candles),
+    feePercent,
+  });
+
+  const rows = Object.entries(strategies)
+    .filter(([, s]) => s.category !== "benchmark")
+    .map(([key, strategy]) => {
+      const signals = strategy.generateSignals(candles, strategy.params);
+      const result = runBacktest({ candles, signals, feePercent });
+      return {
+        key,
+        label: strategy.label,
+        category: strategy.category,
+        params: strategy.params,
+        result,
+        excessReturn: result.totalReturnPercent - benchmark.totalReturnPercent,
+        beatsBenchmark: result.totalReturnPercent > benchmark.totalReturnPercent,
+      };
+    })
+    .sort((a, b) => b.result.totalReturnPercent - a.result.totalReturnPercent);
+
+  const returns = rows.map((r) => r.result.totalReturnPercent);
+  const sharpeRows = rows.filter((r) => Number.isFinite(r.result.sharpe));
+  const bestBySharpe = sharpeRows.length
+    ? sharpeRows.reduce((best, r) => (r.result.sharpe > best.result.sharpe ? r : best))
+    : null;
+
+  const summary = {
+    count: rows.length,
+    benchmarkReturn: benchmark.totalReturnPercent,
+    best: rows[0] || null,
+    worst: rows[rows.length - 1] || null,
+    bestBySharpe,
+    beatsBenchmark: rows.filter((r) => r.beatsBenchmark).length,
+    profitable: rows.filter((r) => r.result.totalReturnPercent > 0).length,
+    avgReturn: mean(returns),
+  };
+
+  return { benchmark, rows, summary };
+}
+
 function mean(arr) {
   if (!arr.length) return 0;
   return arr.reduce((a, b) => a + b, 0) / arr.length;
