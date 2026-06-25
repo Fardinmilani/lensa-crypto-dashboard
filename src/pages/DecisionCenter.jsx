@@ -8,6 +8,8 @@ import { calculateATR } from "../lib/risk";
 import { formatPrice, formatUsd } from "../lib/priceFormat";
 import { qualityMetaFromError } from "../lib/dataQuality";
 import { useMarket } from "../context/MarketContext";
+import { useI18n } from "../i18n/langStore";
+import { translations } from "../i18n/translations";
 import { useLocalStorageState } from "../hooks/useLocalStorageState";
 import { useStaggerReveal } from "../hooks/useAnimations";
 
@@ -22,6 +24,28 @@ const WATCH_CACHE_MS = 60_000;
 const JOURNAL_STORE = "paperTrades";
 const DB_NAME = "lensa-decision-center";
 const DB_VERSION = 1;
+
+function tr(t, key, vars, fallback) {
+  if (typeof t !== "function") return fallback;
+  const value = t(key, vars);
+  return value === key ? fallback : value;
+}
+
+function decisionTerm(t, value) {
+  if (value == null) return "";
+  const key = String(value).toLowerCase().replace(/\s+/g, "-");
+  return tr(t, `decision.term.${key}`, undefined, value);
+}
+
+function translateKnownDecisionText(text, t) {
+  if (!text || typeof text !== "string") return text;
+  for (const dict of [translations.en, translations.fa]) {
+    for (const [key, value] of Object.entries(dict)) {
+      if (key.startsWith("decision.") && value === text) return t(key);
+    }
+  }
+  return text;
+}
 
 function openTradeDb() {
   return new Promise((resolve, reject) => {
@@ -165,6 +189,7 @@ function evaluateBrowserAlert(alert, decision, market) {
 
 export default function DecisionCenter() {
   const { market, updateFromCandles } = useMarket();
+  const { t, lang } = useI18n();
   const [decision, setDecision] = useState(null);
   const [dataMeta, setDataMeta] = useState(null);
   const [analysisMarket, setAnalysisMarket] = useState(null);
@@ -183,11 +208,23 @@ export default function DecisionCenter() {
   const [note, setNote] = useState("");
   const [alertPrice, setAlertPrice] = useState("");
   const watchCache = useRef(new Map());
+  const lastLang = useRef(lang);
   const reveal = useStaggerReveal([decision, error]);
 
   useEffect(() => {
     loadPaperTrades().then(setPaperTrades);
   }, []);
+
+  useEffect(() => {
+    if (lastLang.current === lang) return undefined;
+    lastLang.current = lang;
+    const timer = window.setTimeout(() => {
+      setDecision(null);
+      setWatchResults([]);
+      setError(null);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [lang]);
 
   useEffect(() => {
     if (!decision || !alerts.length) return;
@@ -222,11 +259,11 @@ export default function DecisionCenter() {
         pair: market.pair,
         marketType: market.marketType,
       });
-      if (candles.length < 60) throw new Error("Not enough candles for long/short decision analysis.");
+      if (candles.length < 60) throw new Error(t("decision.error.notEnoughCandles"));
       updateFromCandles(candles);
       setDataMeta(candles.meta || null);
       setAnalysisMarket(snapshotContext(market));
-      setDecision(analyzeDecision(candles, candles.meta, market));
+      setDecision(analyzeDecision(candles, candles.meta, market, t));
     } catch (err) {
       setError(err.message);
       setDecision(null);
@@ -245,8 +282,8 @@ export default function DecisionCenter() {
   }, [decision]);
 
   const risk = useMemo(
-    () => (activeSetup ? calculateRiskEngine(activeSetup, riskInputs, market) : null),
-    [activeSetup, riskInputs, market]
+    () => (activeSetup ? calculateRiskEngine(activeSetup, riskInputs, market, t) : null),
+    [activeSetup, riskInputs, market, t]
   );
 
   const scopedJournal = useMemo(
@@ -316,7 +353,7 @@ export default function DecisionCenter() {
           pair: symbol,
           marketType: market.marketType,
         });
-        const rowDecision = analyzeDecision(candles, candles.meta, { ...market, pair: symbol, symbol: symbol.replace(/USDT$/i, "") });
+        const rowDecision = analyzeDecision(candles, candles.meta, { ...market, pair: symbol, symbol: symbol.replace(/USDT$/i, "") }, t);
         const row = {
           symbol,
           price: candles.at(-1)?.close,
@@ -418,31 +455,31 @@ export default function DecisionCenter() {
   return (
     <div className="decision-page" ref={reveal}>
       <div className="disclaimer-banner reveal">
-        Rule-based decision support only. Lensa does not connect to exchanges, execute orders, or provide financial advice.
+        {t("decision.disclaimer")}
       </div>
 
       <div className="glass-card decision-hero reveal">
-        <MarketContextBar module="Decision Center" lastPrice={decision?.lastPrice} />
-        <DataQualityGuard module="Decision Center" meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
+        <MarketContextBar module={t("decision.module")} lastPrice={decision?.lastPrice} />
+        <DataQualityGuard module={t("decision.module")} meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
         <div className="decision-hero__main">
           <div>
-            <span className="panel-subtitle">Active Market Context</span>
+            <span className="panel-subtitle">{t("decision.activeContext")}</span>
             <h1>{market.pair} · {market.marketType}</h1>
           </div>
           <button className="run-btn" onClick={runDecision} disabled={loading}>
-            {loading ? "Analyzing..." : "Analyze Long / Short"}
+            {loading ? t("decision.analyzing") : t("decision.analyze")}
           </button>
         </div>
       </div>
 
       {market.marketType === "Spot" && (
         <div className="source-warning reveal">
-          Spot market selected: Short is directional analysis only. Lensa is not presenting an executable spot short.
+          {t("decision.warning.spot")}
         </div>
       )}
       {market.marketType !== "Spot" && (
         <div className="source-warning reveal">
-          Futures framing is enabled for both Long and Short, but Lensa still does not execute trades or connect to accounts.
+          {t("decision.warning.futures")}
         </div>
       )}
 
@@ -450,14 +487,14 @@ export default function DecisionCenter() {
 
       {decision && (
         <>
-          <TradeDecisionPanel decision={decision} precision={decision.precision} market={market} meta={dataMeta} />
-          <DecisionTestsPanel decision={decision} />
+          <TradeDecisionPanel decision={decision} precision={decision.precision} market={market} meta={dataMeta} t={t} />
+          <DecisionTestsPanel decision={decision} t={t} />
           <SimulationCards cards={decision.simulationCards} />
-          <BacktestSummary backtest={decision.backtest} precision={decision.precision} />
+          <BacktestSummary backtest={decision.backtest} precision={decision.precision} t={t} />
 
           <div className="decision-grid decision-grid--setups">
-            <SetupCard setup={decision.longSetup} precision={decision.precision} market={market} meta={dataMeta} />
-            <SetupCard setup={decision.shortSetup} precision={decision.precision} market={market} meta={dataMeta} />
+            <SetupCard setup={decision.longSetup} precision={decision.precision} market={market} meta={dataMeta} t={t} />
+            <SetupCard setup={decision.shortSetup} precision={decision.precision} market={market} meta={dataMeta} t={t} />
           </div>
 
           <RiskEnginePanel
@@ -468,9 +505,10 @@ export default function DecisionCenter() {
             precision={decision.precision}
             market={market}
             meta={dataMeta}
+            t={t}
           />
 
-          <SetupComparison decision={decision} precision={decision.precision} market={market} meta={dataMeta} />
+          <SetupComparison decision={decision} precision={decision.precision} market={market} meta={dataMeta} t={t} />
 
           <WatchlistScreener
             watchlist={watchlist}
@@ -484,6 +522,7 @@ export default function DecisionCenter() {
             sort={watchSort}
             setSort={setWatchSort}
             precision={market.precision}
+            t={t}
           />
 
           <div className="decision-grid">
@@ -500,6 +539,7 @@ export default function DecisionCenter() {
               importPaperTrades={importPaperTrades}
               removePaperTrade={removePaperTrade}
               markPaperTrade={markPaperTrade}
+              t={t}
             />
             <BrowserAlertsPanel
               alertPrice={alertPrice}
@@ -512,6 +552,7 @@ export default function DecisionCenter() {
               market={market}
               precision={decision.precision}
               removeAlert={(id) => setAlerts((prev) => prev.filter((item) => item.id !== id))}
+              t={t}
             />
           </div>
         </>
@@ -520,7 +561,7 @@ export default function DecisionCenter() {
   );
 }
 
-function analyzeDecision(candles, meta, market) {
+function analyzeDecision(candles, meta, market, t) {
   const closes = candles.map((c) => c.close);
   const volumes = candles.map((c) => c.volume || 0);
   const last = candles.at(-1);
@@ -557,6 +598,7 @@ function analyzeDecision(candles, meta, market) {
 
   const longSetup = buildSetup({
     side: "Long",
+    t,
     lastPrice: last.close,
     lastCandleTime: last.time || last.timestamp || null,
     atr,
@@ -577,6 +619,7 @@ function analyzeDecision(candles, meta, market) {
   });
   const shortSetup = buildSetup({
     side: "Short",
+    t,
     lastPrice: last.close,
     atr,
     precision,
@@ -600,7 +643,7 @@ function analyzeDecision(candles, meta, market) {
   const tests = buildTestSuite({
     trendLong, trendShort, momentumLong, momentumShort, r, hist, prevHist,
     atrPct, volumeSupports, volumeFades, currentVolume, avgVolume, mtfLong, mtfShort,
-    mc, backtest, qualityFactor, meta, longSetup, shortSetup,
+    mc, backtest, qualityFactor, meta, longSetup, shortSetup, t,
   });
   const dataQualityScore = Math.round(Math.max(0, Math.min(100, qualityFactor * 100)));
   const riskScore = riskScoreFrom({ atrPct, selected, qualityFactor, backtest });
@@ -608,10 +651,10 @@ function analyzeDecision(candles, meta, market) {
   const confidence = aggregateConfidence({ longSetup, shortSetup, tests, qualityFactor, backtest });
   const mainReason =
     finalDecision === "No Trade"
-      ? "Data quality or setup quality is not strong enough for a trade recommendation."
-      : selected.reasonsFor[0] || "No dominant directional edge.";
-  const simulationCards = buildSimulationCards(mc, precision);
-  const mainReasons = aggregateReasons({ tests, selected, finalDecision });
+      ? tr(t, "decision.reason.noTradeMain", undefined, "Data quality or setup quality is not strong enough for a trade recommendation.")
+      : selected.reasonsFor[0] || tr(t, "decision.reason.noDominantEdge", undefined, "No dominant directional edge.");
+  const simulationCards = buildSimulationCards(mc, precision, t);
+  const mainReasons = aggregateReasons({ tests, selected, finalDecision, t });
 
   return {
     finalDecision,
@@ -623,7 +666,7 @@ function analyzeDecision(candles, meta, market) {
     confidence,
     mainReason,
     mainReasons,
-    changeDecision: whatWouldChangeDecision({ finalDecision, longSetup, shortSetup, tests }),
+    changeDecision: whatWouldChangeDecision({ finalDecision, longSetup, shortSetup, tests, t }),
     conditionRequired: selected.conditionRequired,
     scenarioInvalidation: selected.invalidation,
     lastPrice: last.close,
@@ -641,7 +684,7 @@ function analyzeDecision(candles, meta, market) {
   };
 }
 
-function buildSetup({ side, lastPrice, atr, precision, mc, qualityFactor, facts }) {
+function buildSetup({ side, lastPrice, atr, precision, mc, qualityFactor, facts, t }) {
   const direction = side === "Long" ? 1 : -1;
   const entryMid = lastPrice;
   const entryLow = side === "Long" ? lastPrice - atr * 0.25 : lastPrice - atr * 0.1;
@@ -664,24 +707,25 @@ function buildSetup({ side, lastPrice, atr, precision, mc, qualityFactor, facts 
   const reasonsFor = [];
   const reasonsAgainst = [];
 
-  if (facts.trendOk) reasonsFor.push(`${side} aligns with the EMA trend structure.`);
-  else reasonsAgainst.push(`${side} does not have trend alignment yet.`);
-  if (facts.momentumOk) reasonsFor.push("MACD momentum supports this direction.");
-  else reasonsAgainst.push("Momentum confirmation is weak or absent.");
-  if (facts.rsiOk) reasonsFor.push("RSI is supportive without being extreme.");
-  else reasonsAgainst.push("RSI is not in a clean confirmation zone.");
-  if (facts.mtfOk) reasonsFor.push("Higher-timeframe structure confirms the setup direction.");
-  else reasonsAgainst.push("Higher-timeframe confirmation is missing.");
-  if (facts.volumeOk) reasonsFor.push("Recent volume supports active participation.");
-  else reasonsAgainst.push("Volume behavior is not confirming the move.");
-  if (rr >= 1.2) reasonsFor.push("Target 1 offers acceptable reward relative to stop distance.");
-  else reasonsAgainst.push("Reward-to-risk is not attractive enough.");
-  if (ev != null && ev > 0) reasonsFor.push("Monte Carlo touch probabilities produce positive expected value.");
-  if (ev != null && ev <= 0) reasonsAgainst.push("Touch probabilities do not favor the setup.");
-  if (facts.rsiExtreme) reasonsAgainst.push("RSI is stretched, so chasing entry is lower quality.");
-  if (facts.opposingTrend) reasonsAgainst.push("The opposite trend is currently dominant.");
-  if (facts.qualityWeak) reasonsAgainst.push("Data quality limits confidence in this setup.");
-  if (facts.spotShort) reasonsAgainst.push("Spot market does not provide an executable short in this app.");
+  const sideLabel = decisionTerm(t, side);
+  if (facts.trendOk) reasonsFor.push(tr(t, "decision.reason.trendFor", { side: sideLabel }, `${side} aligns with the EMA trend structure.`));
+  else reasonsAgainst.push(tr(t, "decision.reason.trendAgainst", { side: sideLabel }, `${side} does not have trend alignment yet.`));
+  if (facts.momentumOk) reasonsFor.push(tr(t, "decision.reason.momentumFor", undefined, "MACD momentum supports this direction."));
+  else reasonsAgainst.push(tr(t, "decision.reason.momentumAgainst", undefined, "Momentum confirmation is weak or absent."));
+  if (facts.rsiOk) reasonsFor.push(tr(t, "decision.reason.rsiFor", undefined, "RSI is supportive without being extreme."));
+  else reasonsAgainst.push(tr(t, "decision.reason.rsiAgainst", undefined, "RSI is not in a clean confirmation zone."));
+  if (facts.mtfOk) reasonsFor.push(tr(t, "decision.reason.mtfFor", undefined, "Higher-timeframe structure confirms the setup direction."));
+  else reasonsAgainst.push(tr(t, "decision.reason.mtfAgainst", undefined, "Higher-timeframe confirmation is missing."));
+  if (facts.volumeOk) reasonsFor.push(tr(t, "decision.reason.volumeFor", undefined, "Recent volume supports active participation."));
+  else reasonsAgainst.push(tr(t, "decision.reason.volumeAgainst", undefined, "Volume behavior is not confirming the move."));
+  if (rr >= 1.2) reasonsFor.push(tr(t, "decision.reason.rrFor", undefined, "Target 1 offers acceptable reward relative to stop distance."));
+  else reasonsAgainst.push(tr(t, "decision.reason.rrAgainst", undefined, "Reward-to-risk is not attractive enough."));
+  if (ev != null && ev > 0) reasonsFor.push(tr(t, "decision.reason.evFor", undefined, "Monte Carlo touch probabilities produce positive expected value."));
+  if (ev != null && ev <= 0) reasonsAgainst.push(tr(t, "decision.reason.evAgainst", undefined, "Touch probabilities do not favor the setup."));
+  if (facts.rsiExtreme) reasonsAgainst.push(tr(t, "decision.reason.rsiExtreme", undefined, "RSI is stretched, so chasing entry is lower quality."));
+  if (facts.opposingTrend) reasonsAgainst.push(tr(t, "decision.reason.opposingTrend", undefined, "The opposite trend is currently dominant."));
+  if (facts.qualityWeak) reasonsAgainst.push(tr(t, "decision.reason.qualityWeak", undefined, "Data quality limits confidence in this setup."));
+  if (facts.spotShort) reasonsAgainst.push(tr(t, "decision.reason.spotShort", undefined, "Spot market does not provide an executable short in this app."));
 
   const base =
     (facts.trendOk ? 25 : 0) +
@@ -715,111 +759,111 @@ function buildSetup({ side, lastPrice, atr, precision, mc, qualityFactor, facts 
     reasonsFor,
     reasonsAgainst,
     invalidation,
-    conditionRequired: conditionFor({ side, status, facts, entryLow, entryHigh, precision }),
+    conditionRequired: conditionFor({ side, status, facts, entryLow, entryHigh, precision, t }),
   };
 }
 
-function buildTestSuite({ trendLong, trendShort, momentumLong, momentumShort, r, hist, prevHist, atrPct, volumeSupports, volumeFades, currentVolume, avgVolume, mtfLong, mtfShort, mc, backtest, qualityFactor, meta, longSetup, shortSetup }) {
+function buildTestSuite({ trendLong, trendShort, momentumLong, momentumShort, r, hist, prevHist, atrPct, volumeSupports, volumeFades, currentVolume, avgVolume, mtfLong, mtfShort, mc, backtest, qualityFactor, meta, longSetup, shortSetup, t }) {
   return {
     trend: {
       score: trendLong ? 75 : trendShort ? 25 : 50,
-      summary: trendLong ? "Bullish EMA structure" : trendShort ? "Bearish EMA structure" : "Mixed trend",
-      impact: trendLong ? "Favors Long." : trendShort ? "Favors Short." : "Supports waiting.",
+      summary: trendLong ? tr(t, "decision.test.trend.bullish", undefined, "Bullish EMA structure") : trendShort ? tr(t, "decision.test.trend.bearish", undefined, "Bearish EMA structure") : tr(t, "decision.test.trend.mixed", undefined, "Mixed trend"),
+      impact: trendLong ? tr(t, "decision.test.trend.long", undefined, "Favors Long.") : trendShort ? tr(t, "decision.test.trend.short", undefined, "Favors Short.") : tr(t, "decision.test.trend.wait", undefined, "Supports waiting."),
     },
     momentum: {
       score: momentumLong ? 72 : momentumShort ? 28 : 50,
-      summary: `RSI ${Math.round(r)} with MACD histogram ${hist > prevHist ? "improving" : "weakening"}`,
-      impact: momentumLong ? "Momentum adds Long confirmation." : momentumShort ? "Momentum adds Short confirmation." : "Momentum is not decisive.",
+      summary: tr(t, "decision.test.momentum.summary", { r: Math.round(r), state: hist > prevHist ? tr(t, "decision.term.improving", undefined, "improving") : tr(t, "decision.term.weakening", undefined, "weakening") }, `RSI ${Math.round(r)} with MACD histogram ${hist > prevHist ? "improving" : "weakening"}`),
+      impact: momentumLong ? tr(t, "decision.test.momentum.long", undefined, "Momentum adds Long confirmation.") : momentumShort ? tr(t, "decision.test.momentum.short", undefined, "Momentum adds Short confirmation.") : tr(t, "decision.test.momentum.neutral", undefined, "Momentum is not decisive."),
     },
     volatility: {
       score: atrPct < 0.018 ? 72 : atrPct < 0.045 ? 52 : 28,
-      summary: atrPct < 0.018 ? "Calm volatility" : atrPct < 0.045 ? "Elevated volatility" : "High volatility",
-      impact: atrPct > 0.045 ? "Position sizing should be reduced or skipped." : "Volatility is usable for structured risk.",
+      summary: atrPct < 0.018 ? tr(t, "decision.test.volatility.calm", undefined, "Calm volatility") : atrPct < 0.045 ? tr(t, "decision.test.volatility.elevated", undefined, "Elevated volatility") : tr(t, "decision.test.volatility.high", undefined, "High volatility"),
+      impact: atrPct > 0.045 ? tr(t, "decision.test.volatility.reduce", undefined, "Position sizing should be reduced or skipped.") : tr(t, "decision.test.volatility.usable", undefined, "Volatility is usable for structured risk."),
     },
     volume: {
       score: volumeSupports ? 70 : volumeFades ? 30 : 50,
-      summary: volumeSupports ? "Volume is above recent average" : volumeFades ? "Volume is fading" : "Volume is neutral",
-      impact: volumeSupports ? "Breakout/follow-through evidence improves." : "Conviction is weaker without volume.",
-      detail: `${Math.round(currentVolume)} vs avg ${Math.round(avgVolume || 0)}`,
+      summary: volumeSupports ? tr(t, "decision.test.volume.above", undefined, "Volume is above recent average") : volumeFades ? tr(t, "decision.test.volume.fading", undefined, "Volume is fading") : tr(t, "decision.test.volume.neutral", undefined, "Volume is neutral"),
+      impact: volumeSupports ? tr(t, "decision.test.volume.supportive", undefined, "Breakout/follow-through evidence improves.") : tr(t, "decision.test.volume.weak", undefined, "Conviction is weaker without volume."),
+      detail: tr(t, "decision.test.volume.detail", { current: Math.round(currentVolume), avg: Math.round(avgVolume || 0) }, `${Math.round(currentVolume)} vs avg ${Math.round(avgVolume || 0)}`),
     },
     multiTimeframe: {
       score: mtfLong ? 70 : mtfShort ? 30 : 50,
-      summary: mtfLong ? "Higher timeframe leans bullish" : mtfShort ? "Higher timeframe leans bearish" : "Higher timeframe mixed",
-      impact: mtfLong ? "Long setups get confirmation." : mtfShort ? "Short setups get confirmation." : "No extra confirmation.",
+      summary: mtfLong ? tr(t, "decision.test.mtf.bullish", undefined, "Higher timeframe leans bullish") : mtfShort ? tr(t, "decision.test.mtf.bearish", undefined, "Higher timeframe leans bearish") : tr(t, "decision.test.mtf.mixed", undefined, "Higher timeframe mixed"),
+      impact: mtfLong ? tr(t, "decision.test.mtf.long", undefined, "Long setups get confirmation.") : mtfShort ? tr(t, "decision.test.mtf.short", undefined, "Short setups get confirmation.") : tr(t, "decision.test.mtf.none", undefined, "No extra confirmation."),
     },
     monteCarlo: {
       score: mc?.error ? 35 : Math.round((mc.probProfit || 0.5) * 100),
-      summary: mc?.error ? "Simulation unavailable" : `Positive close probability ${Math.round(mc.probProfit * 100)}%`,
-      impact: mc?.error ? "Confidence is reduced." : mc.probProfit > 0.58 ? "Simulation supports upside." : mc.probProfit < 0.42 ? "Simulation warns about downside." : "Simulation is not strong enough by itself.",
+      summary: mc?.error ? tr(t, "decision.sim.unavailable", undefined, "Simulation unavailable") : tr(t, "decision.test.mc.summary", { p: Math.round(mc.probProfit * 100) }, `Positive close probability ${Math.round(mc.probProfit * 100)}%`),
+      impact: mc?.error ? tr(t, "decision.test.mc.reduced", undefined, "Confidence is reduced.") : mc.probProfit > 0.58 ? tr(t, "decision.test.mc.upside", undefined, "Simulation supports upside.") : mc.probProfit < 0.42 ? tr(t, "decision.test.mc.downside", undefined, "Simulation warns about downside.") : tr(t, "decision.test.mc.neutral", undefined, "Simulation is not strong enough by itself."),
     },
     backtest: {
       score: backtest.tradeCount < 8 ? 45 : backtest.profitFactor > 1.25 ? 68 : backtest.profitFactor < 0.9 ? 32 : 50,
-      summary: `${backtest.tradeCount} trades, ${Math.round(backtest.winRate || 0)}% win rate`,
-      impact: backtest.reliabilityWarning || (backtest.profitFactor > 1 ? "Historical rule is supportive." : "Historical rule is not supportive."),
+      summary: tr(t, "decision.test.backtest.summary", { trades: backtest.tradeCount, winRate: Math.round(backtest.winRate || 0) }, `${backtest.tradeCount} trades, ${Math.round(backtest.winRate || 0)}% win rate`),
+      impact: backtest.reliabilityWarning || (backtest.profitFactor > 1 ? tr(t, "decision.test.backtest.supportive", undefined, "Historical rule is supportive.") : tr(t, "decision.test.backtest.unsupportive", undefined, "Historical rule is not supportive.")),
     },
     riskReward: {
       score: Math.round(Math.max(longSetup.riskReward, shortSetup.riskReward) * 35),
-      summary: `Best R:R 1:${formatPrice(Math.max(longSetup.riskReward, shortSetup.riskReward), {}, { mode: "display" })}`,
-      impact: Math.max(longSetup.riskReward, shortSetup.riskReward) >= 1.4 ? "Reward is acceptable for consideration." : "Reward is too thin for a strong decision.",
+      summary: tr(t, "decision.test.rr.summary", { rr: formatPrice(Math.max(longSetup.riskReward, shortSetup.riskReward), {}, { mode: "display" }) }, `Best R:R 1:${formatPrice(Math.max(longSetup.riskReward, shortSetup.riskReward), {}, { mode: "display" })}`),
+      impact: Math.max(longSetup.riskReward, shortSetup.riskReward) >= 1.4 ? tr(t, "decision.test.rr.acceptable", undefined, "Reward is acceptable for consideration.") : tr(t, "decision.test.rr.thin", undefined, "Reward is too thin for a strong decision."),
     },
     expectedValue: {
       score: Math.round(Math.max(0, Math.min(100, ((Math.max(longSetup.expectedValue ?? -1, shortSetup.expectedValue ?? -1) + 1) / 2) * 100))),
-      summary: `Best EV ${formatPrice(Math.max(longSetup.expectedValue ?? 0, shortSetup.expectedValue ?? 0), {}, { mode: "display" })}`,
-      impact: Math.max(longSetup.expectedValue ?? -1, shortSetup.expectedValue ?? -1) > 0 ? "Probability-adjusted payoff is positive." : "Probability-adjusted payoff is not convincing.",
+      summary: tr(t, "decision.test.ev.summary", { ev: formatPrice(Math.max(longSetup.expectedValue ?? 0, shortSetup.expectedValue ?? 0), {}, { mode: "display" }) }, `Best EV ${formatPrice(Math.max(longSetup.expectedValue ?? 0, shortSetup.expectedValue ?? 0), {}, { mode: "display" })}`),
+      impact: Math.max(longSetup.expectedValue ?? -1, shortSetup.expectedValue ?? -1) > 0 ? tr(t, "decision.test.ev.positive", undefined, "Probability-adjusted payoff is positive.") : tr(t, "decision.test.ev.weak", undefined, "Probability-adjusted payoff is not convincing."),
     },
     dataQuality: {
       score: Math.round(qualityFactor * 100),
       summary: meta?.quality?.status || meta?.status || "Limited",
-      impact: qualityFactor < 0.75 ? "Decision confidence is capped by data quality." : "Data quality is acceptable.",
+      impact: qualityFactor < 0.75 ? tr(t, "decision.test.quality.capped", undefined, "Decision confidence is capped by data quality.") : tr(t, "decision.test.quality.acceptable", undefined, "Data quality is acceptable."),
     },
   };
 }
 
-function buildSimulationCards(mc, precision) {
+function buildSimulationCards(mc, precision, t) {
   if (!mc || mc.error) {
-    return [{ label: "Simulation unavailable", number: "N/A", explanation: mc?.error || "Monte Carlo could not run.", impact: "The Decision Center lowers confidence and avoids a strong recommendation." }];
+    return [{ label: tr(t, "decision.sim.unavailable", undefined, "Simulation unavailable"), number: "N/A", explanation: mc?.error || tr(t, "decision.sim.error", undefined, "Monte Carlo could not run."), impact: tr(t, "decision.sim.unavailableImpact", undefined, "The Decision Center lowers confidence and avoids a strong recommendation.") }];
   }
   const profitPct = Math.round(mc.probProfit * 100);
   return [
     {
-      label: "Positive close probability",
+      label: tr(t, "decision.sim.prob.label", undefined, "Positive close probability"),
       number: `${profitPct}%`,
-      explanation: `Around ${profitPct} out of 100 simulated paths ended positive over the selected horizon.`,
-      impact: profitPct >= 58 ? "This supports a Long bias, but still needs trend and risk confirmation." : profitPct <= 42 ? "This weakens Long entries and favors caution or Short analysis." : "This is not strong enough by itself to justify entry.",
+      explanation: tr(t, "decision.sim.prob.explanation", { p: profitPct }, `Around ${profitPct} out of 100 simulated paths ended positive over the selected horizon.`),
+      impact: profitPct >= 58 ? tr(t, "decision.sim.prob.long", undefined, "This supports a Long bias, but still needs trend and risk confirmation.") : profitPct <= 42 ? tr(t, "decision.sim.prob.caution", undefined, "This weakens Long entries and favors caution or Short analysis.") : tr(t, "decision.sim.prob.neutral", undefined, "This is not strong enough by itself to justify entry."),
     },
     {
-      label: "Pessimistic scenario",
+      label: tr(t, "decision.sim.pessimistic.label", undefined, "Pessimistic scenario"),
       number: formatUsd(mc.dist.p5, precision, { mode: "futures" }),
-      explanation: `Only about 5 out of 100 simulated paths closed below this level.`,
-      impact: "Use this as a downside stress level, not as a guaranteed stop.",
+      explanation: tr(t, "decision.sim.pessimistic.explanation", undefined, "Only about 5 out of 100 simulated paths closed below this level."),
+      impact: tr(t, "decision.sim.pessimistic.impact", undefined, "Use this as a downside stress level, not as a guaranteed stop."),
     },
     {
-      label: "Median simulated close",
+      label: tr(t, "decision.sim.median.label", undefined, "Median simulated close"),
       number: formatUsd(mc.dist.p50, precision, { mode: "futures" }),
-      explanation: "Half of simulated paths closed above this price and half below it.",
-      impact: mc.dist.p50 > mc.current ? "The median path leans mildly constructive." : "The median path does not support chasing upside.",
+      explanation: tr(t, "decision.sim.median.explanation", undefined, "Half of simulated paths closed above this price and half below it."),
+      impact: mc.dist.p50 > mc.current ? tr(t, "decision.sim.median.constructive", undefined, "The median path leans mildly constructive.") : tr(t, "decision.sim.median.weak", undefined, "The median path does not support chasing upside."),
     },
     {
-      label: "Optimistic scenario",
+      label: tr(t, "decision.sim.optimistic.label", undefined, "Optimistic scenario"),
       number: formatUsd(mc.dist.p95, precision, { mode: "futures" }),
-      explanation: `Only about 5 out of 100 simulated paths closed above this level.`,
-      impact: "This helps judge whether targets are realistic for the current horizon.",
+      explanation: tr(t, "decision.sim.optimistic.explanation", undefined, "Only about 5 out of 100 simulated paths closed above this level."),
+      impact: tr(t, "decision.sim.optimistic.impact", undefined, "This helps judge whether targets are realistic for the current horizon."),
     },
   ];
 }
 
-function aggregateReasons({ tests, selected, finalDecision }) {
+function aggregateReasons({ tests, selected, finalDecision, t }) {
   const reasons = [selected.reasonsFor[0], tests.trend.impact, tests.momentum.impact, tests.dataQuality.impact].filter(Boolean);
-  if (finalDecision === "Wait") reasons.unshift("Long and Short scores are not separated enough for a clean trade.");
-  if (finalDecision === "No Trade") reasons.unshift("The combined evidence is too weak or too unreliable.");
+  if (finalDecision === "Wait") reasons.unshift(tr(t, "decision.reason.waitScores", undefined, "Long and Short scores are not separated enough for a clean trade."));
+  if (finalDecision === "No Trade") reasons.unshift(tr(t, "decision.reason.weakEvidence", undefined, "The combined evidence is too weak or too unreliable."));
   return [...new Set(reasons)].slice(0, 6);
 }
 
-function whatWouldChangeDecision({ finalDecision, longSetup, shortSetup, tests }) {
-  if (finalDecision === "Long") return "A momentum rollover, loss of higher-timeframe confirmation, or price moving through the Long invalidation level would downgrade the decision.";
-  if (finalDecision === "Short") return "A bullish trend reclaim, improving volume into upside, or price moving through the Short invalidation level would downgrade the decision.";
+function whatWouldChangeDecision({ finalDecision, longSetup, shortSetup, tests, t }) {
+  if (finalDecision === "Long") return tr(t, "decision.change.long", undefined, "A momentum rollover, loss of higher-timeframe confirmation, or price moving through the Long invalidation level would downgrade the decision.");
+  if (finalDecision === "Short") return tr(t, "decision.change.short", undefined, "A bullish trend reclaim, improving volume into upside, or price moving through the Short invalidation level would downgrade the decision.");
   const better = longSetup.score >= shortSetup.score ? "Long" : "Short";
-  return `A cleaner ${better} decision needs stronger trend/momentum alignment, better expected value, and data quality above ${tests.dataQuality.score < 75 ? "75%" : "the current level"}.`;
+  return tr(t, "decision.change.wait", { side: decisionTerm(t, better), level: tests.dataQuality.score < 75 ? "75%" : tr(t, "decision.term.currentLevel", undefined, "the current level") }, `A cleaner ${better} decision needs stronger trend/momentum alignment, better expected value, and data quality above ${tests.dataQuality.score < 75 ? "75%" : "the current level"}.`);
 }
 
 function aggregateConfidence({ longSetup, shortSetup, tests, qualityFactor, backtest }) {
@@ -913,11 +957,11 @@ function chooseFinalDecision(longSetup, shortSetup, qualityFactor) {
   return best.side;
 }
 
-function conditionFor({ side, status, facts, entryLow, entryHigh, precision }) {
-  if (status === "Rejected") return "Wait for trend, momentum, and probability alignment before considering entry.";
-  if (!facts.trendOk) return `Wait for trend confirmation before using the ${formatUsd(entryLow, precision, { mode: "trading" })} - ${formatUsd(entryHigh, precision, { mode: "trading" })} zone.`;
-  if (!facts.momentumOk) return "Wait for momentum confirmation; avoid entering while MACD disagrees.";
-  return `${side} is only valid inside the proposed entry zone, not after an extended chase.`;
+function conditionFor({ side, status, facts, entryLow, entryHigh, precision, t }) {
+  if (status === "Rejected") return tr(t, "decision.condition.rejected", undefined, "Wait for trend, momentum, and probability alignment before considering entry.");
+  if (!facts.trendOk) return tr(t, "decision.condition.trend", { zone: `${formatUsd(entryLow, precision, { mode: "trading" })} - ${formatUsd(entryHigh, precision, { mode: "trading" })}` }, `Wait for trend confirmation before using the ${formatUsd(entryLow, precision, { mode: "trading" })} - ${formatUsd(entryHigh, precision, { mode: "trading" })} zone.`);
+  if (!facts.momentumOk) return tr(t, "decision.condition.momentum", undefined, "Wait for momentum confirmation; avoid entering while MACD disagrees.");
+  return tr(t, "decision.condition.validZone", { side: decisionTerm(t, side) }, `${side} is only valid inside the proposed entry zone, not after an extended chase.`);
 }
 
 function riskLevelFrom({ atr, price, qualityFactor, selected }) {
@@ -927,7 +971,7 @@ function riskLevelFrom({ atr, price, qualityFactor, selected }) {
   return "Low";
 }
 
-function calculateRiskEngine(setup, inputs, market) {
+function calculateRiskEngine(setup, inputs, market, t) {
   const account = Number(inputs.accountSize) || 0;
   const riskPercent = Number(inputs.riskPercent) || 0;
   const leverage = Math.max(1, Number(inputs.leverage) || 1);
@@ -957,12 +1001,12 @@ function calculateRiskEngine(setup, inputs, market) {
       : entry * (1 + 1 / leverage);
   const warnings = [];
 
-  if (notional > maxNotional) warnings.push("Position size was capped by account size and leverage.");
-  if (leverage >= 10) warnings.push("Leverage is high; liquidation risk can dominate the setup.");
-  if (setup.atr && Math.abs(entry - stop) < setup.atr * 0.8) warnings.push("Stop is tight relative to recent volatility.");
+  if (notional > maxNotional) warnings.push(tr(t, "decision.risk.warning.capped", undefined, "Position size was capped by account size and leverage."));
+  if (leverage >= 10) warnings.push(tr(t, "decision.risk.warning.leverage", undefined, "Leverage is high; liquidation risk can dominate the setup."));
+  if (setup.atr && Math.abs(entry - stop) < setup.atr * 0.8) warnings.push(tr(t, "decision.risk.warning.tightStop", undefined, "Stop is tight relative to recent volatility."));
   if (liquidation != null) {
     const liquidationBeforeStop = setup.side === "Long" ? liquidation > stop : liquidation < stop;
-    if (liquidationBeforeStop) warnings.push("Approximate liquidation level is closer than the stop. Reduce leverage or widen margin.");
+    if (liquidationBeforeStop) warnings.push(tr(t, "decision.risk.warning.liquidation", undefined, "Approximate liquidation level is closer than the stop. Reduce leverage or widen margin."));
   }
 
   return {
@@ -976,39 +1020,39 @@ function calculateRiskEngine(setup, inputs, market) {
   };
 }
 
-function TradeDecisionPanel({ decision, precision, market, meta }) {
+function TradeDecisionPanel({ decision, precision, market, meta, t }) {
   return (
     <div className={`trade-decision glass-card reveal trade-decision--${decision.finalDecision.toLowerCase().replace(/\s+/g, "-")}`}>
       <AnalysisContextMeta market={market} meta={meta} lastCandleTime={decision.lastCandleTime} />
       <div>
-        <span className="decision-label">Final decision</span>
-        <strong>{decision.finalDecision}</strong>
+        <span className="decision-label">{t("decision.final")}</span>
+        <strong>{decisionTerm(t, decision.finalDecision)}</strong>
         <p>{decision.mainReason}</p>
       </div>
       <div className="decision-metrics">
-        <Metric label="Long Score" value={`${decision.longScore}/100`} />
-        <Metric label="Short Score" value={`${decision.shortScore}/100`} />
-        <Metric label="Risk score" value={`${decision.riskScore}/100`} />
-        <Metric label="Data quality" value={`${decision.dataQualityScore}/100`} />
-        <Metric label="Risk level" value={decision.riskLevel} />
-        <Metric label="Confidence" value={`${decision.confidence}%`} />
-        <Metric label="Condition before entry" value={decision.conditionRequired} />
-        <Metric label="Scenario invalidation" value={formatUsd(decision.scenarioInvalidation, precision, { mode: "futures" })} />
+        <Metric label={t("decision.metric.longScore")} value={`${decision.longScore}/100`} />
+        <Metric label={t("decision.metric.shortScore")} value={`${decision.shortScore}/100`} />
+        <Metric label={t("decision.metric.riskScore")} value={`${decision.riskScore}/100`} />
+        <Metric label={t("decision.metric.dataQuality")} value={`${decision.dataQualityScore}/100`} />
+        <Metric label={t("decision.metric.riskLevel")} value={decisionTerm(t, decision.riskLevel)} />
+        <Metric label={t("decision.metric.confidence")} value={`${decision.confidence}%`} />
+        <Metric label={t("decision.metric.condition")} value={decision.conditionRequired} />
+        <Metric label={t("decision.metric.invalidation")} value={formatUsd(decision.scenarioInvalidation, precision, { mode: "futures" })} />
       </div>
-      <ReasonList title="Main reasons" items={decision.mainReasons} />
-      <p className="card-hint"><strong>What would change it:</strong> {decision.changeDecision}</p>
+      <ReasonList title={t("decision.mainReasons")} items={decision.mainReasons} t={t} />
+      <p className="card-hint"><strong>{t("decision.whatChanges")}</strong> {decision.changeDecision}</p>
     </div>
   );
 }
 
-function DecisionTestsPanel({ decision }) {
+function DecisionTestsPanel({ decision, t }) {
   return (
     <div className="glass-card decision-analysis-card reveal">
-      <div className="panel-header"><h2>Aggregated tests</h2><span className="panel-subtitle">One decision from all available front-end checks</span></div>
+      <div className="panel-header"><h2>{t("decision.tests.title")}</h2><span className="panel-subtitle">{t("decision.tests.subtitle")}</span></div>
       <div className="decision-test-grid">
         {Object.entries(decision.tests).map(([key, test]) => (
           <div className="decision-test" key={key}>
-            <span>{labelize(key)}</span>
+            <span>{labelize(key, t)}</span>
             <strong>{test.score}/100</strong>
             <p>{test.summary}</p>
             <small>{test.impact}</small>
@@ -1034,26 +1078,26 @@ function SimulationCards({ cards }) {
   );
 }
 
-function BacktestSummary({ backtest, precision }) {
+function BacktestSummary({ backtest, precision, t }) {
   const lastTrades = backtest.trades.slice(-5).reverse();
   return (
     <div className="glass-card table-card reveal">
       <div className="panel-header">
-        <h2>Lightweight backtest</h2>
-        <span className="panel-subtitle">EMA 9/21 rule over fetched candles, with fee and slippage included</span>
+        <h2>{t("decision.backtest.title")}</h2>
+        <span className="panel-subtitle">{t("decision.backtest.subtitle")}</span>
       </div>
-      {backtest.reliabilityWarning && <div className="source-warning">{backtest.reliabilityWarning}</div>}
+      {backtest.reliabilityWarning && <div className="source-warning">{t("decision.backtest.lowSample")}</div>}
       <div className="decision-metrics">
-        <Metric label="Trade count" value={backtest.tradeCount} />
-        <Metric label="Win rate" value={`${Math.round(backtest.winRate)}%`} />
-        <Metric label="Profit factor" value={Number.isFinite(backtest.profitFactor) ? formatPrice(backtest.profitFactor, {}, { mode: "display" }) : "Infinite"} />
-        <Metric label="Max drawdown" value={`${formatPrice(backtest.maxDrawdown, {}, { mode: "display" })}%`} />
-        <Metric label="Average R" value={formatPrice(backtest.averageR, {}, { mode: "display" })} />
-        <Metric label="Worst losing streak" value={backtest.worstLosingStreak} />
+        <Metric label={t("decision.backtest.tradeCount")} value={backtest.tradeCount} />
+        <Metric label={t("decision.backtest.winRate")} value={`${Math.round(backtest.winRate)}%`} />
+        <Metric label={t("decision.backtest.profitFactor")} value={Number.isFinite(backtest.profitFactor) ? formatPrice(backtest.profitFactor, {}, { mode: "display" }) : t("decision.term.infinite")} />
+        <Metric label={t("decision.backtest.maxDrawdown")} value={`${formatPrice(backtest.maxDrawdown, {}, { mode: "display" })}%`} />
+        <Metric label={t("decision.backtest.averageR")} value={formatPrice(backtest.averageR, {}, { mode: "display" })} />
+        <Metric label={t("decision.backtest.worstLosingStreak")} value={backtest.worstLosingStreak} />
       </div>
       <div className="table-scroll">
         <table className="trades-table">
-          <thead><tr><th>Entry</th><th>Exit</th><th>Result</th></tr></thead>
+          <thead><tr><th>{t("decision.table.entry")}</th><th>{t("decision.table.exit")}</th><th>{t("decision.table.result")}</th></tr></thead>
           <tbody>
             {lastTrades.map((trade) => (
               <tr key={`${trade.entryTime}-${trade.exitTime}`}>
@@ -1062,7 +1106,7 @@ function BacktestSummary({ backtest, precision }) {
                 <td className={`num ${trade.r >= 0 ? "up" : "down"}`}>{formatPrice(trade.r, {}, { mode: "display" })}%</td>
               </tr>
             ))}
-            {!lastTrades.length && <tr><td colSpan="3">No completed trades in the fetched range.</td></tr>}
+            {!lastTrades.length && <tr><td colSpan="3">{t("decision.backtest.noTrades")}</td></tr>}
           </tbody>
         </table>
       </div>
@@ -1070,59 +1114,59 @@ function BacktestSummary({ backtest, precision }) {
   );
 }
 
-function SetupCard({ setup, precision, market, meta }) {
+function SetupCard({ setup, precision, market, meta, t }) {
   return (
     <div className={`setup-card glass-card reveal setup-card--${setup.status.toLowerCase()}`}>
       <AnalysisContextMeta market={market} meta={meta} />
       <div className="setup-card__head">
-        <h2>{setup.side} Setup</h2>
-        <span>{setup.status}</span>
+        <h2>{t("decision.setup.title", { side: decisionTerm(t, setup.side) })}</h2>
+        <span>{decisionTerm(t, setup.status)}</span>
       </div>
       <div className="decision-metrics">
-        <Metric label="Entry zone" value={`${formatUsd(setup.entryLow, precision, { mode: "trading" })} - ${formatUsd(setup.entryHigh, precision, { mode: "trading" })}`} />
-        <Metric label="Stop loss" value={formatUsd(setup.stop, precision, { mode: "futures" })} />
-        <Metric label="Target 1" value={formatUsd(setup.target1, precision, { mode: "futures" })} />
-        <Metric label="Target 2" value={formatUsd(setup.target2, precision, { mode: "futures" })} />
-        <Metric label="Risk/reward" value={`1:${formatPrice(setup.riskReward, {}, { mode: "display" })}`} />
-        <Metric label="Expected value" value={setup.expectedValue == null ? "Unavailable" : formatPrice(setup.expectedValue, {}, { mode: "display" })} />
-        <Metric label="P(target before stop)" value={formatProbability(setup.pTargetBeforeStop)} />
-        <Metric label="P(stop before target)" value={formatProbability(setup.pStopBeforeTarget)} />
-        <Metric label="Setup score" value={`${setup.score}/100`} />
-        <Metric label="Invalidation" value={formatUsd(setup.invalidation, precision, { mode: "futures" })} />
+        <Metric label={t("decision.metric.entryZone")} value={`${formatUsd(setup.entryLow, precision, { mode: "trading" })} - ${formatUsd(setup.entryHigh, precision, { mode: "trading" })}`} />
+        <Metric label={t("decision.metric.stopLoss")} value={formatUsd(setup.stop, precision, { mode: "futures" })} />
+        <Metric label={t("decision.metric.target1")} value={formatUsd(setup.target1, precision, { mode: "futures" })} />
+        <Metric label={t("decision.metric.target2")} value={formatUsd(setup.target2, precision, { mode: "futures" })} />
+        <Metric label={t("decision.metric.riskReward")} value={`1:${formatPrice(setup.riskReward, {}, { mode: "display" })}`} />
+        <Metric label={t("decision.metric.expectedValue")} value={setup.expectedValue == null ? t("decision.term.unavailable") : formatPrice(setup.expectedValue, {}, { mode: "display" })} />
+        <Metric label={t("decision.metric.pTargetBeforeStop")} value={formatProbability(setup.pTargetBeforeStop, t)} />
+        <Metric label={t("decision.metric.pStopBeforeTarget")} value={formatProbability(setup.pStopBeforeTarget, t)} />
+        <Metric label={t("decision.metric.setupScore")} value={`${setup.score}/100`} />
+        <Metric label={t("decision.metric.invalidationShort")} value={formatUsd(setup.invalidation, precision, { mode: "futures" })} />
       </div>
-      <ReasonList title="Reasons for" items={setup.reasonsFor} />
-      <ReasonList title="Reasons against" items={setup.reasonsAgainst} />
-      <p className="card-hint"><strong>Condition:</strong> {setup.conditionRequired}</p>
+      <ReasonList title={t("decision.reasonsFor")} items={setup.reasonsFor} t={t} />
+      <ReasonList title={t("decision.reasonsAgainst")} items={setup.reasonsAgainst} t={t} />
+      <p className="card-hint"><strong>{t("decision.conditionLabel")}</strong> {setup.conditionRequired}</p>
     </div>
   );
 }
 
-function RiskEnginePanel({ inputs, onChange, risk, setup, precision, market, meta }) {
+function RiskEnginePanel({ inputs, onChange, risk, setup, precision, market, meta, t }) {
   return (
     <div className="risk-engine-panel glass-card reveal">
       <AnalysisContextMeta market={market} meta={meta} />
       <div className="panel-header">
         <div>
-          <h2>Risk Engine</h2>
-          <span className="panel-subtitle">Calculated for the currently favored setup: {setup?.side}</span>
+          <h2>{t("decision.risk.title")}</h2>
+          <span className="panel-subtitle">{t("decision.risk.subtitle", { side: decisionTerm(t, setup?.side || "") })}</span>
         </div>
       </div>
       <div className="backtest-controls decision-risk-controls">
-        <RiskInput label="Account size" value={inputs.accountSize} onChange={(v) => onChange("accountSize", v)} />
-        <RiskInput label="Risk % / trade" value={inputs.riskPercent} onChange={(v) => onChange("riskPercent", v)} step="0.1" />
-        <RiskInput label="Leverage" value={inputs.leverage} onChange={(v) => onChange("leverage", v)} step="0.5" />
-        <RiskInput label="Fee estimate %" value={inputs.feePercent} onChange={(v) => onChange("feePercent", v)} step="0.01" />
-        <RiskInput label="Slippage estimate %" value={inputs.slippagePercent} onChange={(v) => onChange("slippagePercent", v)} step="0.01" />
+        <RiskInput label={t("decision.risk.account")} value={inputs.accountSize} onChange={(v) => onChange("accountSize", v)} />
+        <RiskInput label={t("decision.risk.riskPct")} value={inputs.riskPercent} onChange={(v) => onChange("riskPercent", v)} step="0.1" />
+        <RiskInput label={t("decision.risk.leverage")} value={inputs.leverage} onChange={(v) => onChange("leverage", v)} step="0.5" />
+        <RiskInput label={t("decision.risk.fee")} value={inputs.feePercent} onChange={(v) => onChange("feePercent", v)} step="0.01" />
+        <RiskInput label={t("decision.risk.slippage")} value={inputs.slippagePercent} onChange={(v) => onChange("slippagePercent", v)} step="0.01" />
       </div>
       {risk && (
         <>
           <div className="decision-metrics">
-            <Metric label="Position size" value={`${formatPrice(risk.positionSize, { stepSize: market.precision.stepSize }, { mode: "trading" })} units`} />
-            <Metric label="Dollar risk at stop" value={formatUsd(risk.riskIfStopped)} />
-            <Metric label="Reward at target 1" value={formatUsd(risk.reward1)} />
-            <Metric label="Reward at target 2" value={formatUsd(risk.reward2)} />
-            <Metric label="Real R:R after costs" value={`1:${formatPrice(risk.realRR, {}, { mode: "display" })}`} />
-            <Metric label="Liquidation estimate" value={risk.liquidation == null ? "N/A for spot" : formatUsd(risk.liquidation, precision, { mode: "futures" })} />
+            <Metric label={t("decision.risk.positionSize")} value={t("decision.risk.units", { n: formatPrice(risk.positionSize, { stepSize: market.precision.stepSize }, { mode: "trading" }) })} />
+            <Metric label={t("decision.risk.dollarRisk")} value={formatUsd(risk.riskIfStopped)} />
+            <Metric label={t("decision.risk.reward1")} value={formatUsd(risk.reward1)} />
+            <Metric label={t("decision.risk.reward2")} value={formatUsd(risk.reward2)} />
+            <Metric label={t("decision.risk.realRR")} value={`1:${formatPrice(risk.realRR, {}, { mode: "display" })}`} />
+            <Metric label={t("decision.risk.liquidation")} value={risk.liquidation == null ? t("decision.risk.naSpot") : formatUsd(risk.liquidation, precision, { mode: "futures" })} />
           </div>
           {risk.warnings.length > 0 && (
             <ul className="risk-warning-list">
@@ -1135,35 +1179,35 @@ function RiskEnginePanel({ inputs, onChange, risk, setup, precision, market, met
   );
 }
 
-function SetupComparison({ decision, precision, market, meta }) {
+function SetupComparison({ decision, precision, market, meta, t }) {
   const rows = [decision.longSetup, decision.shortSetup];
   return (
     <div className="glass-card table-card reveal">
       <AnalysisContextMeta market={market} meta={meta} lastCandleTime={decision.lastCandleTime} />
-      <div className="panel-header"><h2>Setup comparison</h2></div>
+      <div className="panel-header"><h2>{t("decision.compare.title")}</h2></div>
       <div className="table-scroll">
         <table className="trades-table">
           <thead>
             <tr>
-              <th>Side</th>
-              <th>Entry</th>
-              <th>Stop</th>
-              <th>Target 1</th>
-              <th>Target 2</th>
-              <th>Score</th>
-              <th>Status</th>
+              <th>{t("decision.table.side")}</th>
+              <th>{t("decision.table.entry")}</th>
+              <th>{t("decision.table.stop")}</th>
+              <th>{t("decision.table.target1")}</th>
+              <th>{t("decision.table.target2")}</th>
+              <th>{t("decision.table.score")}</th>
+              <th>{t("decision.table.status")}</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((setup) => (
               <tr key={setup.side}>
-                <td>{setup.side}</td>
+                <td>{decisionTerm(t, setup.side)}</td>
                 <td className="num">{formatUsd(setup.entryMid, precision, { mode: "trading" })}</td>
                 <td className="num">{formatUsd(setup.stop, precision, { mode: "futures" })}</td>
                 <td className="num">{formatUsd(setup.target1, precision, { mode: "futures" })}</td>
                 <td className="num">{formatUsd(setup.target2, precision, { mode: "futures" })}</td>
                 <td className="num">{setup.score}/100</td>
-                <td>{setup.status}</td>
+                <td>{decisionTerm(t, setup.status)}</td>
               </tr>
             ))}
           </tbody>
@@ -1173,22 +1217,22 @@ function SetupComparison({ decision, precision, market, meta }) {
   );
 }
 
-function WatchlistScreener({ watchlist, watchSymbol, setWatchSymbol, addWatchSymbol, removeSymbol, scanWatchlist, watchLoading, rows, sort, setSort, precision }) {
+function WatchlistScreener({ watchlist, watchSymbol, setWatchSymbol, addWatchSymbol, removeSymbol, scanWatchlist, watchLoading, rows, sort, setSort, precision, t }) {
   return (
     <div className="glass-card table-card reveal watchlist-panel">
       <div className="panel-header">
         <div>
-          <h2>Watchlist / Screener</h2>
-          <span className="panel-subtitle">Long Score, Short Score, trend, volatility, and data quality, computed per symbol with cached results</span>
+          <h2>{t("decision.watch.title")}</h2>
+          <span className="panel-subtitle">{t("decision.watch.subtitle")}</span>
         </div>
         <button className="run-btn run-btn--ghost" onClick={scanWatchlist} disabled={watchLoading}>
-          {watchLoading ? "Scanning..." : "Scan watchlist"}
+          {watchLoading ? t("decision.watch.scanning") : t("decision.watch.scan")}
         </button>
       </div>
 
       <div className="backtest-controls watchlist-controls">
         <div className="control-group control-group--wide">
-          <label>Add symbol</label>
+          <label>{t("decision.watch.addSymbol")}</label>
           <input
             placeholder="e.g. SOL"
             value={watchSymbol}
@@ -1196,13 +1240,13 @@ function WatchlistScreener({ watchlist, watchSymbol, setWatchSymbol, addWatchSym
             onKeyDown={(e) => e.key === "Enter" && addWatchSymbol()}
           />
         </div>
-        <button className="run-btn run-btn--ghost" onClick={addWatchSymbol}>Add</button>
+        <button className="run-btn run-btn--ghost" onClick={addWatchSymbol}>{t("decision.add")}</button>
         <div className="control-group">
-          <label>Sort by</label>
+          <label>{t("decision.watch.sortBy")}</label>
           <select value={sort} onChange={(e) => setSort(e.target.value)}>
-            <option value="long">Best Long setups</option>
-            <option value="short">Best Short setups</option>
-            <option value="risk">Highest risk</option>
+            <option value="long">{t("decision.watch.sort.long")}</option>
+            <option value="short">{t("decision.watch.sort.short")}</option>
+            <option value="risk">{t("decision.watch.sort.risk")}</option>
           </select>
         </div>
       </div>
@@ -1211,104 +1255,110 @@ function WatchlistScreener({ watchlist, watchSymbol, setWatchSymbol, addWatchSym
         {watchlist.map((symbol) => (
           <span className="watchlist-chip" key={symbol}>
             {symbol}
-            <button onClick={() => removeSymbol(symbol)} aria-label={`Remove ${symbol}`}>×</button>
+            <button onClick={() => removeSymbol(symbol)} aria-label={t("decision.watch.remove", { symbol })}>×</button>
           </span>
         ))}
-        {!watchlist.length && <span className="card-hint">No symbols yet. Add one above.</span>}
+        {!watchlist.length && <span className="card-hint">{t("decision.watch.empty")}</span>}
       </div>
 
       <div className="table-scroll">
         <table className="trades-table">
           <thead>
             <tr>
-              <th>Symbol</th>
-              <th>Price</th>
-              <th>Long</th>
-              <th>Short</th>
-              <th>Trend</th>
-              <th>Volatility</th>
-              <th>Data quality</th>
-              <th>Risk</th>
-              <th>Source health</th>
+              <th>{t("decision.table.symbol")}</th>
+              <th>{t("decision.table.price")}</th>
+              <th>{t("decision.term.long")}</th>
+              <th>{t("decision.term.short")}</th>
+              <th>{t("decision.label.trend")}</th>
+              <th>{t("decision.label.volatility")}</th>
+              <th>{t("decision.metric.dataQuality")}</th>
+              <th>{t("decision.label.risk")}</th>
+              <th>{t("decision.watch.sourceHealth")}</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((row) => (
               <tr key={row.symbol} className={row.error ? "watch-row--degraded" : ""}>
                 <td>{row.symbol}</td>
-                <td className="num">{row.error ? "Unavailable" : formatUsd(row.price, row.precision || precision, { mode: "trading" })}</td>
+                <td className="num">{row.error ? t("decision.term.unavailable") : formatUsd(row.price, row.precision || precision, { mode: "trading" })}</td>
                 <td className="num">{row.error ? "-" : `${row.longScore}/100`}</td>
                 <td className="num">{row.error ? "-" : `${row.shortScore}/100`}</td>
                 <td>{row.error ? "-" : row.trend}</td>
                 <td>{row.error ? "-" : row.volatility}</td>
                 <td className="num">{row.error ? "-" : `${row.dataQuality}/100`}</td>
                 <td className="num">{row.error ? "-" : `${row.riskScore}/100`}</td>
-                <td className={row.error ? "watch-source watch-source--failed" : "watch-source"}>{row.error ? `Failed: ${row.error}` : row.source}</td>
+                <td className={row.error ? "watch-source watch-source--failed" : "watch-source"}>{row.error ? t("decision.watch.failed", { error: row.error }) : row.source}</td>
               </tr>
             ))}
             {!rows.length && (
-              <tr><td colSpan="9">Scan the watchlist to compute Long/Short scores per symbol.</td></tr>
+              <tr><td colSpan="9">{t("decision.watch.noRows")}</td></tr>
             )}
           </tbody>
         </table>
       </div>
-      <p className="card-hint">Results are cached for about a minute per symbol/timeframe to avoid excessive API requests; rescanning within that window reuses cached data.</p>
+      <p className="card-hint">{t("decision.watch.cacheHint")}</p>
     </div>
   );
 }
 
-function PaperTradePanel({ note, setNote, saveNote, scopedJournal, savePaperTrade, paperTrades, market, precision, exportPaperTrades, importPaperTrades, removePaperTrade, markPaperTrade }) {
+function PaperTradePanel({ note, setNote, saveNote, scopedJournal, savePaperTrade, paperTrades, market, precision, exportPaperTrades, importPaperTrades, removePaperTrade, markPaperTrade, t }) {
   const symbolTrades = paperTrades.filter((item) => item.symbol === market.pair).slice(0, 8);
   return (
     <div className="local-panel glass-card reveal">
-      <MarketContextBar module="Trading Journal" />
-      <h2>Trading Journal / Paper Trade</h2>
-      <p className="card-hint">Paper trades are stored locally in this browser's IndexedDB. Nothing is sent to a server and no real orders are placed.</p>
+      <MarketContextBar module={t("decision.journal.module")} />
+      <h2>{t("decision.journal.title")}</h2>
+      <p className="card-hint">{t("decision.journal.hint")}</p>
 
-      <button className="run-btn run-btn--ghost" onClick={savePaperTrade}>Save current setup as paper trade</button>
+      <button className="run-btn run-btn--ghost" onClick={savePaperTrade}>{t("decision.journal.saveTrade")}</button>
 
       <div className="local-item-list">
         {symbolTrades.map((trade) => (
           <div className="local-item paper-trade-item" key={trade.id}>
             <div className="paper-trade-item__head">
-              <strong>{trade.direction} · {trade.symbol}</strong>
-              <span>{trade.outcome}</span>
+              <strong>{decisionTerm(t, trade.direction)} · {trade.symbol}</strong>
+              <span>{decisionTerm(t, trade.outcome)}</span>
             </div>
             <span>{new Date(trade.createdAt).toLocaleString()} · {trade.timeframe} · {trade.marketType}</span>
             <p>
-              Entry {formatUsd(trade.entry, precision, { mode: "trading" })} · Stop {formatUsd(trade.stop, precision, { mode: "futures" })} · T1 {formatUsd(trade.target1, precision, { mode: "futures" })} · T2 {formatUsd(trade.target2, precision, { mode: "futures" })} · Score {trade.score}/100
+              {t("decision.journal.tradeLine", {
+                entry: formatUsd(trade.entry, precision, { mode: "trading" }),
+                stop: formatUsd(trade.stop, precision, { mode: "futures" }),
+                target1: formatUsd(trade.target1, precision, { mode: "futures" }),
+                target2: formatUsd(trade.target2, precision, { mode: "futures" }),
+                score: trade.score,
+              })}
             </p>
-            {trade.reason && <p className="card-hint">{trade.reason}</p>}
+            {trade.reason && <p className="card-hint">{translateKnownDecisionText(trade.reason, t)}</p>}
             <div className="paper-trade-item__actions">
-              <button onClick={() => markPaperTrade(trade.id, "Win")}>Mark win</button>
-              <button onClick={() => markPaperTrade(trade.id, "Loss")}>Mark loss</button>
-              <button onClick={() => markPaperTrade(trade.id, "Open")}>Mark open</button>
-              <button className="danger" onClick={() => removePaperTrade(trade.id)}>Delete</button>
+              <button onClick={() => markPaperTrade(trade.id, "Win")}>{t("decision.journal.markWin")}</button>
+              <button onClick={() => markPaperTrade(trade.id, "Loss")}>{t("decision.journal.markLoss")}</button>
+              <button onClick={() => markPaperTrade(trade.id, "Open")}>{t("decision.journal.markOpen")}</button>
+              <button className="danger" onClick={() => removePaperTrade(trade.id)}>{t("decision.delete")}</button>
             </div>
           </div>
         ))}
-        {!symbolTrades.length && <p className="card-hint">No paper trades saved yet for {market.pair}.</p>}
+        {!symbolTrades.length && <p className="card-hint">{t("decision.journal.noTrades", { pair: market.pair })}</p>}
       </div>
 
       <div className="journal-export-row">
-        <button onClick={() => exportPaperTrades("json")}>Export JSON</button>
-        <button onClick={() => exportPaperTrades("csv")}>Export CSV</button>
+        <button onClick={() => exportPaperTrades("json")}>{t("decision.journal.exportJson")}</button>
+        <button onClick={() => exportPaperTrades("csv")}>{t("decision.journal.exportCsv")}</button>
         <label className="import-label">
-          Import JSON
+          {t("decision.journal.importJson")}
           <input type="file" accept="application/json" onChange={(e) => importPaperTrades(e.target.files?.[0])} />
         </label>
       </div>
 
-      <h2 className="journal-subheading">Quick notes</h2>
+      <h2 className="journal-subheading">{t("decision.journal.quickNotes")}</h2>
       <textarea
-        placeholder="Write a quick journal note about this setup or market read..."
+        placeholder={t("decision.journal.notePlaceholder")}
         value={note}
         onChange={(e) => setNote(e.target.value)}
       />
-      <button onClick={saveNote}>Save note</button>
+      <button onClick={saveNote}>{t("decision.journal.saveNote")}</button>
       {scopedJournal.map((item) => (
         <div className="local-item" key={item.id}>
-          <strong>{item.decision}</strong>
+          <strong>{decisionTerm(t, item.decision)}</strong>
           <span>{new Date(item.createdAt).toLocaleString()}</span>
           <p>{item.note}</p>
         </div>
@@ -1317,26 +1367,26 @@ function PaperTradePanel({ note, setNote, saveNote, scopedJournal, savePaperTrad
   );
 }
 
-function BrowserAlertsPanel({ alertPrice, setAlertPrice, saveAlert, alertDraft, setAlertDraft, saveDecisionAlert, scopedAlerts, market, precision, removeAlert }) {
+function BrowserAlertsPanel({ alertPrice, setAlertPrice, saveAlert, alertDraft, setAlertDraft, saveDecisionAlert, scopedAlerts, market, precision, removeAlert, t }) {
   return (
     <div className="local-panel glass-card reveal">
-      <MarketContextBar module="In-browser Alerts" />
-      <h2>In-browser Alerts</h2>
-      <p className="card-hint"><strong>Alerts only work while the app is open in this browser tab.</strong> Closing the tab or losing connectivity stops all checks; nothing is monitored on a server.</p>
+      <MarketContextBar module={t("decision.alerts.module")} />
+      <h2>{t("decision.alerts.title")}</h2>
+      <p className="card-hint"><strong>{t("decision.alerts.strong")}</strong> {t("decision.alerts.hint")}</p>
 
       <div className="backtest-controls">
         <div className="control-group">
-          <label>Alert type</label>
+          <label>{t("decision.alerts.type")}</label>
           <select value={alertDraft.type} onChange={(e) => setAlertDraft((prev) => ({ ...prev, type: e.target.value }))}>
-            <option value="price">Price crosses level</option>
-            <option value="drawing">Price touches drawing</option>
-            <option value="score">Long/Short score crosses threshold</option>
-            <option value="rr">Risk/reward reaches target</option>
+            <option value="price">{t("decision.alerts.type.price")}</option>
+            <option value="drawing">{t("decision.alerts.type.drawing")}</option>
+            <option value="score">{t("decision.alerts.type.score")}</option>
+            <option value="rr">{t("decision.alerts.type.rr")}</option>
           </select>
         </div>
         {(alertDraft.type === "price" || alertDraft.type === "drawing") && (
           <div className="control-group">
-            <label>{alertDraft.type === "price" ? "Price level" : "Drawing price level"}</label>
+            <label>{alertDraft.type === "price" ? t("decision.alerts.priceLevel") : t("decision.alerts.drawingLevel")}</label>
             <input
               type="number"
               placeholder={market.pair}
@@ -1347,63 +1397,63 @@ function BrowserAlertsPanel({ alertPrice, setAlertPrice, saveAlert, alertDraft, 
         )}
         {alertDraft.type === "score" && (
           <div className="control-group">
-            <label>Score threshold</label>
+            <label>{t("decision.alerts.scoreThreshold")}</label>
             <input type="number" value={alertDraft.score} onChange={(e) => setAlertDraft((prev) => ({ ...prev, score: e.target.value }))} />
           </div>
         )}
         {alertDraft.type === "rr" && (
           <div className="control-group">
-            <label>Risk/reward target</label>
+            <label>{t("decision.alerts.rrTarget")}</label>
             <input type="number" step="0.1" value={alertDraft.rr} onChange={(e) => setAlertDraft((prev) => ({ ...prev, rr: e.target.value }))} />
           </div>
         )}
-        <button className="run-btn run-btn--ghost" onClick={saveDecisionAlert}>Add alert</button>
+        <button className="run-btn run-btn--ghost" onClick={saveDecisionAlert}>{t("decision.alerts.add")}</button>
       </div>
 
       <div className="control-group control-group--full quick-price-alert">
-        <label>Quick price-cross alert</label>
+        <label>{t("decision.alerts.quick")}</label>
         <div className="quick-price-alert__row">
-          <input type="number" placeholder="Price level" value={alertPrice} onChange={(e) => setAlertPrice(e.target.value)} />
-          <button onClick={saveAlert}>Add</button>
+          <input type="number" placeholder={t("decision.alerts.priceLevel")} value={alertPrice} onChange={(e) => setAlertPrice(e.target.value)} />
+          <button onClick={saveAlert}>{t("decision.add")}</button>
         </div>
       </div>
 
       {scopedAlerts.map((alert) => (
         <div className={`local-item alert-item ${alert.status === "Triggered while app was open" ? "alert-item--triggered" : ""}`} key={alert.id}>
-          <strong>{labelize(alert.type || "price")}</strong>
+          <strong>{labelize(alert.type || "price", t)}</strong>
           <span>
-            {alert.type === "score" ? `Threshold ${alert.score}/100` :
-              alert.type === "rr" ? `Target 1:${alert.rr}` :
-                `Level ${formatUsd(alert.level ?? alert.price, precision, { mode: "trading" })}`}
+            {alert.type === "score" ? t("decision.alerts.thresholdLine", { score: alert.score }) :
+              alert.type === "rr" ? t("decision.alerts.targetLine", { rr: alert.rr }) :
+                t("decision.alerts.levelLine", { level: formatUsd(alert.level ?? alert.price, precision, { mode: "trading" }) })}
             {" · "}{new Date(alert.createdAt).toLocaleString()}
           </span>
-          <p>{alert.triggerReason || alert.status}</p>
+          <p>{translateAlertText(alert.triggerReason || alert.status, t)}</p>
           <div className="paper-trade-item__actions">
-            <button className="danger" onClick={() => removeAlert(alert.id)}>Remove</button>
+            <button className="danger" onClick={() => removeAlert(alert.id)}>{t("decision.remove")}</button>
           </div>
         </div>
       ))}
-      {!scopedAlerts.length && <p className="card-hint">No alerts saved yet for {market.pair}.</p>}
+      {!scopedAlerts.length && <p className="card-hint">{t("decision.alerts.empty", { pair: market.pair })}</p>}
     </div>
   );
 }
 
-function labelize(key) {
+function labelize(key, t) {
   const labels = {
-    price: "Price crosses level",
-    drawing: "Price touches drawing",
-    score: "Score threshold",
-    rr: "Risk/reward target",
-    trend: "Trend analysis",
-    momentum: "Momentum analysis",
-    volatility: "Volatility regime",
-    volume: "Volume behavior",
-    multiTimeframe: "Multi-timeframe confirmation",
-    monteCarlo: "Monte Carlo simulation",
-    backtest: "Backtest result",
-    riskReward: "Risk/reward quality",
-    expectedValue: "Expected value",
-    dataQuality: "Data quality",
+    price: tr(t, "decision.alerts.type.price", undefined, "Price crosses level"),
+    drawing: tr(t, "decision.alerts.type.drawing", undefined, "Price touches drawing"),
+    score: tr(t, "decision.alerts.scoreThreshold", undefined, "Score threshold"),
+    rr: tr(t, "decision.alerts.type.rr", undefined, "Risk/reward target"),
+    trend: tr(t, "decision.label.trendAnalysis", undefined, "Trend analysis"),
+    momentum: tr(t, "decision.label.momentumAnalysis", undefined, "Momentum analysis"),
+    volatility: tr(t, "decision.label.volatilityRegime", undefined, "Volatility regime"),
+    volume: tr(t, "decision.label.volumeBehavior", undefined, "Volume behavior"),
+    multiTimeframe: tr(t, "decision.label.mtf", undefined, "Multi-timeframe confirmation"),
+    monteCarlo: tr(t, "decision.label.monteCarlo", undefined, "Monte Carlo simulation"),
+    backtest: tr(t, "decision.label.backtest", undefined, "Backtest result"),
+    riskReward: tr(t, "decision.label.rrQuality", undefined, "Risk/reward quality"),
+    expectedValue: tr(t, "decision.metric.expectedValue", undefined, "Expected value"),
+    dataQuality: tr(t, "decision.metric.dataQuality", undefined, "Data quality"),
   };
   if (labels[key]) return labels[key];
   return String(key)
@@ -1411,18 +1461,29 @@ function labelize(key) {
     .replace(/^./, (c) => c.toUpperCase());
 }
 
+function translateAlertText(text, t) {
+  if (text === "Active while app is open") return t("decision.alerts.status.active");
+  if (text === "Triggered while app was open") return t("decision.alerts.status.triggered");
+  if (text === "Price touched the saved drawing level") return t("decision.alerts.reason.drawing");
+  if (text?.startsWith("Score crossed ")) return t("decision.alerts.reason.score", { score: text.replace("Score crossed ", "") });
+  if (text?.startsWith("Risk/reward reached 1:")) return t("decision.alerts.reason.rr", { rr: text.replace("Risk/reward reached 1:", "") });
+  if (text?.startsWith("Price crossed ")) return t("decision.alerts.reason.price", { level: text.replace("Price crossed ", "") });
+  return text;
+}
+
 function AnalysisContextMeta({ market, meta, lastCandleTime }) {
+  const { t } = useI18n();
   const candleTime = lastCandleTime || market.lastValidCandleTime;
   const source = meta?.sourceLabel || market.dataSourceStatus?.source || market.exchange;
   const quality = meta?.quality?.status || market.dataQualityStatus?.status || meta?.status || "Waiting";
   return (
     <div className="analysis-context-meta">
       <span>{market.pair}</span>
-      <span>{market.marketType}</span>
+      <span>{decisionTerm(t, market.marketType)}</span>
       <span>{market.timeframe}</span>
       <span>{source}</span>
-      <span>{quality}</span>
-      <span>{candleTime ? new Date(candleTime * 1000).toLocaleString() : "No candle yet"}</span>
+      <span>{decisionTerm(t, quality)}</span>
+      <span>{candleTime ? new Date(candleTime * 1000).toLocaleString() : t("decision.noCandle")}</span>
     </div>
   );
 }
@@ -1436,12 +1497,12 @@ function RiskInput({ label, value, onChange, step = "1" }) {
   );
 }
 
-function ReasonList({ title, items }) {
+function ReasonList({ title, items, t }) {
   return (
     <div className="reason-list">
       <strong>{title}</strong>
       <ul>
-        {(items.length ? items : ["No major reason recorded."]).map((item) => <li key={item}>{item}</li>)}
+        {(items.length ? items : [tr(t, "decision.reason.none", undefined, "No major reason recorded.")]).map((item) => <li key={item}>{item}</li>)}
       </ul>
     </div>
   );
@@ -1456,18 +1517,8 @@ function Metric({ label, value }) {
   );
 }
 
-function LocalPanel({ title, module, children }) {
-  return (
-    <div className="local-panel glass-card reveal">
-      <MarketContextBar module={module} />
-      <h2>{title}</h2>
-      {children}
-    </div>
-  );
-}
-
-function formatProbability(value) {
-  return value == null ? "Unavailable" : `${Math.round(value * 100)}%`;
+function formatProbability(value, t) {
+  return value == null ? tr(t, "decision.term.unavailable", undefined, "Unavailable") : `${Math.round(value * 100)}%`;
 }
 
 function contextKey(market) {
