@@ -2157,6 +2157,8 @@
 }
 .decision-metric strong {
   font-size: 0.95rem;
+  direction: inherit;
+  unicode-bidi: plaintext;
 }
 .setup-card,
 .local-panel {
@@ -2489,9 +2491,38 @@
 .quick-price-alert__row {
   display: flex;
   gap: 8px;
+  align-items: stretch;
 }
 .quick-price-alert__row input {
+  flex: 1 1 auto;
   margin-bottom: 0 !important;
+}
+.local-panel .backtest-controls {
+  justify-content: flex-start;
+}
+.local-panel .backtest-controls .control-group {
+  flex: 1 1 220px;
+}
+.local-panel .backtest-controls .control-group input,
+.local-panel .backtest-controls .control-group select {
+  margin-bottom: 0;
+}
+.local-panel .backtest-controls .control-group--full {
+  flex-basis: 100%;
+}
+.local-panel .backtest-controls button {
+  align-self: end;
+}
+[dir="rtl"] .local-panel .backtest-controls {
+  direction: rtl;
+}
+[dir="rtl"] .local-panel .backtest-controls button {
+  align-self: end;
+}
+[dir="rtl"] .local-panel .control-group label,
+[dir="rtl"] .local-panel input,
+[dir="rtl"] .local-panel select {
+  text-align: right;
 }
 .quick-price-alert__row button,
 .local-panel .backtest-controls button {

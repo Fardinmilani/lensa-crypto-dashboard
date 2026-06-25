@@ -1509,10 +1509,11 @@ function ReasonList({ title, items, t }) {
 }
 
 function Metric({ label, value }) {
+  const isNumericValue = typeof value === "number" || /^[\s\d.,:%+$€£¥₿()/:-]+$/.test(String(value));
   return (
     <div className="decision-metric">
       <span>{label}</span>
-      <strong className="num">{value}</strong>
+      <strong className={isNumericValue ? "num" : undefined}>{value}</strong>
     </div>
   );
 }
