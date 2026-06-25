@@ -9,20 +9,21 @@ import { bollinger, ema, macd, roc, rsi, sma } from "../lib/strategies";
 import { useI18n } from "../i18n/langStore";
 import { useLocalStorageState } from "../hooks/useLocalStorageState";
 import ChartDrawingLayer from "./ChartDrawingLayer";
+import InfoTip from "./InfoTip";
 
 const INDICATOR_TYPES = {
-  ema: { label: "EMA", group: "Moving averages", color: "#f59e0b", width: 2, source: true, params: { period: 21 } },
-  sma: { label: "SMA", group: "Moving averages", color: "#38bdf8", width: 2, source: true, params: { period: 50 } },
-  wma: { label: "WMA", group: "Moving averages", color: "#22c55e", width: 2, source: true, params: { period: 34 } },
-  hma: { label: "HMA", group: "Moving averages", color: "#fb7185", width: 2, source: true, params: { period: 55 } },
-  bollinger: { label: "Bollinger Bands", group: "Bands", color: "#a78bfa", width: 1, source: true, params: { period: 20, mult: 2 } },
-  donchian: { label: "Donchian Channel", group: "Bands", color: "#2dd4bf", width: 1, params: { period: 20 } },
-  ichimoku: { label: "Ichimoku", group: "Trend", color: "#f97316", width: 1, params: { conversion: 9, base: 26, spanB: 52 } },
-  supertrend: { label: "Supertrend", group: "Trend", color: "#22c55e", width: 2, params: { period: 10, mult: 3 } },
-  rsi: { label: "RSI", group: "Oscillators", color: "#facc15", width: 2, source: true, params: { period: 14 } },
-  stoch: { label: "Stochastic", group: "Oscillators", color: "#60a5fa", width: 2, params: { period: 14, smooth: 3 } },
-  macd: { label: "MACD", group: "Oscillators", color: "#c084fc", width: 2, source: true, params: { fast: 12, slow: 26, signal: 9 } },
-  roc: { label: "ROC", group: "Oscillators", color: "#34d399", width: 2, source: true, params: { period: 10 } },
+  ema: { label: "EMA", group: "Moving averages", color: "#f59e0b", width: 2, source: true, params: { period: 21 }, glossaryKey: "glossary.chart.ema" },
+  sma: { label: "SMA", group: "Moving averages", color: "#38bdf8", width: 2, source: true, params: { period: 50 }, glossaryKey: "glossary.chart.sma" },
+  wma: { label: "WMA", group: "Moving averages", color: "#22c55e", width: 2, source: true, params: { period: 34 }, glossaryKey: "glossary.chart.wma" },
+  hma: { label: "HMA", group: "Moving averages", color: "#fb7185", width: 2, source: true, params: { period: 55 }, glossaryKey: "glossary.chart.hma" },
+  bollinger: { label: "Bollinger Bands", group: "Bands", color: "#a78bfa", width: 1, source: true, params: { period: 20, mult: 2 }, glossaryKey: "glossary.chart.bollinger" },
+  donchian: { label: "Donchian Channel", group: "Bands", color: "#2dd4bf", width: 1, params: { period: 20 }, glossaryKey: "glossary.chart.donchian" },
+  ichimoku: { label: "Ichimoku", group: "Trend", color: "#f97316", width: 1, params: { conversion: 9, base: 26, spanB: 52 }, glossaryKey: "glossary.chart.ichimoku" },
+  supertrend: { label: "Supertrend", group: "Trend", color: "#22c55e", width: 2, params: { period: 10, mult: 3 }, glossaryKey: "glossary.chart.supertrend" },
+  rsi: { label: "RSI", group: "Oscillators", color: "#facc15", width: 2, source: true, params: { period: 14 }, glossaryKey: "glossary.chart.rsi" },
+  stoch: { label: "Stochastic", group: "Oscillators", color: "#60a5fa", width: 2, params: { period: 14, smooth: 3 }, glossaryKey: "glossary.chart.stoch" },
+  macd: { label: "MACD", group: "Oscillators", color: "#c084fc", width: 2, source: true, params: { fast: 12, slow: 26, signal: 9 }, glossaryKey: "glossary.chart.macd" },
+  roc: { label: "ROC", group: "Oscillators", color: "#34d399", width: 2, source: true, params: { period: 10 }, glossaryKey: "glossary.chart.roc" },
 };
 
 const LINE_STYLES = {
@@ -173,6 +174,7 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
                         <button type="button" key={key} className={key === addType ? "is-selected" : ""} onClick={() => setAddType(key)}>
                           <i className="indicator-dot" style={{ background: INDICATOR_TYPES[key].color }} />
                           {meta.label}
+                          {meta.glossaryKey ? <InfoTip term={meta.glossaryKey} /> : null}
                         </button>
                       ))}
                     </div>
@@ -252,7 +254,10 @@ function IndicatorEditor({ item, active, onToggleSettings, onChange, onParamChan
     <div className={`indicator-editor ${active ? "is-active" : ""}`}>
       <div className="indicator-editor__top">
         <span className="indicator-swatch" style={{ background: item.color }} />
-        <strong>{meta.label}</strong>
+        <strong>
+          {meta.label}
+          {meta.glossaryKey ? <InfoTip term={meta.glossaryKey} /> : null}
+        </strong>
         <small>{indicatorSummary(item)}</small>
         <button type="button" className="mini-icon-btn" onClick={onToggleSettings} title={t("chart.settings")}>⚙</button>
         <button type="button" className="mini-icon-btn mini-icon-btn--danger" onClick={onRemove} title={t("chart.removeIndicator")}>x</button>

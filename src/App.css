@@ -2188,6 +2188,102 @@
   margin: 0;
   font-size: 1rem;
 }
+.info-tip {
+  position: relative;
+  display: inline-flex;
+  vertical-align: middle;
+  margin-inline-start: 4px;
+}
+.info-tip__trigger {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--surface-elevated) 88%, transparent);
+  color: var(--text-tertiary);
+  font-size: 0.58rem;
+  font-weight: 700;
+  font-style: italic;
+  font-family: Georgia, "Times New Roman", serif;
+  cursor: help;
+  padding: 0;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.info-tip__trigger:hover,
+.info-tip__trigger:focus-visible {
+  color: var(--gold);
+  border-color: color-mix(in srgb, var(--gold) 45%, var(--border-subtle));
+}
+.info-tip__bubble {
+  position: absolute;
+  z-index: 60;
+  bottom: calc(100% + 6px);
+  inset-inline-start: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: min(280px, 80vw);
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-subtle);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  font-size: 0.72rem;
+  font-weight: 400;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s ease;
+  text-align: start;
+}
+[dir="rtl"] .info-tip__bubble {
+  transform: translateX(50%);
+}
+@media (hover: hover) and (pointer: fine) {
+  .info-tip:hover .info-tip__bubble,
+  .info-tip:focus-within .info-tip__bubble {
+    opacity: 1;
+    visibility: visible;
+  }
+}
+.info-tip--open .info-tip__bubble {
+  opacity: 1;
+  visibility: visible;
+}
+.decision-metric__label {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+.decision-bias-note {
+  font-size: 0.78rem;
+  color: var(--text-tertiary);
+  margin: 0 0 8px;
+  line-height: 1.5;
+}
+.setup-card__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.stat-label,
+.hl-card__label {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+.data-quality__cap {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
 .card-hint {
   font-size: 0.78rem;
   color: var(--text-tertiary);

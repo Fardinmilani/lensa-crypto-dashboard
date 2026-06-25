@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { createChart, LineSeries } from "lightweight-charts";
+import { useI18n } from "../i18n/langStore";
 
 // Curve times can arrive in seconds (like candles elsewhere) or milliseconds.
 // lightweight-charts requires UNIX seconds, strictly ascending and unique.
@@ -24,6 +25,7 @@ function toSeriesData(curve) {
 }
 
 export default function EquityChart({ equityCurve, benchmarkCurve }) {
+  const { t } = useI18n();
   const containerRef = useRef(null);
   const chartRef = useRef(null);
 
@@ -49,7 +51,7 @@ export default function EquityChart({ equityCurve, benchmarkCurve }) {
     const equitySeries = chart.addSeries(LineSeries, {
       color: "#c9a66b",
       lineWidth: 2,
-      title: "استراتژی",
+      title: t("bt.equity.strategy"),
     });
     equitySeries.setData(toSeriesData(equityCurve));
 
@@ -58,7 +60,7 @@ export default function EquityChart({ equityCurve, benchmarkCurve }) {
         color: "#5a6472",
         lineWidth: 1,
         lineStyle: 2, // dashed
-        title: "خرید و نگهداری",
+        title: t("bt.equity.benchmark"),
       });
       benchmarkSeries.setData(toSeriesData(benchmarkCurve));
     }
@@ -68,7 +70,7 @@ export default function EquityChart({ equityCurve, benchmarkCurve }) {
     return () => {
       chart.remove();
     };
-  }, [equityCurve, benchmarkCurve]);
+  }, [equityCurve, benchmarkCurve, t]);
 
   return <div className="equity-chart-container" ref={containerRef} />;
 }

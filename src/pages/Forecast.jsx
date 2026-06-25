@@ -13,6 +13,7 @@ import { useMarket } from "../context/MarketContext";
 import { useI18n } from "../i18n/langStore";
 import { useStaggerReveal, useCountUp } from "../hooks/useAnimations";
 import { useLocalStorageState } from "../hooks/useLocalStorageState";
+import InfoTip from "../components/InfoTip";
 
 function pct(n, d = 1) {
   if (n == null || !Number.isFinite(n)) return "-";
@@ -127,14 +128,20 @@ export default function Forecast() {
           <input type="number" min="5" max="365" value={horizon} onChange={(e) => setHorizon(e.target.value)} />
         </div>
         <div className="control-group">
-          <label>{t("fc.method")}</label>
+          <label>
+            {t("fc.method")}
+            <InfoTip term={method === "gbm" ? "glossary.forecastGbm" : "glossary.forecastBootstrap"} />
+          </label>
           <select value={method} onChange={(e) => setMethod(e.target.value)}>
             <option value="bootstrap">{t("fc.method.bootstrap")}</option>
             <option value="gbm">{t("fc.method.gbm")}</option>
           </select>
         </div>
         <div className="control-group">
-          <label>{t("fc.drift")}</label>
+          <label>
+            {t("fc.drift")}
+            <InfoTip term="glossary.forecastDrift" />
+          </label>
           <select value={driftMode} onChange={(e) => setDriftMode(e.target.value)}>
             <option value="historical">{t("fc.drift.historical")}</option>
             <option value="zero">{t("fc.drift.zero")}</option>
@@ -170,11 +177,11 @@ export default function Forecast() {
         <>
           <ReportActions report={report} type="forecast" symbol={coin.symbol} allowSave={false} />
           <div className="forecast-hl">
-            <HlCard label={t("fc.hl.median")} value={mc.medianReturnPct} suffix="%" decimals={0} tone={mc.medianReturnPct >= 0 ? "up" : "down"} hint={formatUsd(mc.dist.p50, market.precision, { mode: "futures" })} />
-            <HlCard label={t("fc.hl.prob")} value={mc.probAboveCurrent * 100} suffix="%" decimals={0} tone={mc.probAboveCurrent >= 0.5 ? "up" : "down"} hint={t("fc.hl.probHint", { n: extra.horizonLabel })} />
-            <HlCard label={t("fc.hl.upside")} value={mc.upside95Pct} suffix="%" decimals={0} tone="up" hint={formatUsd(mc.dist.p95, market.precision, { mode: "futures" })} />
-            <HlCard label={t("fc.hl.downside")} value={mc.var5Pct} suffix="%" decimals={0} tone="down" hint={formatUsd(mc.dist.p5, market.precision, { mode: "futures" })} />
-            <HlCard label={t("fc.hl.vol")} value={extra.annVol} suffix="%" decimals={0} hint={t("fc.hl.volHint")} />
+            <HlCard label={t("fc.hl.median")} value={mc.medianReturnPct} suffix="%" decimals={0} tone={mc.medianReturnPct >= 0 ? "up" : "down"} hint={formatUsd(mc.dist.p50, market.precision, { mode: "futures" })} tip="glossary.medianScenario" />
+            <HlCard label={t("fc.hl.prob")} value={mc.probAboveCurrent * 100} suffix="%" decimals={0} tone={mc.probAboveCurrent >= 0.5 ? "up" : "down"} hint={t("fc.hl.probHint", { n: extra.horizonLabel })} tip="glossary.probAbove" />
+            <HlCard label={t("fc.hl.upside")} value={mc.upside95Pct} suffix="%" decimals={0} tone="up" hint={formatUsd(mc.dist.p95, market.precision, { mode: "futures" })} tip="glossary.p95" />
+            <HlCard label={t("fc.hl.downside")} value={mc.var5Pct} suffix="%" decimals={0} tone="down" hint={formatUsd(mc.dist.p5, market.precision, { mode: "futures" })} tip="glossary.p5" />
+            <HlCard label={t("fc.hl.vol")} value={extra.annVol} suffix="%" decimals={0} hint={t("fc.hl.volHint")} tip="glossary.annualizedVol" />
           </div>
 
           <div className="glass-card probability-card reveal">
@@ -285,11 +292,14 @@ function snapshotMarket(market) {
   };
 }
 
-function HlCard({ label, value, suffix = "", decimals = 1, tone = "", hint }) {
+function HlCard({ label, value, suffix = "", decimals = 1, tone = "", hint, tip }) {
   const animated = useCountUp(Number.isFinite(value) ? value : 0, { decimals });
   return (
     <div className="hl-card glass-card reveal">
-      <span className="hl-card__label">{label}</span>
+      <span className="hl-card__label">
+        {label}
+        {tip ? <InfoTip term={tip} /> : null}
+      </span>
       <span className={`hl-card__value num ${tone}`}>
         {animated.toFixed(decimals)}{suffix}
       </span>

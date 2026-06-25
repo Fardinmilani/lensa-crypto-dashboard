@@ -14,6 +14,7 @@ import { useMarket } from "../context/MarketContext";
 import { useI18n, pick } from "../i18n/langStore";
 import { useStaggerReveal, useCountUp } from "../hooks/useAnimations";
 import { useLocalStorageState } from "../hooks/useLocalStorageState";
+import InfoTip from "../components/InfoTip";
 
 const CATEGORY_ORDER = ["trend", "momentum", "reversion", "hybrid"];
 
@@ -186,17 +187,17 @@ export default function Backtest() {
           <ReportActions report={report} type="backtest" symbol={coin.symbol} />
           <div className="stats-grid">
             <Stat label={t("bt.stat.return")} value={result.totalReturnPercent} suffix="%" tone={result.totalReturnPercent >= 0 ? "up" : "down"} />
-            <Stat label={t("bt.stat.bench")} value={result.benchmarkReturnPercent} suffix="%" tone={result.benchmarkReturnPercent >= 0 ? "up" : "down"} />
-            <Stat label={t("bt.stat.dd")} value={result.maxDrawdownPercent} suffix="%" tone="down" prefix="-" abs />
-            <Stat label={t("bt.stat.winrate")} value={result.winRate} suffix="%" decimals={0} />
-            <Stat label={t("bt.stat.sharpe")} value={result.sharpe} decimals={2} tone={result.sharpe >= 1 ? "up" : ""} />
-            <Stat label={t("bt.stat.sortino")} value={result.sortino} decimals={2} />
-            <Stat label={t("bt.stat.pf")} value={isFinite(result.profitFactor) ? result.profitFactor : null} decimals={2} fallback={result.profitFactor === Infinity ? "∞" : "-"} />
-            <Stat label={t("bt.stat.expectancy")} value={result.expectancy} suffix="%" decimals={2} tone={(result.expectancy ?? 0) >= 0 ? "up" : "down"} />
+            <Stat label={t("bt.stat.bench")} value={result.benchmarkReturnPercent} suffix="%" tone={result.benchmarkReturnPercent >= 0 ? "up" : "down"} tip="glossary.benchmark" />
+            <Stat label={t("bt.stat.dd")} value={result.maxDrawdownPercent} suffix="%" tone="down" prefix="-" abs tip="glossary.maxDrawdown" />
+            <Stat label={t("bt.stat.winrate")} value={result.winRate} suffix="%" decimals={0} tip="glossary.winRate" />
+            <Stat label={t("bt.stat.sharpe")} value={result.sharpe} decimals={2} tone={result.sharpe >= 1 ? "up" : ""} tip="glossary.sharpe" />
+            <Stat label={t("bt.stat.sortino")} value={result.sortino} decimals={2} tip="glossary.sortino" />
+            <Stat label={t("bt.stat.pf")} value={isFinite(result.profitFactor) ? result.profitFactor : null} decimals={2} fallback={result.profitFactor === Infinity ? "∞" : "-"} tip="glossary.profitFactor" />
+            <Stat label={t("bt.stat.expectancy")} value={result.expectancy} suffix="%" decimals={2} tone={(result.expectancy ?? 0) >= 0 ? "up" : "down"} tip="glossary.expectancy" />
             <Stat label={t("bt.stat.avgwin")} value={result.avgWin} suffix="%" decimals={2} tone="up" />
             <Stat label={t("bt.stat.avgloss")} value={result.avgLoss} suffix="%" decimals={2} tone="down" />
             <Stat label={t("bt.stat.trades")} value={result.tradeCount} decimals={0} />
-            <Stat label={t("bt.stat.exposure")} value={result.exposurePercent} suffix="%" decimals={0} />
+            <Stat label={t("bt.stat.exposure")} value={result.exposurePercent} suffix="%" decimals={0} tip="glossary.exposure" />
           </div>
           <div className="glass-card chart-card">
             <MarketContextBar module="Backtest equity" />
@@ -346,12 +347,15 @@ function snapshotMarket(market) {
   };
 }
 
-function Stat({ label, value, suffix = "", prefix = "", decimals = 1, tone = "", abs = false, fallback = "-" }) {
+function Stat({ label, value, suffix = "", prefix = "", decimals = 1, tone = "", abs = false, fallback = "-", tip }) {
   const animated = useCountUp(Number.isFinite(value) ? (abs ? Math.abs(value) : value) : 0, { decimals });
   const display = Number.isFinite(value) ? `${prefix}${animated.toFixed(decimals)}${suffix}` : fallback;
   return (
     <div className="stat-card reveal">
-      <span className="stat-label">{label}</span>
+      <span className="stat-label">
+        {label}
+        {tip ? <InfoTip term={tip} /> : null}
+      </span>
       <span className={`stat-value num ${tone}`}>{display}</span>
     </div>
   );

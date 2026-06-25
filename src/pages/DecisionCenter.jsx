@@ -12,6 +12,7 @@ import { useI18n } from "../i18n/langStore";
 import { translations } from "../i18n/translations";
 import { useLocalStorageState } from "../hooks/useLocalStorageState";
 import { useStaggerReveal } from "../hooks/useAnimations";
+import InfoTip from "../components/InfoTip";
 
 const DEFAULT_RISK = {
   accountSize: 10000,
@@ -1025,19 +1026,23 @@ function TradeDecisionPanel({ decision, precision, market, meta, t }) {
     <div className={`trade-decision glass-card reveal trade-decision--${decision.finalDecision.toLowerCase().replace(/\s+/g, "-")}`}>
       <AnalysisContextMeta market={market} meta={meta} lastCandleTime={decision.lastCandleTime} />
       <div>
-        <span className="decision-label">{t("decision.final")}</span>
+        <span className="decision-label">
+          {t("decision.final")}
+          <InfoTip term="glossary.analyticalBias" />
+        </span>
         <strong>{decisionTerm(t, decision.finalDecision)}</strong>
+        <p className="decision-bias-note">{t("decision.biasNote")}</p>
         <p>{decision.mainReason}</p>
       </div>
       <div className="decision-metrics">
-        <Metric label={t("decision.metric.longScore")} value={`${decision.longScore}/100`} />
-        <Metric label={t("decision.metric.shortScore")} value={`${decision.shortScore}/100`} />
-        <Metric label={t("decision.metric.riskScore")} value={`${decision.riskScore}/100`} />
-        <Metric label={t("decision.metric.dataQuality")} value={`${decision.dataQualityScore}/100`} />
-        <Metric label={t("decision.metric.riskLevel")} value={decisionTerm(t, decision.riskLevel)} />
-        <Metric label={t("decision.metric.confidence")} value={`${decision.confidence}%`} />
-        <Metric label={t("decision.metric.condition")} value={decision.conditionRequired} />
-        <Metric label={t("decision.metric.invalidation")} value={formatUsd(decision.scenarioInvalidation, precision, { mode: "futures" })} />
+        <Metric label={t("decision.metric.longScore")} value={`${decision.longScore}/100`} tip="glossary.longScore" />
+        <Metric label={t("decision.metric.shortScore")} value={`${decision.shortScore}/100`} tip="glossary.shortScore" />
+        <Metric label={t("decision.metric.riskScore")} value={`${decision.riskScore}/100`} tip="glossary.riskScore" />
+        <Metric label={t("decision.metric.dataQuality")} value={`${decision.dataQualityScore}/100`} tip="glossary.dataQuality" />
+        <Metric label={t("decision.metric.riskLevel")} value={decisionTerm(t, decision.riskLevel)} tip="glossary.riskLevel" />
+        <Metric label={t("decision.metric.confidence")} value={`${decision.confidence}%`} tip="glossary.confidence" />
+        <Metric label={t("decision.metric.condition")} value={decision.conditionRequired} tip="glossary.condition" />
+        <Metric label={t("decision.metric.invalidation")} value={formatUsd(decision.scenarioInvalidation, precision, { mode: "futures" })} tip="glossary.invalidation" />
       </div>
       <ReasonList title={t("decision.mainReasons")} items={decision.mainReasons} t={t} />
       <p className="card-hint"><strong>{t("decision.whatChanges")}</strong> {decision.changeDecision}</p>
@@ -1089,9 +1094,9 @@ function BacktestSummary({ backtest, precision, t }) {
       {backtest.reliabilityWarning && <div className="source-warning">{t("decision.backtest.lowSample")}</div>}
       <div className="decision-metrics">
         <Metric label={t("decision.backtest.tradeCount")} value={backtest.tradeCount} />
-        <Metric label={t("decision.backtest.winRate")} value={`${Math.round(backtest.winRate)}%`} />
-        <Metric label={t("decision.backtest.profitFactor")} value={Number.isFinite(backtest.profitFactor) ? formatPrice(backtest.profitFactor, {}, { mode: "display" }) : t("decision.term.infinite")} />
-        <Metric label={t("decision.backtest.maxDrawdown")} value={`${formatPrice(backtest.maxDrawdown, {}, { mode: "display" })}%`} />
+        <Metric label={t("decision.backtest.winRate")} value={`${Math.round(backtest.winRate)}%`} tip="glossary.winRate" />
+        <Metric label={t("decision.backtest.profitFactor")} value={Number.isFinite(backtest.profitFactor) ? formatPrice(backtest.profitFactor, {}, { mode: "display" }) : t("decision.term.infinite")} tip="glossary.profitFactor" />
+        <Metric label={t("decision.backtest.maxDrawdown")} value={`${formatPrice(backtest.maxDrawdown, {}, { mode: "display" })}%`} tip="glossary.maxDrawdown" />
         <Metric label={t("decision.backtest.averageR")} value={formatPrice(backtest.averageR, {}, { mode: "display" })} />
         <Metric label={t("decision.backtest.worstLosingStreak")} value={backtest.worstLosingStreak} />
       </div>
@@ -1120,19 +1125,22 @@ function SetupCard({ setup, precision, market, meta, t }) {
       <AnalysisContextMeta market={market} meta={meta} />
       <div className="setup-card__head">
         <h2>{t("decision.setup.title", { side: decisionTerm(t, setup.side) })}</h2>
-        <span>{decisionTerm(t, setup.status)}</span>
+        <span className="setup-card__status">
+          {decisionTerm(t, setup.status)}
+          <InfoTip term={setupStatusTip(setup.status)} />
+        </span>
       </div>
       <div className="decision-metrics">
-        <Metric label={t("decision.metric.entryZone")} value={`${formatUsd(setup.entryLow, precision, { mode: "trading" })} - ${formatUsd(setup.entryHigh, precision, { mode: "trading" })}`} />
-        <Metric label={t("decision.metric.stopLoss")} value={formatUsd(setup.stop, precision, { mode: "futures" })} />
-        <Metric label={t("decision.metric.target1")} value={formatUsd(setup.target1, precision, { mode: "futures" })} />
-        <Metric label={t("decision.metric.target2")} value={formatUsd(setup.target2, precision, { mode: "futures" })} />
-        <Metric label={t("decision.metric.riskReward")} value={`1:${formatPrice(setup.riskReward, {}, { mode: "display" })}`} />
-        <Metric label={t("decision.metric.expectedValue")} value={setup.expectedValue == null ? t("decision.term.unavailable") : formatPrice(setup.expectedValue, {}, { mode: "display" })} />
-        <Metric label={t("decision.metric.pTargetBeforeStop")} value={formatProbability(setup.pTargetBeforeStop, t)} />
-        <Metric label={t("decision.metric.pStopBeforeTarget")} value={formatProbability(setup.pStopBeforeTarget, t)} />
-        <Metric label={t("decision.metric.setupScore")} value={`${setup.score}/100`} />
-        <Metric label={t("decision.metric.invalidationShort")} value={formatUsd(setup.invalidation, precision, { mode: "futures" })} />
+        <Metric label={t("decision.metric.entryZone")} value={`${formatUsd(setup.entryLow, precision, { mode: "trading" })} - ${formatUsd(setup.entryHigh, precision, { mode: "trading" })}`} tip="glossary.entryZone" />
+        <Metric label={t("decision.metric.stopLoss")} value={formatUsd(setup.stop, precision, { mode: "futures" })} tip="glossary.stopLoss" />
+        <Metric label={t("decision.metric.target1")} value={formatUsd(setup.target1, precision, { mode: "futures" })} tip="glossary.target" />
+        <Metric label={t("decision.metric.target2")} value={formatUsd(setup.target2, precision, { mode: "futures" })} tip="glossary.target" />
+        <Metric label={t("decision.metric.riskReward")} value={`1:${formatPrice(setup.riskReward, {}, { mode: "display" })}`} tip="glossary.riskReward" />
+        <Metric label={t("decision.metric.expectedValue")} value={setup.expectedValue == null ? t("decision.term.unavailable") : formatPrice(setup.expectedValue, {}, { mode: "display" })} tip="glossary.ev" />
+        <Metric label={t("decision.metric.pTargetBeforeStop")} value={formatProbability(setup.pTargetBeforeStop, t)} tip="glossary.pTargetBeforeStop" />
+        <Metric label={t("decision.metric.pStopBeforeTarget")} value={formatProbability(setup.pStopBeforeTarget, t)} tip="glossary.pStopBeforeTarget" />
+        <Metric label={t("decision.metric.setupScore")} value={`${setup.score}/100`} tip="glossary.setupScore" />
+        <Metric label={t("decision.metric.invalidationShort")} value={formatUsd(setup.invalidation, precision, { mode: "futures" })} tip="glossary.invalidation" />
       </div>
       <ReasonList title={t("decision.reasonsFor")} items={setup.reasonsFor} t={t} />
       <ReasonList title={t("decision.reasonsAgainst")} items={setup.reasonsAgainst} t={t} />
@@ -1165,7 +1173,7 @@ function RiskEnginePanel({ inputs, onChange, risk, setup, precision, market, met
             <Metric label={t("decision.risk.dollarRisk")} value={formatUsd(risk.riskIfStopped)} />
             <Metric label={t("decision.risk.reward1")} value={formatUsd(risk.reward1)} />
             <Metric label={t("decision.risk.reward2")} value={formatUsd(risk.reward2)} />
-            <Metric label={t("decision.risk.realRR")} value={`1:${formatPrice(risk.realRR, {}, { mode: "display" })}`} />
+            <Metric label={t("decision.risk.realRR")} value={`1:${formatPrice(risk.realRR, {}, { mode: "display" })}`} tip="glossary.realRR" />
             <Metric label={t("decision.risk.liquidation")} value={risk.liquidation == null ? t("decision.risk.naSpot") : formatUsd(risk.liquidation, precision, { mode: "futures" })} />
           </div>
           {risk.warnings.length > 0 && (
@@ -1508,14 +1516,23 @@ function ReasonList({ title, items, t }) {
   );
 }
 
-function Metric({ label, value }) {
+function Metric({ label, value, tip }) {
   const isNumericValue = typeof value === "number" || /^[\s\d.,:%+$€£¥₿()/:-]+$/.test(String(value));
   return (
     <div className="decision-metric">
-      <span>{label}</span>
+      <span className="decision-metric__label">
+        {label}
+        {tip ? <InfoTip term={tip} /> : null}
+      </span>
       <strong className={isNumericValue ? "num" : undefined}>{value}</strong>
     </div>
   );
+}
+
+function setupStatusTip(status) {
+  if (status === "Accepted") return "glossary.accepted";
+  if (status === "Conditional") return "glossary.conditional";
+  return "glossary.rejected";
 }
 
 function formatProbability(value, t) {

@@ -9,6 +9,7 @@ import { useCoin } from "../context/coinStore";
 import { useMarket } from "../context/MarketContext";
 import { useI18n } from "../i18n/langStore";
 import { useStaggerReveal } from "../hooks/useAnimations";
+import InfoTip from "../components/InfoTip";
 
 export default function RiskTools() {
   const { t } = useI18n();
@@ -40,7 +41,10 @@ function PositionSizeCalculator() {
   return (
     <div className="risk-card glass-card reveal">
       <MarketContextBar module="Position size" />
-      <h3>{t("risk.pos.title")}</h3>
+      <h3>
+        {t("risk.pos.title")}
+        <InfoTip term="glossary.positionSize" />
+      </h3>
       <p className="card-hint">{t("risk.pos.hint")}</p>
       <Field label={t("risk.pos.account")} value={accountSize} onChange={setAccountSize} type="number" />
       <Field label={t("risk.pos.riskPct")} value={riskPercent} onChange={setRiskPercent} type="number" step="0.1" />
@@ -96,7 +100,10 @@ function ATRStopCalculator() {
     <div className="risk-card glass-card reveal">
       <MarketContextBar module="ATR stop" />
       <DataQualityGuard module="ATR stop" meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
-      <h3>{t("risk.atr.title")}</h3>
+      <h3>
+        {t("risk.atr.title")}
+        <InfoTip term="glossary.atr" />
+      </h3>
       <p className="card-hint">{t("risk.atr.hint")}</p>
       <button className="run-btn" onClick={handleCalculate} disabled={loading}>
         {loading ? t("risk.atr.calculating") : t("risk.atr.get", { sym: coin.symbol })}
@@ -105,7 +112,10 @@ function ATRStopCalculator() {
       {atr && <Row label={t("risk.atr.value")} value={formatUsd(atr, market.precision, { mode: "futures" })} />}
       <Field label={t("risk.atr.entry")} value={entryPrice} onChange={setEntryPrice} type="number" step="any" />
       <div className="control-group">
-        <label>{t("risk.atr.mult")}</label>
+        <label>
+          {t("risk.atr.mult")}
+          <InfoTip term="glossary.atr" />
+        </label>
         <input type="number" step="0.5" value={multiplier} onChange={(e) => setMultiplier(e.target.value)} />
       </div>
       <div className="control-group">
@@ -135,7 +145,10 @@ function RiskRewardCalculator() {
   return (
     <div className="risk-card glass-card reveal">
       <MarketContextBar module="Risk reward" />
-      <h3>{t("risk.rr.title")}</h3>
+      <h3>
+        {t("risk.rr.title")}
+        <InfoTip term="glossary.riskRewardTool" />
+      </h3>
       <p className="card-hint">{t("risk.rr.hint")}</p>
       <Field label={t("risk.rr.entry")} value={entryPrice} onChange={setEntryPrice} type="number" step="any" />
       <Field label={t("risk.rr.stop")} value={stopPrice} onChange={setStopPrice} type="number" step="any" />
