@@ -61,6 +61,13 @@ assert.equal(mc.cone.length, 30);
 assert.ok(mc.dist.p5 <= mc.dist.p25 && mc.dist.p25 <= mc.dist.p50, "lower percentiles sorted");
 assert.ok(mc.dist.p50 <= mc.dist.p75 && mc.dist.p75 <= mc.dist.p95, "upper percentiles sorted");
 assert.ok(mc.probProfit >= 0 && mc.probProfit <= 1, "profit probability bounded");
+assert.equal(mc.probProfit, mc.probAboveCurrent, "probProfit alias matches probAboveCurrent");
+assert.ok(
+  Math.abs(mc.probAboveCurrent - mc.finals.filter((p) => p > mc.current).length / mc.finals.length) < 1e-12,
+  "probAboveCurrent uses simulated path count as denominator",
+);
+const expectedMedianPct = (mc.dist.p50 / mc.current - 1) * 100;
+assert.ok(Math.abs(mc.medianReturnPct - expectedMedianPct) < 1e-9, "median return derives from p50");
 
 const zones = outcomeZones(mc, 7);
 const zoneMass = zones.reduce((sum, z) => sum + z.probability, 0);

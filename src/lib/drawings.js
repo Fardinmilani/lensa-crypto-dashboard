@@ -4,7 +4,7 @@
 // passed in) and plain drawing objects. Keeping this framework-agnostic
 // makes the math easy to reason about and keeps ChartDrawingLayer.jsx thin.
 
-import { formatPrice } from "./priceFormat";
+import { formatPrice } from "./priceFormat.js";
 
 // ---------------------------------------------------------------------------
 // Tool catalogue

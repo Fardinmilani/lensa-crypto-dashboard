@@ -1,6 +1,6 @@
 // Browser-only market data client for static hosting.
 // Every endpoint below is a public API called directly from the user's browser.
-import { analyzeCandleQuality, fillCandleGaps } from "./dataQuality";
+import { analyzeCandleQuality, fillCandleGaps } from "./dataQuality.js";
 
 const API_BASES = {
   coingecko: "https://api.coingecko.com/api/v3",

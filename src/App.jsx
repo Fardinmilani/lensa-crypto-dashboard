@@ -1,23 +1,26 @@
-import { useState } from "react";
-import Dashboard from "./pages/Dashboard";
-import Backtest from "./pages/Backtest";
-import Forecast from "./pages/Forecast";
-import RiskTools from "./pages/RiskTools";
-import DecisionCenter from "./pages/DecisionCenter";
-import About from "./pages/About";
+import { Fragment, Suspense, lazy, useState } from "react";
 import CoinSearch from "./components/CoinSearch";
+
+// Route-level code splitting: keeps chart-heavy pages out of the initial bundle.
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+const Backtest = lazy(() => import("./pages/Backtest"));
+const Forecast = lazy(() => import("./pages/Forecast"));
+const RiskTools = lazy(() => import("./pages/RiskTools"));
+const DecisionCenter = lazy(() => import("./pages/DecisionCenter"));
+const About = lazy(() => import("./pages/About"));
 import { CoinProvider } from "./context/CoinContext";
 import { MarketProvider } from "./context/MarketContext";
 import { useI18n } from "./i18n/langStore";
 import "./App.css";
 
+// Core = daily-use tools shown first; advanced = deeper analysis tools.
 const TABS = [
-  { id: "dashboard", labelKey: "tab.dashboard", component: Dashboard, icon: GridIcon },
-  { id: "forecast", labelKey: "tab.forecast", component: Forecast, icon: WaveIcon, badge: "Premium" },
-  { id: "decision", labelKey: "tab.decision", component: DecisionCenter, icon: ShieldIcon },
-  { id: "backtest", labelKey: "tab.backtest", component: Backtest, icon: ChartIcon },
-  { id: "risk", labelKey: "tab.risk", component: RiskTools, icon: ShieldIcon },
-  { id: "about", labelKey: "tab.about", component: About, icon: InfoIcon },
+  { id: "dashboard", labelKey: "tab.dashboard", component: Dashboard, icon: GridIcon, group: "core" },
+  { id: "decision", labelKey: "tab.decision", component: DecisionCenter, icon: ShieldIcon, group: "core" },
+  { id: "forecast", labelKey: "tab.forecast", component: Forecast, icon: WaveIcon, group: "advanced" },
+  { id: "backtest", labelKey: "tab.backtest", component: Backtest, icon: ChartIcon, group: "advanced" },
+  { id: "risk", labelKey: "tab.risk", component: RiskTools, icon: ShieldIcon, group: "advanced" },
+  { id: "about", labelKey: "tab.about", component: About, icon: InfoIcon, group: "meta" },
 ];
 
 export default function App() {
@@ -50,20 +53,23 @@ export default function App() {
           <CoinSearch />
 
           <nav className="tab-nav" role="tablist" aria-label={t("brand.sub")}>
-            {TABS.map((tab) => {
+            {TABS.map((tab, i) => {
               const Icon = tab.icon;
+              const prev = TABS[i - 1];
+              const showDivider = prev && prev.group !== tab.group;
               return (
-                <button
-                  key={tab.id}
-                  role="tab"
-                  aria-selected={activeTab === tab.id}
-                  className={`tab-btn ${activeTab === tab.id ? "active" : ""}`}
-                  onClick={() => setActiveTab(tab.id)}
-                >
-                  <Icon />
-                  <span>{t(tab.labelKey)}</span>
-                  {tab.badge && <em className="tab-badge">{tab.badge}</em>}
-                </button>
+                <Fragment key={tab.id}>
+                  {showDivider && <span className="tab-divider" aria-hidden="true" />}
+                  <button
+                    role="tab"
+                    aria-selected={activeTab === tab.id}
+                    className={`tab-btn ${activeTab === tab.id ? "active" : ""}`}
+                    onClick={() => setActiveTab(tab.id)}
+                  >
+                    <Icon />
+                    <span>{t(tab.labelKey)}</span>
+                  </button>
+                </Fragment>
               );
             })}
           </nav>
@@ -75,7 +81,9 @@ export default function App() {
         </header>
 
         <main className="app-main" key={activeTab}>
-          <ActiveComponent />
+          <Suspense fallback={<div className="route-loading">{t("common.loading")}</div>}>
+            <ActiveComponent />
+          </Suspense>
         </main>
 
         <footer className="app-footer">{t("footer")}</footer>

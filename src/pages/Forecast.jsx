@@ -33,6 +33,7 @@ export default function Forecast() {
   const [method, setMethod] = useLocalStorageState("lensa.forecast.method", "bootstrap");
   const [driftMode, setDriftMode] = useLocalStorageState("lensa.forecast.drift", "historical");
   const [sims, setSims] = useLocalStorageState("lensa.forecast.sims", 3000);
+  const [bands, setBands] = useLocalStorageState("lensa.forecast.bands", "inner");
   const [mc, setMc] = useState(null);
   const [extra, setExtra] = useState(null);
   const [dataMeta, setDataMeta] = useState(null);
@@ -109,8 +110,8 @@ export default function Forecast() {
   return (
     <div className="forecast-page" ref={reveal}>
       <div className="disclaimer-banner reveal">{t("fc.disclaimer")}</div>
-      <MarketContextBar module="Prediction + Monte Carlo" lastPrice={mc?.current} />
-      <DataQualityGuard module="Prediction + Monte Carlo" meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
+      <MarketContextBar module="Scenario analysis" lastPrice={mc?.current} />
+      <DataQualityGuard module="Scenario analysis" meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
 
       <div className="backtest-controls glass-card reveal">
         <div className="control-group control-group--wide">
@@ -169,10 +170,10 @@ export default function Forecast() {
         <>
           <ReportActions report={report} type="forecast" symbol={coin.symbol} allowSave={false} />
           <div className="forecast-hl">
-            <HlCard label={t("fc.hl.prob")} value={mc.probProfit * 100} suffix="%" decimals={0} tone={mc.probProfit >= 0.5 ? "up" : "down"} hint={t("fc.hl.probHint", { n: extra.horizonLabel })} />
-            <HlCard label={t("fc.hl.expected")} value={mc.expectedReturnPct} suffix="%" decimals={1} tone={mc.expectedReturnPct >= 0 ? "up" : "down"} hint={t("fc.hl.expectedHint")} />
-            <HlCard label={t("fc.hl.upside")} value={mc.upside95Pct} suffix="%" decimals={1} tone="up" hint={formatUsd(mc.dist.p95, market.precision, { mode: "futures" })} />
-            <HlCard label={t("fc.hl.downside")} value={mc.var5Pct} suffix="%" decimals={1} tone="down" hint={formatUsd(mc.dist.p5, market.precision, { mode: "futures" })} />
+            <HlCard label={t("fc.hl.median")} value={mc.medianReturnPct} suffix="%" decimals={0} tone={mc.medianReturnPct >= 0 ? "up" : "down"} hint={formatUsd(mc.dist.p50, market.precision, { mode: "futures" })} />
+            <HlCard label={t("fc.hl.prob")} value={mc.probAboveCurrent * 100} suffix="%" decimals={0} tone={mc.probAboveCurrent >= 0.5 ? "up" : "down"} hint={t("fc.hl.probHint", { n: extra.horizonLabel })} />
+            <HlCard label={t("fc.hl.upside")} value={mc.upside95Pct} suffix="%" decimals={0} tone="up" hint={formatUsd(mc.dist.p95, market.precision, { mode: "futures" })} />
+            <HlCard label={t("fc.hl.downside")} value={mc.var5Pct} suffix="%" decimals={0} tone="down" hint={formatUsd(mc.dist.p5, market.precision, { mode: "futures" })} />
             <HlCard label={t("fc.hl.vol")} value={extra.annVol} suffix="%" decimals={0} hint={t("fc.hl.volHint")} />
           </div>
 
@@ -189,15 +190,45 @@ export default function Forecast() {
           </div>
 
           <div className="glass-card chart-card reveal">
-            <MarketContextBar module="Monte Carlo chart" lastPrice={mc.current} />
-            <DataQualityGuard module="Monte Carlo chart" meta={dataMeta} analysisMarket={analysisMarket} forecastAnchor={checkForecastAnchor({ history: extra.history, cone: mc.cone, stepSeconds: extra.stepSeconds })} />
-            <div className="panel-header">
+            <MarketContextBar module="Scenario cone" lastPrice={mc.current} />
+            <DataQualityGuard module="Scenario cone" meta={dataMeta} analysisMarket={analysisMarket} forecastAnchor={checkForecastAnchor({ history: extra.history, cone: mc.cone, stepSeconds: extra.stepSeconds })} />
+            <div className="panel-header panel-header--wrap">
               <div>
                 <h2>{t("fc.cone")}</h2>
                 <span className="panel-subtitle">{t("fc.coneSub")}</span>
               </div>
+              <div className="band-toggle" role="group" aria-label={t("fc.bands.label")}>
+                {["median", "inner", "full"].map((b) => (
+                  <button
+                    key={b}
+                    type="button"
+                    className={`band-toggle__btn ${bands === b ? "active" : ""}`}
+                    onClick={() => setBands(b)}
+                  >
+                    {t(`fc.bands.${b}`)}
+                  </button>
+                ))}
+              </div>
             </div>
-            <ConeChart history={extra.history} cone={mc.cone} stepSeconds={extra.stepSeconds} precision={market.precision} />
+            <ConeChart history={extra.history} cone={mc.cone} stepSeconds={extra.stepSeconds} precision={market.precision} bands={bands} />
+            <div className="cone-legend">
+              <span><i className="cone-legend__swatch cone-legend__swatch--hist" />{t("fc.legend.history")}</span>
+              <span><i className="cone-legend__swatch cone-legend__swatch--median" />{t("fc.legend.median")}</span>
+              {bands !== "median" && <span><i className="cone-legend__swatch cone-legend__swatch--inner" />{t("fc.legend.inner")}</span>}
+              {bands === "full" && <span><i className="cone-legend__swatch cone-legend__swatch--outer" />{t("fc.legend.outer")}</span>}
+            </div>
+            <div className="scenario-summary">
+              <p className="scenario-summary__lead">{t("fc.summary.lead", {
+                median: formatUsd(mc.dist.p50, market.precision, { mode: "futures" }),
+                n: extra.horizonLabel,
+              })}</p>
+              <ul className="scenario-summary__list">
+                <li><span>{t("fc.summary.down")}</span><strong className="num down">{formatUsd(mc.dist.p5, market.precision, { mode: "futures" })}</strong></li>
+                <li><span>{t("fc.summary.up")}</span><strong className="num up">{formatUsd(mc.dist.p95, market.precision, { mode: "futures" })}</strong></li>
+                <li><span>{t("fc.summary.prob")}</span><strong className="num">{Math.round(mc.probAboveCurrent * 100)}%</strong></li>
+              </ul>
+              <p className="scenario-summary__note">{t("fc.summary.note")}</p>
+            </div>
           </div>
 
           <div className="forecast-cols forecast-cols--single">

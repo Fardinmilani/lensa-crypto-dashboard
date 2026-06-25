@@ -140,8 +140,11 @@ export function monteCarlo({
     expected: mean(finals),
   };
 
-  const probProfit = finals.filter((p) => p > current).length / sims;
+  const probAboveCurrent = finals.filter((p) => p > current).length / finals.length;
   const expectedReturnPct = (dist.expected / current - 1) * 100;
+  // Median is the typical scenario and is robust to the long upper tail of
+  // multiplicative price paths — we surface it as the headline number.
+  const medianReturnPct = (dist.p50 / current - 1) * 100;
   const var5Pct = (dist.p5 / current - 1) * 100; // worst 5% outcome
   const upside95Pct = (dist.p95 / current - 1) * 100;
 
@@ -157,8 +160,10 @@ export function monteCarlo({
     paths,
     maxes,
     mins,
-    probProfit,
+    probAboveCurrent,
+    probProfit: probAboveCurrent, // backwards-compatible alias
     expectedReturnPct,
+    medianReturnPct,
     var5Pct,
     upside95Pct,
   };

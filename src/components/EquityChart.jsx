@@ -1,6 +1,28 @@
 import { useEffect, useRef } from "react";
 import { createChart, LineSeries } from "lightweight-charts";
 
+// Curve times can arrive in seconds (like candles elsewhere) or milliseconds.
+// lightweight-charts requires UNIX seconds, strictly ascending and unique.
+function toSeriesData(curve) {
+  if (!Array.isArray(curve)) return [];
+  const points = curve
+    .filter((p) => p && Number.isFinite(p.time) && Number.isFinite(p.equity))
+    .map((p) => ({
+      time: Math.floor(p.time > 1e11 ? p.time / 1000 : p.time),
+      value: p.equity,
+    }))
+    .sort((a, b) => a.time - b.time);
+
+  // Collapse duplicate timestamps, keeping the latest value for each second.
+  const deduped = [];
+  for (const point of points) {
+    const last = deduped[deduped.length - 1];
+    if (last && last.time === point.time) last.value = point.value;
+    else deduped.push(point);
+  }
+  return deduped;
+}
+
 export default function EquityChart({ equityCurve, benchmarkCurve }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
@@ -29,9 +51,7 @@ export default function EquityChart({ equityCurve, benchmarkCurve }) {
       lineWidth: 2,
       title: "استراتژی",
     });
-    equitySeries.setData(
-      equityCurve.map((p) => ({ time: Math.floor(p.time / 1000), value: p.equity }))
-    );
+    equitySeries.setData(toSeriesData(equityCurve));
 
     if (benchmarkCurve) {
       const benchmarkSeries = chart.addSeries(LineSeries, {
@@ -40,9 +60,7 @@ export default function EquityChart({ equityCurve, benchmarkCurve }) {
         lineStyle: 2, // dashed
         title: "خرید و نگهداری",
       });
-      benchmarkSeries.setData(
-        benchmarkCurve.map((p) => ({ time: Math.floor(p.time / 1000), value: p.equity }))
-      );
+      benchmarkSeries.setData(toSeriesData(benchmarkCurve));
     }
 
     chart.timeScale().fitContent();
