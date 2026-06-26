@@ -184,25 +184,23 @@ export function runAllStrategies({ candles, strategies, feePercent = 0.1 }) {
 export function averageEquityCurves(rows, initialCapital = 10000) {
   if (!rows?.length) return [];
 
-  const times = [
-    ...new Set(rows.flatMap((row) => row.result.equityCurve.map((point) => point.time))),
-  ].sort((a, b) => a - b);
+  // Every equity curve produced by runBacktest has exactly one point per
+  // input candle, built in the same left-to-right order — so all rows are
+  // already index-aligned and share the same time axis. No per-timestamp
+  // lookup is needed; we can average by position directly in one pass.
+  const length = rows[0]?.result?.equityCurve?.length || 0;
+  if (!length) return [];
 
-  function valueAt(curve, time) {
-    if (!curve.length) return initialCapital;
-    let value = curve[0].equity;
-    for (const point of curve) {
-      if (point.time > time) break;
-      value = point.equity;
+  const out = new Array(length);
+  const rowCount = rows.length;
+  for (let i = 0; i < length; i++) {
+    let sumNorm = 0;
+    for (let r = 0; r < rowCount; r++) {
+      sumNorm += rows[r].result.equityCurve[i].equity / rows[r].result.initialCapital;
     }
-    return value;
+    out[i] = { time: rows[0].result.equityCurve[i].time, equity: (sumNorm / rowCount) * initialCapital };
   }
-
-  return times.map((time) => {
-    const normalized = rows.map((row) => valueAt(row.result.equityCurve, time) / row.result.initialCapital);
-    const avgNorm = mean(normalized);
-    return { time, equity: avgNorm * initialCapital };
-  });
+  return out;
 }
 
 export function summarizeEquityCurve(equityCurve, { initialCapital = 10000, candles = [], benchmarkReturnPercent = null } = {}) {

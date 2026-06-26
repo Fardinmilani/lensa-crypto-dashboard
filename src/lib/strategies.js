@@ -98,6 +98,39 @@ export function roc(values, period = 10) {
   return out;
 }
 
+/**
+ * Rolling max/min over the *previous* `period` values (exclusive of the
+ * current index), using a monotonic deque. This is the O(n) replacement for
+ * repeatedly slicing the array and spreading into Math.max/Math.min at every
+ * index, which is O(n * period) and allocates a short-lived array per index —
+ * negligible on a few hundred candles, but a real bottleneck on tens of
+ * thousands (e.g. low timeframes over a long lookback).
+ * out[i] is null until i >= period (matching the "last N candles before i" window).
+ */
+function rollingMaxExclusive(values, period) {
+  const out = new Array(values.length).fill(null);
+  const deque = []; // indices < current i, values decreasing front-to-back
+  for (let i = 0; i < values.length; i++) {
+    while (deque.length && deque[0] < i - period) deque.shift();
+    if (i >= period) out[i] = values[deque[0]];
+    while (deque.length && values[deque[deque.length - 1]] <= values[i]) deque.pop();
+    deque.push(i);
+  }
+  return out;
+}
+
+function rollingMinExclusive(values, period) {
+  const out = new Array(values.length).fill(null);
+  const deque = []; // indices < current i, values increasing front-to-back
+  for (let i = 0; i < values.length; i++) {
+    while (deque.length && deque[0] < i - period) deque.shift();
+    if (i >= period) out[i] = values[deque[0]];
+    while (deque.length && values[deque[deque.length - 1]] >= values[i]) deque.pop();
+    deque.push(i);
+  }
+  return out;
+}
+
 /* ------------------------------------------------------------------ */
 /* Strategies                                                          */
 /* ------------------------------------------------------------------ */
@@ -230,14 +263,27 @@ export const STRATEGIES = {
     },
     params: { entryPeriod: 20, exitPeriod: 10 },
     generateSignals(candles, p) {
+      const highs = candles.map((x) => x.high);
+      const lows = candles.map((x) => x.low);
+      const highN = rollingMaxExclusive(highs, p.entryPeriod);
+      const lowM = rollingMinExclusive(lows, p.exitPeriod);
+      // Original semantics: the exit window was Math.max(0, i - exitPeriod),
+      // i.e. a growing window from the start of the array whenever
+      // exitPeriod hadn't fully elapsed yet. rollingMinExclusive only starts
+      // producing values once i >= exitPeriod, so backfill the early indices
+      // (only reachable when exitPeriod > entryPeriod, since the main loop
+      // below never looks at lowM before i = entryPeriod otherwise).
+      let growingMin = Infinity;
+      for (let i = 0; i < candles.length && i < p.exitPeriod; i++) {
+        if (i > 0) growingMin = Math.min(growingMin, lows[i - 1]);
+        lowM[i] = growingMin === Infinity ? lows[0] : growingMin;
+      }
       const out = new Array(candles.length).fill(0);
       let inPos = false;
       for (let i = 0; i < candles.length; i++) {
         if (i < p.entryPeriod) continue;
-        const highN = Math.max(...candles.slice(i - p.entryPeriod, i).map((x) => x.high));
-        const lowM = Math.min(...candles.slice(Math.max(0, i - p.exitPeriod), i).map((x) => x.low));
-        if (!inPos && candles[i].close > highN) inPos = true;
-        else if (inPos && candles[i].close < lowM) inPos = false;
+        if (!inPos && candles[i].close > highN[i]) inPos = true;
+        else if (inPos && candles[i].close < lowM[i]) inPos = false;
         out[i] = inPos ? 1 : 0;
       }
       return out;

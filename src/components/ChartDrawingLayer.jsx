@@ -71,6 +71,14 @@ export default function ChartDrawingLayer({ chart, series, candles, context, ren
   const selected = drawings.find((d) => d.id === selectedId) || null;
   const activeTool = DRAWING_TOOLS.find((t) => t.id === tool) || DRAWING_TOOLS[0];
 
+  const prevSelectedId = useRef(null);
+  useEffect(() => {
+    if (selectedId && selectedId !== prevSelectedId.current) {
+      setPanel((p) => (p === "objects" ? p : "settings"));
+    }
+    prevSelectedId.current = selectedId;
+  }, [selectedId]);
+
   const pushHistory = useCallback(() => {
     undoStack.current = [...undoStack.current.slice(-HISTORY_LIMIT + 1), drawings];
     redoStack.current = [];
@@ -445,7 +453,6 @@ export default function ChartDrawingLayer({ chart, series, candles, context, ren
         onPointerUp={handlePointerUp}
         onPointerLeave={handlePointerUp}
         onDoubleClick={handleDoubleClick}
-        style={{ pointerEvents: tool !== "select" ? "auto" : "none" }}
       >
         <defs>
           <marker id="dlayer-arrowhead" markerWidth="9" markerHeight="9" refX="7.5" refY="4.5" orient="auto">

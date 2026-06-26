@@ -658,11 +658,6 @@ function binanceInterval(id) {
   return map[id] || "1d";
 }
 
-function binanceLimit(tf) {
-  const approx = Math.ceil((tf.days * 24 * 60) / Math.max(1, tf.intervalMinutes));
-  return Math.min(1000, Math.max(80, approx));
-}
-
 function pairToDashSymbol(pair, quotes = ["USDT", "USDC", "FDUSD", "BTC", "ETH", "USD", "EUR"]) {
   const raw = String(pair || "").toUpperCase();
   if (raw.includes("-")) return raw.replace(/[^A-Z0-9-]/g, "");

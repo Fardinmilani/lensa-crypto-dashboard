@@ -52,6 +52,21 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
   const [candlesForDraw, setCandlesForDraw] = useState([]);
   const [projectionApi, setProjectionApi] = useState(null);
   const [renderTick, setRenderTick] = useState(0);
+  const [lookbackDays, setLookbackDays] = useState(null);
+  const visibleRangeRef = useRef(null);
+  const loadingMoreRef = useRef(false);
+  // Reset the dynamic lookback whenever the chart's identity changes (new
+  // coin, symbol, timeframe, source, pair, or market type) so switching
+  // charts doesn't carry over an inflated history window from scrolling on a
+  // previous symbol. Done during render (React's recommended pattern for
+  // resetting state on prop changes, using state rather than a ref since refs
+  // may not be read or written during render) instead of in an effect.
+  const identityKey = `${coinId}|${symbol}|${days}|${source}|${pair}|${marketType}`;
+  const [prevIdentityKey, setPrevIdentityKey] = useState(identityKey);
+  if (prevIdentityKey !== identityKey) {
+    setPrevIdentityKey(identityKey);
+    if (lookbackDays !== null) setLookbackDays(null);
+  }
   const normalizedIndicators = useMemo(() => normalizeIndicators(indicators), [indicators]);
   const drawingContext = useMemo(
     () => ({ exchange: source, market: marketType, symbol: pair || symbol, timeframe: days }),
@@ -85,12 +100,14 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
   useEffect(() => {
     let cancelled = false;
     let chart;
+    const isLoadingMore = loadingMoreRef.current;
     (async () => {
-      setLoading(true);
+      if (!isLoadingMore) setLoading(true);
       setError(null);
       setSourceMeta(null);
       try {
-        const candles = await getChartCandles({ id: coinId, symbol, timeframe: days, source, pair, marketType });
+        const effectiveLookback = lookbackDays || undefined;
+        const candles = await getChartCandles({ id: coinId, symbol, timeframe: days, lookbackDays: effectiveLookback, source, pair, marketType });
         if (cancelled || !wrapRef.current) return;
         if (!candles.length) throw new Error(t("chart.noData"));
         setSourceMeta(candles.meta || null);
@@ -120,8 +137,35 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
         mainSeriesRef.current = mainSeries;
         setProjectionApi({ chart, series: mainSeries });
         addIndicatorSeries(chart, candles, normalizedIndicators);
-        chart.timeScale().fitContent();
-        chart.timeScale().subscribeVisibleLogicalRangeChange(() => setRenderTick((tick) => tick + 1));
+        const savedRange = visibleRangeRef.current;
+        if (savedRange && loadingMoreRef.current) {
+          const addedBars = candles.length - savedRange.priorLength;
+          chart.timeScale().setVisibleLogicalRange({
+            from: savedRange.from + addedBars,
+            to: savedRange.to + addedBars,
+          });
+        } else {
+          chart.timeScale().fitContent();
+        }
+        loadingMoreRef.current = false;
+        chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+          setRenderTick((tick) => tick + 1);
+          if (!range || loadingMoreRef.current) return;
+          // Once the visible window scrolls within ~20 bars of the oldest
+          // loaded candle, fetch a deeper history window. candlesNeeded grows
+          // with lookbackDays, so doubling it (capped) reaches further back
+          // on the next load without the user ever hitting a hard wall.
+          if (range.from < 20) {
+            const tf = resolveTimeframe(days);
+            const currentLookback = lookbackDays || tf.days;
+            const maxLookback = tf.intervalMinutes < 1440 ? 365 : 3650;
+            if (currentLookback < maxLookback) {
+              loadingMoreRef.current = true;
+              visibleRangeRef.current = { from: range.from, to: range.to, priorLength: candles.length };
+              setLookbackDays(Math.min(maxLookback, currentLookback * 2));
+            }
+          }
+        });
         setLast(candles[candles.length - 1].close);
         setLoading(false);
       } catch (err) {
@@ -129,6 +173,7 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
           setError(err.message);
           setSourceMeta(qualityMetaFromError(err, source));
           setLoading(false);
+          loadingMoreRef.current = false;
         }
       }
     })();
@@ -141,7 +186,7 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
     };
   // market.precision is a fallback before fetched symbol metadata arrives; including it would refetch after storing that metadata.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [coinId, symbol, days, source, pair, marketType, chartType, normalizedIndicators, t, updateFromCandles]);
+  }, [coinId, symbol, days, source, pair, marketType, chartType, normalizedIndicators, lookbackDays, t, updateFromCandles]);
 
   useEffect(() => {
     const bump = () => setRenderTick((tick) => tick + 1);
