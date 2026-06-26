@@ -524,11 +524,12 @@
   position: relative;
 }
 .symbol-search__trigger {
-  min-width: 168px;
+  min-width: 132px;
+  max-width: 200px;
   height: 34px;
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   border: 1px solid var(--border-strong);
   background: var(--bg-raised);
   color: var(--text-primary);
@@ -543,21 +544,32 @@
   border-radius: 50%;
   flex-shrink: 0;
 }
+.symbol-search__trigger img {
+  width: 16px;
+  height: 16px;
+}
 .symbol-search__trigger span {
   display: flex;
   flex-direction: row;
   align-items: baseline;
-  gap: 7px;
+  gap: 5px;
   min-width: 0;
+  overflow: hidden;
 }
 .symbol-search__trigger strong {
   font-size: 0.82rem;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .symbol-search__trigger small {
   color: var(--text-tertiary);
   font-size: 0.66rem;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 1;
+  min-width: 0;
 }
 .symbol-search__backdrop {
   position: fixed;
@@ -1009,11 +1021,41 @@
   height: 100%;
   overflow: hidden;
 }
+.price-chart__stage.is-fullscreen,
+.price-chart__stage:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  background: var(--bg-deep);
+  padding: 8px;
+}
 .price-chart__canvas {
   width: 100%;
   height: 100%;
   padding-left: 46px;
   box-sizing: border-box;
+}
+.price-chart__fullscreen-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 12;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  border: 1px solid var(--border-subtle);
+  background: rgba(10, 13, 22, 0.72);
+  color: var(--text-secondary);
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.price-chart__fullscreen-btn:hover {
+  background: rgba(10, 13, 22, 0.92);
+  color: var(--text-primary);
+  border-color: rgba(255, 255, 255, 0.18);
 }
 
 /* ── TradingView-style drawing toolbar ── */
@@ -1190,21 +1232,30 @@
   background: var(--gold);
 }
 
-/* ── SVG drawing layer ── */
+/* ── SVG drawing layer ──
+   Default state must NOT capture pointer/touch input: when no tool is
+   active and nothing is hovered/dragged, every gesture (drag-to-pan,
+   wheel-zoom, pinch-zoom, scroll) needs to fall through untouched to the
+   chart canvas underneath. We only switch this layer "on" for the three
+   states where it actually has something to do: placing a new drawing,
+   dragging an existing one, or sitting directly over a drawing's hit-area.
+   "is-selecting" (select tool, idle, nothing hovered) is intentionally
+   excluded — that is the normal "just looking at the chart" state. */
 .dlayer {
   position: absolute;
   inset: 0;
   z-index: 8;
   width: 100%;
   height: 100%;
-  touch-action: none;
+  touch-action: auto;
   user-select: none;
+  pointer-events: none;
 }
-.dlayer.is-selecting,
 .dlayer.is-hovering,
 .dlayer.is-dragging,
 .dlayer.is-placing {
   pointer-events: auto;
+  touch-action: none;
 }
 .dlayer.is-placing {
   cursor: crosshair;

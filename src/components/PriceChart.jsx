@@ -149,6 +149,28 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
     return () => window.removeEventListener("resize", bump);
   }, []);
 
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  useEffect(() => {
+    function onFullscreenChange() {
+      const active = document.fullscreenElement === stageRef.current;
+      setIsFullscreen(active);
+      // Give the browser a frame to settle the new layout size before the
+      // chart (autoSize: true) and drawing layer recompute their projections.
+      requestAnimationFrame(() => setRenderTick((tick) => tick + 1));
+    }
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
+  }, []);
+
+  function toggleFullscreen() {
+    if (!stageRef.current) return;
+    if (document.fullscreenElement) {
+      document.exitFullscreen();
+    } else {
+      stageRef.current.requestFullscreen?.();
+    }
+  }
+
   return (
     <div className="price-chart">
       {/* Top indicator panel */}
@@ -209,8 +231,17 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
       <div className="price-chart__body">
         {error && <div className="chart-overlay chart-overlay--error">{t("chart.error", { e: error })}</div>}
         {loading && !error && <div className="chart-overlay">{t("chart.loading", { sym: symbol })}</div>}
-        <div className="price-chart__stage" ref={stageRef}>
+        <div className={`price-chart__stage${isFullscreen ? " is-fullscreen" : ""}`} ref={stageRef}>
           <div className="price-chart__canvas" ref={wrapRef} />
+          <button
+            type="button"
+            className="price-chart__fullscreen-btn no-print"
+            onClick={toggleFullscreen}
+            title={isFullscreen ? t("chart.exitFullscreen") : t("chart.fullscreen")}
+            aria-label={isFullscreen ? t("chart.exitFullscreen") : t("chart.fullscreen")}
+          >
+            <FullscreenIcon active={isFullscreen} />
+          </button>
           {projectionApi && (
             <ChartDrawingLayer
               chart={projectionApi.chart}
@@ -246,6 +277,28 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
 
 function statusClass(status = "") {
   return status.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+function FullscreenIcon({ active }) {
+  return (
+    <svg viewBox="0 0 20 20" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      {active ? (
+        <>
+          <path d="M8 3 V6.5 A1.5 1.5 0 0 1 6.5 8 H3" />
+          <path d="M12 3 V6.5 A1.5 1.5 0 0 0 13.5 8 H17" />
+          <path d="M8 17 V13.5 A1.5 1.5 0 0 0 6.5 12 H3" />
+          <path d="M12 17 V13.5 A1.5 1.5 0 0 1 13.5 12 H17" />
+        </>
+      ) : (
+        <>
+          <path d="M3 7.5 V4.5 A1.5 1.5 0 0 1 4.5 3 H7.5" />
+          <path d="M12.5 3 H15.5 A1.5 1.5 0 0 1 17 4.5 V7.5" />
+          <path d="M17 12.5 V15.5 A1.5 1.5 0 0 1 15.5 17 H12.5" />
+          <path d="M7.5 17 H4.5 A1.5 1.5 0 0 1 3 15.5 V12.5" />
+        </>
+      )}
+    </svg>
+  );
 }
 
 function IndicatorEditor({ item, active, onToggleSettings, onChange, onParamChange, onRemove, t }) {

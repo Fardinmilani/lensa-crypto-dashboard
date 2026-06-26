@@ -99,6 +99,57 @@ export default function ChartDrawingLayer({ chart, series, candles, context, ren
     setDrawings(next);
   }
 
+  // Idle-state hit-testing (hover highlight + click-to-select/drag an
+  // existing drawing) is attached directly to the stage element rather than
+  // the SVG overlay's own React pointer props. This matters because the SVG
+  // overlay is `pointer-events: none` while idle (tool === "select", nothing
+  // hovered/dragged) so that drag-to-pan, wheel-zoom, and pinch gestures are
+  // delivered straight to the chart canvas underneath instead of being
+  // swallowed by the overlay. A native listener on the stage ancestor still
+  // sees those same pointer events as they bubble up the DOM tree — pointer-
+  // events:none only changes *hit-testing target selection*, not bubbling —
+  // so hover/select continues to work without blocking chart interaction.
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+
+    function onMove(e) {
+      if (dragState.current || tool !== "select") return;
+      const point = pixelPoint(e.clientX, e.clientY);
+      const hit = hitTestAny(drawings, point, chart, series, chartWidth);
+      setHoverId(hit?.id ?? null);
+    }
+
+    function onDown(e) {
+      if (tool !== "select" || dragState.current) return;
+      const point = pixelPoint(e.clientX, e.clientY);
+      const hit = hitTestDrawings(drawings, point, chart, series, chartWidth);
+      if (!hit) {
+        // Nothing hit: leave the event alone so it reaches the chart
+        // canvas for native drag-to-pan. Just clear any stale selection.
+        setSelectedId(null);
+        return;
+      }
+      const anchor = readAnchor(e.clientX, e.clientY);
+      if (!anchor) return;
+      setSelectedId(hit.id);
+      const drawing = drawings.find((d) => d.id === hit.id);
+      if (!drawing) return;
+      e.preventDefault();
+      e.stopPropagation();
+      pushHistory();
+      dragState.current = { id: hit.id, handle: hit.handle, startAnchor: anchor, original: drawing };
+    }
+
+    stage.addEventListener("pointermove", onMove);
+    stage.addEventListener("pointerdown", onDown);
+    return () => {
+      stage.removeEventListener("pointermove", onMove);
+      stage.removeEventListener("pointerdown", onDown);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tool, drawings, chart, series, chartWidth, magnet, candles]);
+
   function selectTool(nextTool) {
     setTool(nextTool);
     setPendingPoint(null);
@@ -149,20 +200,11 @@ export default function ChartDrawingLayer({ chart, series, candles, context, ren
       }
       return;
     }
-
-    // Select mode: hit-test for a handle/shape to grab.
-    const point = pixelPoint(e.clientX, e.clientY);
-    const hit = hitTestDrawings(drawings, point, chart, series, chartWidth);
-    if (!hit) {
-      setSelectedId(null);
-      return;
-    }
-    setSelectedId(hit.id);
-    const drawing = drawings.find((d) => d.id === hit.id);
-    if (!drawing) return;
-    e.preventDefault();
-    pushHistory();
-    dragState.current = { id: hit.id, handle: hit.handle, startAnchor: anchor, original: drawing };
+    // Select-mode hit-testing (hover, click-to-select, drag) is handled by
+    // the stage-level native listener registered in the useEffect above —
+    // not here — so that it keeps working even while this SVG has
+    // pointer-events: none (the idle state, which lets the chart underneath
+    // receive pan/zoom gestures normally).
   }
 
   function handlePointerMove(e) {
@@ -182,12 +224,8 @@ export default function ChartDrawingLayer({ chart, series, candles, context, ren
       if (anchor) setLivePoint(anchor);
       return;
     }
-
-    if (tool === "select") {
-      const point = pixelPoint(e.clientX, e.clientY);
-      const hit = hitTestAny(drawings, point, chart, series, chartWidth);
-      setHoverId(hit?.id ?? null);
-    }
+    // Hover detection in select mode is handled by the stage-level native
+    // listener above, not here.
   }
 
   function handlePointerUp() {
@@ -407,6 +445,7 @@ export default function ChartDrawingLayer({ chart, series, candles, context, ren
         onPointerUp={handlePointerUp}
         onPointerLeave={handlePointerUp}
         onDoubleClick={handleDoubleClick}
+        style={{ pointerEvents: tool !== "select" ? "auto" : "none" }}
       >
         <defs>
           <marker id="dlayer-arrowhead" markerWidth="9" markerHeight="9" refX="7.5" refY="4.5" orient="auto">
@@ -838,18 +877,18 @@ function SettingsPanel({ drawing, onPatch, onDelete }) {
 
 const ICONS = {
   cursor: "M5 3l13 7-6 1.5L10 18z",
-  trendline: "M3 18L18 4",
-  ray: "M3 18L18 4M18 4l-3 1m3-1l-1 3",
-  horizontal: "M3 10h14",
-  vertical: "M10 3v14",
-  arrow: "M3 18L17 4M17 4h-5m5 0v5",
-  rectangle: "M4 5h12v10H4z",
-  fib: "M3 5h14M3 9h14M3 13h14M3 17h14",
-  text: "M5 5h10M10 5v12M7 17h6",
-  measure: "M3 14h14M5 11v6M9 11v6M13 11v6M17 11v6",
-  long: "M3 17l5-5 4 3 6-7",
-  short: "M3 5l5 5 4-3 6 7",
-  rr: "M4 5h12v6H4zM4 13h12v4H4z",
+  trendline: "M4 16L16 4 M4 16a1.2 1.2 0 100-2.4 1.2 1.2 0 000 2.4z M16 4a1.2 1.2 0 100 2.4 1.2 1.2 0 000-2.4z",
+  ray: "M3 17L13 7 M13 7l-3.2.5M13 7l-.5 3.2 M13 7l4-4",
+  horizontal: "M3 10h3 M8 10h4 M14 10h3 M3 7.5v5 M17 7.5v5",
+  vertical: "M10 3v3 M10 8v4 M10 14v3 M7.5 3h5 M7.5 17h5",
+  arrow: "M3 17L15 5 M15 5h-5.5 M15 5v5.5",
+  rectangle: "M4.5 5.5h11v9h-11z",
+  fib: "M3 4.5h14 M3 8.2h10.5 M3 11.8h7 M3 15.5h3.5",
+  text: "M5 6h10 M10 6v8 M6 16.5h8 M5 6V4.5h10V6",
+  measure: "M3 6h14v4H3z M5.5 6v2 M8 6v2 M10.5 6v2 M13 6v2 M15.5 6v2 M5 14l10 3",
+  long: "M3 16l4.5-5.5 3.5 2.5 5.5-7 M13.2 6l3.3-.2-.2 3.3",
+  short: "M3 5l4.5 5.5 3.5-2.5 5.5 7 M13.2 15l3.3.2-.2-3.3",
+  rr: "M4 4h12v5.5H4z M4 11.5h12V16H4z M2.5 4v12 M2.5 9.5h2 M2.5 14h2",
   magnet: "M6 3v7a4 4 0 008 0V3M6 3H4m2 0h2m6 0h2m-2 0h-2",
   undo: "M7 8L3 8m0 0l4-4m-4 4l4 4M3 8c0 5 4 9 9 9 4 0 7-2 8-5",
   redo: "M13 8l4 0m0 0l-4-4m4 4l-4 4M17 8c0 5-4 9-9 9-4 0-7-2-8-5",
