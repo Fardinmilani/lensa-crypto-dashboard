@@ -29,6 +29,29 @@ import { useLocalStorageState } from "../hooks/useLocalStorageState";
 
 const HISTORY_LIMIT = 30;
 
+// Curated, professional default palette for drawings — mirrors the kind of
+// fixed swatch set TradingView/Bloomberg-style tools offer instead of an
+// open-ended OS color picker. "Custom" always stays available as an escape
+// hatch via the native <input type="color">.
+const DRAWING_COLOR_PALETTE = [
+  { id: "amber", value: "#f5a623" },
+  { id: "gold", value: "#f59e0b" },
+  { id: "red", value: "#ef4444" },
+  { id: "rose", value: "#fb7185" },
+  { id: "orange", value: "#f97316" },
+  { id: "lime", value: "#84cc16" },
+  { id: "green", value: "#22c55e" },
+  { id: "teal", value: "#2dd4bf" },
+  { id: "cyan", value: "#38bdf8" },
+  { id: "blue", value: "#3b82f6" },
+  { id: "indigo", value: "#6366f1" },
+  { id: "violet", value: "#a78bfa" },
+  { id: "purple", value: "#c084fc" },
+  { id: "pink", value: "#ec4899" },
+  { id: "slate", value: "#94a3b8" },
+  { id: "white", value: "#f8fafc" },
+];
+
 /**
  * Self-contained TradingView-style drawing system. Renders its own left
  * toolbar + SVG overlay + side panels. Owns its own state (drawings,
@@ -40,9 +63,16 @@ const HISTORY_LIMIT = 30;
  *   candles         — current candle array, used for magnet snapping
  *   context         — { exchange, market, symbol, timeframe } identity of the current chart
  *   renderTick      — bump this number whenever the chart's visible range changes
- *   stageRef        — ref to the wrapping element used for pointer→pixel math
+ *   stageRef        — ref to the outer wrapping element (toolbar + canvas), used as the
+ *                      native-listener attachment point and for distinguishing UI-panel
+ *                      clicks from clicks on the chart itself
+ *   canvasRef       — ref to the actual chart canvas container (lightweight-charts' own
+ *                      coordinate origin). All pointer↔data conversions must be measured
+ *                      against this box, not the wider stage, since the toolbar occupies
+ *                      its own strip of the stage that the chart's coordinate system
+ *                      doesn't know about.
  */
-export default function ChartDrawingLayer({ chart, series, candles, context, renderTick, stageRef }) {
+export default function ChartDrawingLayer({ chart, series, candles, context, renderTick, stageRef, canvasRef }) {
   // renderTick is intentionally unused beyond being a prop: PriceChart bumps it on every
   // chart pan/zoom/resize, and receiving it as a prop is what makes this component
   // re-render and recompute every anchorToPixel(...) projection in the JSX below.
@@ -67,7 +97,10 @@ export default function ChartDrawingLayer({ chart, series, candles, context, ren
   const dragState = useRef(null); // { id, handle, startAnchor, original }
   const fileInputRef = useRef(null);
 
-  const chartWidth = stageRef.current?.clientWidth || 1000;
+  // Fall back to the stage if no canvasRef was supplied, so this component
+  // still degrades gracefully rather than crashing.
+  const surfaceRef = canvasRef?.current ? canvasRef : stageRef;
+  const chartWidth = surfaceRef.current?.clientWidth || 1000;
   const selected = drawings.find((d) => d.id === selectedId) || null;
   const activeTool = DRAWING_TOOLS.find((t) => t.id === tool) || DRAWING_TOOLS[0];
 
@@ -117,19 +150,33 @@ export default function ChartDrawingLayer({ chart, series, candles, context, ren
   // sees those same pointer events as they bubble up the DOM tree — pointer-
   // events:none only changes *hit-testing target selection*, not bubbling —
   // so hover/select continues to work without blocking chart interaction.
+  //
+  // The toolbar (.dtool-bar) and side panels (.dpanel) are rendered as
+  // siblings inside the same stage element, so clicks on their buttons
+  // (Delete, Lock, color swatches, etc.) also bubble up to this listener.
+  // Without excluding them, every such click would be hit-tested against
+  // the chart's pixel grid, miss (since the click is nowhere near a drawing
+  // on the canvas), and clear the current selection right before the
+  // button's own onClick (e.g. Delete) gets a chance to act on it. Bailing
+  // out whenever the event originates inside the toolbar/panel chrome keeps
+  // those controls usable while a drawing is selected.
+  function isUiChromeTarget(target) {
+    return Boolean(target?.closest?.(".dtool-bar, .dpanel"));
+  }
+
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage) return;
 
     function onMove(e) {
-      if (dragState.current || tool !== "select") return;
+      if (dragState.current || tool !== "select" || isUiChromeTarget(e.target)) return;
       const point = pixelPoint(e.clientX, e.clientY);
       const hit = hitTestAny(drawings, point, chart, series, chartWidth);
       setHoverId(hit?.id ?? null);
     }
 
     function onDown(e) {
-      if (tool !== "select" || dragState.current) return;
+      if (tool !== "select" || dragState.current || isUiChromeTarget(e.target)) return;
       const point = pixelPoint(e.clientX, e.clientY);
       const hit = hitTestDrawings(drawings, point, chart, series, chartWidth);
       if (!hit) {
@@ -166,8 +213,8 @@ export default function ChartDrawingLayer({ chart, series, candles, context, ren
   }
 
   function readAnchor(clientX, clientY) {
-    if (!stageRef.current || !chart || !series) return null;
-    const rect = stageRef.current.getBoundingClientRect();
+    if (!surfaceRef.current || !chart || !series) return null;
+    const rect = surfaceRef.current.getBoundingClientRect();
     const x = clamp(clientX - rect.left, 0, rect.width);
     const y = clamp(clientY - rect.top, 0, rect.height);
     const anchor = anchorFromPixel(x, y, chart, series);
@@ -176,7 +223,7 @@ export default function ChartDrawingLayer({ chart, series, candles, context, ren
   }
 
   function pixelPoint(clientX, clientY) {
-    const rect = stageRef.current.getBoundingClientRect();
+    const rect = surfaceRef.current.getBoundingClientRect();
     return { x: clamp(clientX - rect.left, 0, rect.width), y: clamp(clientY - rect.top, 0, rect.height) };
   }
 
@@ -372,10 +419,11 @@ export default function ChartDrawingLayer({ chart, series, candles, context, ren
         >
           <ToolIcon name="magnet" />
         </button>
-        <label className="dtool-btn dtool-btn--color" title="Drawing color">
-          <span className="dtool-swatch" style={{ background: style.color }} />
-          <input type="color" value={style.color} onChange={(e) => setStyle((p) => ({ ...p, color: e.target.value }))} />
-        </label>
+        <ColorSwatchPicker
+          className="dtool-btn dtool-btn--color"
+          value={style.color}
+          onChange={(color) => setStyle((p) => ({ ...p, color }))}
+        />
         <div className="dtool-widths">
           {[1, 2, 3, 4].map((w) => (
             <button
@@ -837,10 +885,10 @@ function SettingsPanel({ drawing, onPatch, onDelete }) {
         <strong>Drawing settings</strong>
         <span className="dpanel__count">{toolLabel(drawing.type)}</span>
       </div>
-      <label className="dpanel__field">
-        Color
-        <input type="color" value={drawing.color} onChange={(e) => onPatch({ color: e.target.value })} />
-      </label>
+      <div className="dpanel__field">
+        <span>Color</span>
+        <ColorSwatchPicker value={drawing.color} onChange={(color) => onPatch({ color })} />
+      </div>
       <label className="dpanel__field">
         Width
         <input type="number" min={1} max={6} value={drawing.width} onChange={(e) => onPatch({ width: clampWidth(e.target.value) })} />
@@ -917,5 +965,71 @@ function ToolIcon({ name }) {
     <svg viewBox="0 0 20 20" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <path d={d} />
     </svg>
+  );
+}
+
+/**
+ * Curated color picker: a grid of fixed professional swatches plus a
+ * "Custom…" tile that falls back to the native OS color picker. Replaces a
+ * bare <input type="color"> so drawing colors stay visually consistent
+ * instead of any arbitrary hue the OS picker allows.
+ */
+function ColorSwatchPicker({ value, onChange, className = "" }) {
+  const [open, setOpen] = useState(false);
+  const customInputRef = useRef(null);
+  const isCustom = !DRAWING_COLOR_PALETTE.some((swatch) => swatch.value.toLowerCase() === value?.toLowerCase());
+
+  return (
+    <div className={`color-swatch-picker ${className}`}>
+      <button
+        type="button"
+        className="color-swatch-picker__trigger"
+        style={{ background: value }}
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+        title="Choose color"
+      />
+      {open && (
+        <>
+          <div className="color-swatch-picker__backdrop" onClick={() => setOpen(false)} />
+          <div className="color-swatch-picker__pop" onClick={(e) => e.stopPropagation()}>
+            <div className="color-swatch-picker__grid">
+              {DRAWING_COLOR_PALETTE.map((swatch) => (
+                <button
+                  type="button"
+                  key={swatch.id}
+                  className={`color-swatch-picker__cell${value?.toLowerCase() === swatch.value.toLowerCase() ? " is-active" : ""}`}
+                  style={{ background: swatch.value }}
+                  title={swatch.id}
+                  onClick={() => {
+                    onChange(swatch.value);
+                    setOpen(false);
+                  }}
+                />
+              ))}
+              <button
+                type="button"
+                className={`color-swatch-picker__cell color-swatch-picker__custom${isCustom ? " is-active" : ""}`}
+                title="Custom color"
+                onClick={() => customInputRef.current?.click()}
+              >
+                <span className="color-swatch-picker__custom-ring" style={isCustom ? { background: value } : undefined} />
+              </button>
+            </div>
+            <input
+              ref={customInputRef}
+              type="color"
+              className="color-swatch-picker__native"
+              value={value}
+              onChange={(e) => {
+                onChange(e.target.value);
+              }}
+            />
+          </div>
+        </>
+      )}
+    </div>
   );
 }

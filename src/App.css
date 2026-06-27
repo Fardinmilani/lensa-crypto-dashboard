@@ -1023,10 +1023,13 @@
 }
 .price-chart__stage.is-fullscreen,
 .price-chart__stage:fullscreen {
+  position: fixed;
+  inset: 0;
   width: 100vw;
   height: 100vh;
   background: var(--bg-deep);
   padding: 8px;
+  z-index: 50;
 }
 .price-chart__canvas {
   width: 100%;
@@ -1134,15 +1137,7 @@
 }
 .dtool-btn--color {
   position: relative;
-  overflow: hidden;
-}
-.dtool-btn--color input[type="color"] {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  cursor: pointer;
-  width: 100%;
-  height: 100%;
+  padding: 0;
 }
 .dtool-bar label.dtool-btn input[type="file"] {
   position: absolute;
@@ -1158,6 +1153,95 @@
   border-radius: 50%;
   border: 1px solid var(--border-strong);
   display: block;
+}
+
+/* ── curated color swatch picker ── */
+.color-swatch-picker {
+  position: relative;
+  display: inline-flex;
+}
+.color-swatch-picker__trigger {
+  width: 100%;
+  height: 100%;
+  min-width: 20px;
+  min-height: 20px;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  cursor: pointer;
+  padding: 0;
+}
+.dtool-btn--color .color-swatch-picker {
+  width: 20px;
+  height: 20px;
+}
+.dtool-btn--color .color-swatch-picker__trigger {
+  width: 20px;
+  height: 20px;
+}
+.color-swatch-picker__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+}
+.color-swatch-picker__pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 61;
+  background: var(--bg-panel-solid);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-card);
+  padding: 8px;
+}
+.color-swatch-picker__grid {
+  display: grid;
+  grid-template-columns: repeat(4, 22px);
+  gap: 6px;
+}
+.color-swatch-picker__cell {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  border: 1.5px solid rgba(255, 255, 255, 0.12);
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.1s, border-color 0.1s;
+}
+.color-swatch-picker__cell:hover {
+  transform: scale(1.08);
+}
+.color-swatch-picker__cell.is-active {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 1px var(--gold);
+}
+.color-swatch-picker__custom {
+  position: relative;
+  background: conic-gradient(red, yellow, lime, cyan, blue, magenta, red);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.color-swatch-picker__custom-ring {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.color-swatch-picker__native {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.dpanel__field .color-swatch-picker {
+  width: 26px;
+  height: 26px;
+}
+.dpanel__field .color-swatch-picker__trigger {
+  width: 26px;
+  height: 26px;
 }
 .dtool-flyout {
   position: absolute;
@@ -1243,9 +1327,12 @@
    excluded — that is the normal "just looking at the chart" state. */
 .dlayer {
   position: absolute;
-  inset: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 46px;
   z-index: 8;
-  width: 100%;
+  width: auto;
   height: 100%;
   touch-action: auto;
   user-select: none;
@@ -1498,11 +1585,6 @@
   padding: 6px 8px;
   font-family: inherit;
   max-width: 110px;
-}
-.dpanel__field input[type="color"] {
-  width: 32px;
-  height: 26px;
-  padding: 2px;
 }
 .dpanel__prices {
   display: flex;
@@ -1854,6 +1936,56 @@
   border-color: var(--border-glow);
   color: var(--gold-2);
   box-shadow: none;
+}
+.sweep-controls {
+  border-top: 1px dashed var(--border-subtle);
+}
+.chip-toggle-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.chip-toggle {
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  color: var(--text-secondary);
+  padding: 7px 14px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+.chip-toggle:hover {
+  border-color: var(--border-glow);
+  color: var(--text-primary);
+}
+.chip-toggle.is-active {
+  background: linear-gradient(135deg, var(--gold-2), var(--gold));
+  border-color: transparent;
+  color: #0a0e1a;
+  font-weight: 700;
+}
+.risk-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.risk-badge--ok {
+  background: rgba(34, 197, 94, 0.14);
+  color: #4ade80;
+}
+.risk-badge--warn {
+  background: rgba(245, 158, 11, 0.16);
+  color: #fbbf24;
+}
+.risk-badge--liquidated {
+  background: rgba(239, 68, 68, 0.18);
+  color: #f87171;
 }
 .strategy-description {
   color: var(--text-secondary);

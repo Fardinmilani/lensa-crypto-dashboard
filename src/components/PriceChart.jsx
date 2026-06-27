@@ -55,6 +55,21 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
   const [lookbackDays, setLookbackDays] = useState(null);
   const visibleRangeRef = useRef(null);
   const loadingMoreRef = useRef(false);
+  // Suppresses the scroll-back auto-expand logic for a short window after any
+  // container resize (fullscreen enter/exit, window resize). A resize alone
+  // can shift the visible logical range (more/fewer bars fit at the same bar
+  // spacing) without the user ever panning, and without this guard that
+  // spurious range change can be misread as "user scrolled near the oldest
+  // candle", triggering an unwanted lookback expansion + full chart rebuild.
+  const suppressAutoExpandRef = useRef(false);
+  const suppressTimerRef = useRef(null);
+  function suppressAutoExpand(ms = 400) {
+    suppressAutoExpandRef.current = true;
+    if (suppressTimerRef.current) clearTimeout(suppressTimerRef.current);
+    suppressTimerRef.current = setTimeout(() => {
+      suppressAutoExpandRef.current = false;
+    }, ms);
+  }
   // Reset the dynamic lookback whenever the chart's identity changes (new
   // coin, symbol, timeframe, source, pair, or market type) so switching
   // charts doesn't carry over an inflated history window from scrolling on a
@@ -148,9 +163,14 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
           chart.timeScale().fitContent();
         }
         loadingMoreRef.current = false;
+        // The fitContent()/range-restore call above fires the subscriber
+        // below once synchronously-ish on chart build; suppress auto-expand
+        // briefly so that first programmatic range-set is never itself
+        // mistaken for the user scrolling back to the oldest candle.
+        suppressAutoExpand(300);
         chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
           setRenderTick((tick) => tick + 1);
-          if (!range || loadingMoreRef.current) return;
+          if (!range || loadingMoreRef.current || suppressAutoExpandRef.current) return;
           // Once the visible window scrolls within ~20 bars of the oldest
           // loaded candle, fetch a deeper history window. candlesNeeded grows
           // with lookbackDays, so doubling it (capped) reaches further back
@@ -189,9 +209,18 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
   }, [coinId, symbol, days, source, pair, marketType, chartType, normalizedIndicators, lookbackDays, t, updateFromCandles]);
 
   useEffect(() => {
-    const bump = () => setRenderTick((tick) => tick + 1);
+    const bump = () => {
+      suppressAutoExpand();
+      setRenderTick((tick) => tick + 1);
+    };
     window.addEventListener("resize", bump);
     return () => window.removeEventListener("resize", bump);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (suppressTimerRef.current) clearTimeout(suppressTimerRef.current);
+    };
   }, []);
 
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -199,6 +228,11 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
     function onFullscreenChange() {
       const active = document.fullscreenElement === stageRef.current;
       setIsFullscreen(active);
+      // The container's size is about to jump (entering or leaving
+      // fullscreen). Suppress the scroll-back auto-expand for a beat so the
+      // resulting visible-range change isn't mistaken for the user panning
+      // close to the oldest loaded candle.
+      suppressAutoExpand(600);
       // Give the browser a frame to settle the new layout size before the
       // chart (autoSize: true) and drawing layer recompute their projections.
       requestAnimationFrame(() => setRenderTick((tick) => tick + 1));
@@ -295,6 +329,7 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
               context={drawingContext}
               renderTick={renderTick}
               stageRef={stageRef}
+              canvasRef={wrapRef}
             />
           )}
         </div>
