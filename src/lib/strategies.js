@@ -3,7 +3,23 @@
 // — deterministic functions of price history, not model predictions. The
 // backtester applies them mechanically so results are reproducible/auditable.
 //
-// Signals are arrays aligned with candles: 1 = enter/hold long, 0 = flat.
+// generateSignals(candles, params) — long signal: 1 = enter/hold long, 0 = flat.
+//   Used as-is for Spot (which can only ever go long) and for the "Long only"
+//   direction on futures.
+//
+// generateShortSignals(candles, params) — short signal: 1 = enter/hold short,
+//   0 = flat. Optional; only meaningful for futures, where shorting is
+//   possible. Each strategy below defines its own short rule as the
+//   deliberate mirror-image of its long rule (e.g. "breaks below the lower
+//   band" mirrors "breaks above the upper band") rather than a blind
+//   inversion of the long signal — a strategy being flat is not the same
+//   claim as a strategy actively expecting price to fall, so "not long" and
+//   "should be short" are kept as distinct, separately-justified rules.
+//   Strategies without a natural short counterpart (e.g. the Buy & Hold
+//   benchmark) simply omit it.
+//
+// combineDirectionalSignals() below merges the two into a single -1/0/1
+// position series according to the user's chosen direction mode.
 
 /* ------------------------------------------------------------------ */
 /* Indicators                                                          */
@@ -150,6 +166,12 @@ export const STRATEGIES = {
       const slow = sma(c, p.slowPeriod);
       return c.map((_, i) => (fast[i] != null && slow[i] != null && fast[i] > slow[i] ? 1 : 0));
     },
+    generateShortSignals(candles, p) {
+      const c = candles.map((x) => x.close);
+      const fast = sma(c, p.fastPeriod);
+      const slow = sma(c, p.slowPeriod);
+      return c.map((_, i) => (fast[i] != null && slow[i] != null && fast[i] < slow[i] ? 1 : 0));
+    },
   },
 
   emaCrossover: {
@@ -165,6 +187,12 @@ export const STRATEGIES = {
       const fast = ema(c, p.fastPeriod);
       const slow = ema(c, p.slowPeriod);
       return c.map((_, i) => (fast[i] != null && slow[i] != null && fast[i] > slow[i] ? 1 : 0));
+    },
+    generateShortSignals(candles, p) {
+      const c = candles.map((x) => x.close);
+      const fast = ema(c, p.fastPeriod);
+      const slow = ema(c, p.slowPeriod);
+      return c.map((_, i) => (fast[i] != null && slow[i] != null && fast[i] < slow[i] ? 1 : 0));
     },
   },
 
@@ -189,6 +217,19 @@ export const STRATEGIES = {
       }
       return out;
     },
+    generateShortSignals(candles, p) {
+      const c = candles.map((x) => x.close);
+      const r = rsi(c, p.period);
+      const out = new Array(c.length).fill(0);
+      let inPos = false;
+      for (let i = 0; i < c.length; i++) {
+        if (r[i] == null) continue;
+        if (!inPos && r[i] > p.overbought) inPos = true;
+        else if (inPos && r[i] < p.oversold) inPos = false;
+        out[i] = inPos ? 1 : 0;
+      }
+      return out;
+    },
   },
 
   macdCross: {
@@ -204,6 +245,13 @@ export const STRATEGIES = {
       const { macdLine, signalLine } = macd(c, p.fast, p.slow, p.signal);
       return c.map((_, i) =>
         macdLine[i] != null && signalLine[i] != null && macdLine[i] > signalLine[i] ? 1 : 0
+      );
+    },
+    generateShortSignals(candles, p) {
+      const c = candles.map((x) => x.close);
+      const { macdLine, signalLine } = macd(c, p.fast, p.slow, p.signal);
+      return c.map((_, i) =>
+        macdLine[i] != null && signalLine[i] != null && macdLine[i] < signalLine[i] ? 1 : 0
       );
     },
   },
@@ -229,6 +277,19 @@ export const STRATEGIES = {
       }
       return out;
     },
+    generateShortSignals(candles, p) {
+      const c = candles.map((x) => x.close);
+      const { mid, upper } = bollinger(c, p.period, p.mult);
+      const out = new Array(c.length).fill(0);
+      let inPos = false;
+      for (let i = 0; i < c.length; i++) {
+        if (upper[i] == null) continue;
+        if (!inPos && c[i] > upper[i]) inPos = true;
+        else if (inPos && c[i] <= mid[i]) inPos = false;
+        out[i] = inPos ? 1 : 0;
+      }
+      return out;
+    },
   },
 
   bollingerBreakout: {
@@ -248,6 +309,19 @@ export const STRATEGIES = {
         if (upper[i] == null) continue;
         if (!inPos && c[i] > upper[i]) inPos = true;
         else if (inPos && c[i] < mid[i]) inPos = false;
+        out[i] = inPos ? 1 : 0;
+      }
+      return out;
+    },
+    generateShortSignals(candles, p) {
+      const c = candles.map((x) => x.close);
+      const { mid, lower } = bollinger(c, p.period, p.mult);
+      const out = new Array(c.length).fill(0);
+      let inPos = false;
+      for (let i = 0; i < c.length; i++) {
+        if (lower[i] == null) continue;
+        if (!inPos && c[i] < lower[i]) inPos = true;
+        else if (inPos && c[i] > mid[i]) inPos = false;
         out[i] = inPos ? 1 : 0;
       }
       return out;
@@ -288,6 +362,26 @@ export const STRATEGIES = {
       }
       return out;
     },
+    generateShortSignals(candles, p) {
+      const highs = candles.map((x) => x.high);
+      const lows = candles.map((x) => x.low);
+      const lowN = rollingMinExclusive(lows, p.entryPeriod);
+      const highM = rollingMaxExclusive(highs, p.exitPeriod);
+      let growingMax = -Infinity;
+      for (let i = 0; i < candles.length && i < p.exitPeriod; i++) {
+        if (i > 0) growingMax = Math.max(growingMax, highs[i - 1]);
+        highM[i] = growingMax === -Infinity ? highs[0] : growingMax;
+      }
+      const out = new Array(candles.length).fill(0);
+      let inPos = false;
+      for (let i = 0; i < candles.length; i++) {
+        if (i < p.entryPeriod) continue;
+        if (!inPos && candles[i].close < lowN[i]) inPos = true;
+        else if (inPos && candles[i].close > highM[i]) inPos = false;
+        out[i] = inPos ? 1 : 0;
+      }
+      return out;
+    },
   },
 
   momentum: {
@@ -302,6 +396,11 @@ export const STRATEGIES = {
       const c = candles.map((x) => x.close);
       const r = roc(c, p.period);
       return c.map((_, i) => (r[i] != null && r[i] > p.threshold ? 1 : 0));
+    },
+    generateShortSignals(candles, p) {
+      const c = candles.map((x) => x.close);
+      const r = roc(c, p.period);
+      return c.map((_, i) => (r[i] != null && r[i] < -p.threshold ? 1 : 0));
     },
   },
 
@@ -325,6 +424,16 @@ export const STRATEGIES = {
         return fast[i] > slow[i] && r[i] > p.rsiFloor ? 1 : 0;
       });
     },
+    generateShortSignals(candles, p) {
+      const c = candles.map((x) => x.close);
+      const fast = ema(c, p.fastPeriod);
+      const slow = ema(c, p.slowPeriod);
+      const r = rsi(c, p.rsiPeriod);
+      return c.map((_, i) => {
+        if (fast[i] == null || slow[i] == null || r[i] == null) return 0;
+        return fast[i] < slow[i] && r[i] < p.rsiFloor ? 1 : 0;
+      });
+    },
   },
 
   macdRsiHybrid: {
@@ -342,6 +451,16 @@ export const STRATEGIES = {
       return c.map((_, i) => {
         if (macdLine[i] == null || signalLine[i] == null || r[i] == null) return 0;
         return macdLine[i] > signalLine[i] && r[i] > p.rsiFloor ? 1 : 0;
+      });
+    },
+    generateShortSignals(candles, p) {
+      const c = candles.map((x) => x.close);
+      const { macdLine, signalLine } = macd(c, p.fast, p.slow, p.signal);
+      const r = rsi(c, p.rsiPeriod);
+      const rsiCeiling = 100 - p.rsiFloor;
+      return c.map((_, i) => {
+        if (macdLine[i] == null || signalLine[i] == null || r[i] == null) return 0;
+        return macdLine[i] < signalLine[i] && r[i] < rsiCeiling ? 1 : 0;
       });
     },
   },
@@ -367,6 +486,21 @@ export const STRATEGIES = {
         return trendOk && momoOk && rsiOk ? 1 : 0;
       });
     },
+    generateShortSignals(candles, p) {
+      const c = candles.map((x) => x.close);
+      const trend = sma(c, p.trendPeriod);
+      const { hist } = macd(c, 12, 26, 9);
+      const r = rsi(c, p.rsiPeriod);
+      const rsiFloorMirror = 100 - p.rsiCap;
+      const rsiCapMirror = 100 - p.rsiFloor;
+      return c.map((_, i) => {
+        if (trend[i] == null || hist[i] == null || r[i] == null) return 0;
+        const trendOk = c[i] < trend[i];
+        const momoOk = hist[i] < 0;
+        const rsiOk = r[i] > rsiFloorMirror && r[i] < rsiCapMirror;
+        return trendOk && momoOk && rsiOk ? 1 : 0;
+      });
+    },
   },
 
   buyAndHold: {
@@ -382,6 +516,44 @@ export const STRATEGIES = {
     },
   },
 };
+
+// Direction modes available for futures (Spot can only ever be "long").
+// "both" requires the strategy to define generateShortSignals; if it
+// doesn't, combineDirectionalSignals below silently falls back to long-only
+// for that strategy rather than throwing, since some strategies legitimately
+// have no natural short counterpart (the Buy & Hold benchmark).
+export const DIRECTION_MODES = ["long", "short", "both"];
+
+/**
+ * Merge a strategy's long/short signal channels into a single position
+ * series using -1 (short), 0 (flat), 1 (long), according to `direction`.
+ * When both a long and short condition would otherwise be active on the
+ * same candle (only possible for strategies whose long/short rules aren't
+ * perfectly complementary), long takes priority and the short is dropped,
+ * since holding both directions at once nets to a smaller position than
+ * either alone and isn't a real trading decision.
+ */
+export function combineDirectionalSignals(strategy, candles, params, direction = "long") {
+  const longSignals = strategy.generateSignals(candles, params);
+  if (direction === "long") return longSignals;
+
+  const hasShort = typeof strategy.generateShortSignals === "function";
+  if (!hasShort) {
+    // No short rule defined for this strategy: "short" mode has nothing to
+    // produce (flat throughout), and "both" degrades to long-only.
+    return direction === "short" ? longSignals.map(() => 0) : longSignals;
+  }
+
+  const shortSignals = strategy.generateShortSignals(candles, params);
+  if (direction === "short") return shortSignals.map((s) => (s ? -1 : 0));
+
+  // direction === "both"
+  return longSignals.map((longOn, i) => {
+    if (longOn) return 1;
+    if (shortSignals[i]) return -1;
+    return 0;
+  });
+}
 
 // Bilingual labels for tunable parameters.
 export const PARAM_LABELS = {

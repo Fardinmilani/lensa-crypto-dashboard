@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { STRATEGIES, PARAM_LABELS } from "../lib/strategies";
-import { runBacktest, runAllStrategies, runFuturesSweep } from "../lib/backtest";
-import { getChartCandles, TIMEFRAMES } from "../lib/coingecko";
+import { STRATEGIES, PARAM_LABELS, DIRECTION_MODES, combineDirectionalSignals } from "../lib/strategies";
+import { runBacktest, runLeveragedBacktest, runAllStrategies } from "../lib/backtest";
+import { getChartCandles } from "../lib/coingecko";
 import { formatUsd } from "../lib/priceFormat";
 import { qualityMetaFromError } from "../lib/dataQuality";
 import EquityChart from "../components/EquityChart";
@@ -18,9 +18,7 @@ import InfoTip from "../components/InfoTip";
 
 const CATEGORY_ORDER = ["trend", "momentum", "reversion", "hybrid"];
 const LOOKBACK_PRESETS = [90, 180, 365, 730];
-const FUTURES_MARKET_TYPES = ["USD-M Futures", "Coin-M Futures"];
-const SWEEP_TIMEFRAME_PRESETS = ["15m", "1h", "4h", "1d"];
-const SWEEP_LEVERAGE_PRESETS = [1, 2, 3, 5, 10, 20];
+const LEVERAGE_PRESETS = [1, 2, 3, 5, 10, 20, 25, 50, 75, 100];
 
 export default function Backtest() {
   const { coin } = useCoin();
@@ -42,15 +40,17 @@ export default function Backtest() {
   const reveal = useStaggerReveal([result, aggregate, error]);
   const strategy = STRATEGIES[strategyKey];
 
-  // Futures sweep: runs every strategy across multiple timeframes and
-  // leverage levels on futures candles, instead of the single
-  // currently-selected market/timeframe that "Run all strategies" uses.
-  const [sweepMarketType, setSweepMarketType] = useLocalStorageState("lensa.backtest.sweep.marketType", "USD-M Futures");
-  const [sweepTimeframes, setSweepTimeframes] = useLocalStorageState("lensa.backtest.sweep.timeframes", SWEEP_TIMEFRAME_PRESETS);
-  const [sweepLeverages, setSweepLeverages] = useLocalStorageState("lensa.backtest.sweep.leverages", [1, 3, 5, 10]);
-  const [sweepResult, setSweepResult] = useState(null);
-  const [loadingSweep, setLoadingSweep] = useState(false);
-  const [sweepError, setSweepError] = useState(null);
+  // Futures-only controls. market.marketType already comes from the global
+  // market bar (Spot / USD-M Futures / Coin-M Futures) — leverage and
+  // direction are just additional dimensions of that same run, not a
+  // separate page/section. Spot can never short or use leverage, so these
+  // stay pinned at 1x/long whenever marketType is "Spot".
+  const isFutures = market.marketType !== "Spot";
+  const [leverage, setLeverage] = useLocalStorageState("lensa.backtest.leverage", 1);
+  const [direction, setDirection] = useLocalStorageState("lensa.backtest.direction", "long");
+  const effectiveLeverage = isFutures ? Number(leverage) || 1 : 1;
+  const effectiveDirection = isFutures ? direction : "long";
+  const supportsShort = typeof strategy.generateShortSignals === "function";
 
   function handleStrategyChange(key) {
     setStrategyKey(key);
@@ -80,8 +80,11 @@ export default function Backtest() {
       updateFromCandles(candles);
       setDataMeta(candles.meta || null);
       setAnalysisMarket(snapshotMarket(market));
-      const signals = strategy.generateSignals(candles, params);
-      const strategyResult = runBacktest({ candles, signals, feePercent: Number(fee) });
+      const signals = combineDirectionalSignals(strategy, candles, params, effectiveDirection);
+      const strategyResult =
+        effectiveLeverage > 1 || effectiveDirection !== "long"
+          ? runLeveragedBacktest({ candles, signals, feePercent: Number(fee), leverage: effectiveLeverage })
+          : runBacktest({ candles, signals, feePercent: Number(fee) });
       const benchmark = runBacktest({
         candles,
         signals: STRATEGIES.buyAndHold.generateSignals(candles),
@@ -107,52 +110,21 @@ export default function Backtest() {
       updateFromCandles(candles);
       setDataMeta(candles.meta || null);
       setAnalysisMarket(snapshotMarket(market));
-      setAggregate(runAllStrategies({ candles, strategies: STRATEGIES, feePercent: Number(fee) }));
+      setAggregate(
+        runAllStrategies({
+          candles,
+          strategies: STRATEGIES,
+          feePercent: Number(fee),
+          leverage: effectiveLeverage,
+          direction: effectiveDirection,
+        })
+      );
     } catch (err) {
       setError(err.message);
       setDataMeta(qualityMetaFromError(err, market.exchange));
       setAnalysisMarket(null);
     } finally {
       setLoadingAll(false);
-    }
-  }
-
-  function toggleSweepTimeframe(id) {
-    setSweepTimeframes((prev) => (prev.includes(id) ? prev.filter((tf) => tf !== id) : [...prev, id]));
-  }
-  function toggleSweepLeverage(level) {
-    setSweepLeverages((prev) => (prev.includes(level) ? prev.filter((l) => l !== level) : [...prev, level].sort((a, b) => a - b)));
-  }
-
-  async function handleRunFuturesSweep() {
-    if (!sweepTimeframes.length || !sweepLeverages.length) {
-      setSweepError(t("bt.sweep.needSelection"));
-      return;
-    }
-    setLoadingSweep(true);
-    setSweepError(null);
-    try {
-      const sweep = await runFuturesSweep({
-        strategies: STRATEGIES,
-        timeframes: sweepTimeframes,
-        leverageLevels: sweepLeverages,
-        feePercent: Number(fee),
-        fetchCandlesForTimeframe: (timeframe) =>
-          getChartCandles({
-            id: coin.id,
-            symbol: coin.symbol,
-            timeframe,
-            lookbackDays: Number(lookbackDays),
-            source: market.exchange,
-            pair: market.pair,
-            marketType: sweepMarketType,
-          }),
-      });
-      setSweepResult(sweep);
-    } catch (err) {
-      setSweepError(err.message);
-    } finally {
-      setLoadingSweep(false);
     }
   }
 
@@ -175,6 +147,8 @@ export default function Backtest() {
           strategyLabel: pick(lang, strategy.label),
           params,
           fee,
+          leverage: effectiveLeverage,
+          direction: effectiveDirection,
           result,
           benchmark: benchmarkResult,
         }
@@ -246,61 +220,46 @@ export default function Backtest() {
           </div>
           <small className="control-hint">{t("bt.lookback.hint")}</small>
         </div>
+        {isFutures && (
+          <>
+            <div className="control-group">
+              <label>{t("bt.leverage")}</label>
+              <select value={LEVERAGE_PRESETS.includes(Number(leverage)) ? leverage : ""} onChange={(e) => e.target.value && setLeverage(Number(e.target.value))}>
+                {!LEVERAGE_PRESETS.includes(Number(leverage)) && <option value="">{leverage}x</option>}
+                {LEVERAGE_PRESETS.map((lv) => (
+                  <option key={lv} value={lv}>{lv}x</option>
+                ))}
+              </select>
+              <small className="control-hint">{t("bt.leverage.hint", { market: market.marketType })}</small>
+            </div>
+            <div className="control-group">
+              <label>{t("bt.direction")}</label>
+              <div className="chip-toggle-group">
+                {DIRECTION_MODES.map((mode) => (
+                  <button
+                    type="button"
+                    key={mode}
+                    className={`chip-toggle${direction === mode ? " is-active" : ""}`}
+                    onClick={() => setDirection(mode)}
+                    disabled={mode !== "long" && !supportsShort}
+                    title={mode !== "long" && !supportsShort ? t("bt.direction.noShortRule") : undefined}
+                  >
+                    {t(`bt.direction.${mode}`)}
+                  </button>
+                ))}
+              </div>
+              {!supportsShort && direction !== "long" && (
+                <small className="control-hint control-hint--warn">{t("bt.direction.noShortRule")}</small>
+              )}
+            </div>
+          </>
+        )}
         <button className="run-btn" onClick={handleRun} disabled={loading || loadingAll}>
           {loading ? t("bt.running") : t("bt.run")}
         </button>
         <button className="run-btn run-btn--ghost" onClick={handleRunAll} disabled={loading || loadingAll}>
           {loadingAll ? t("bt.runningAll") : t("bt.runAll")}
         </button>
-      </div>
-
-      <div className="backtest-controls glass-card reveal sweep-controls">
-        <div className="control-group control-group--full">
-          <label>{t("bt.sweep.title")}</label>
-          <small className="control-hint">{t("bt.sweep.hint")}</small>
-        </div>
-        <div className="control-group">
-          <label>{t("bt.sweep.marketType")}</label>
-          <select value={sweepMarketType} onChange={(e) => setSweepMarketType(e.target.value)}>
-            {FUTURES_MARKET_TYPES.map((type) => (
-              <option key={type} value={type}>{type}</option>
-            ))}
-          </select>
-        </div>
-        <div className="control-group control-group--wide">
-          <label>{t("bt.sweep.timeframes")}</label>
-          <div className="chip-toggle-group">
-            {TIMEFRAMES.map((tf) => (
-              <button
-                type="button"
-                key={tf.id}
-                className={`chip-toggle${sweepTimeframes.includes(tf.id) ? " is-active" : ""}`}
-                onClick={() => toggleSweepTimeframe(tf.id)}
-              >
-                {tf.label}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="control-group control-group--wide">
-          <label>{t("bt.sweep.leverages")}</label>
-          <div className="chip-toggle-group">
-            {SWEEP_LEVERAGE_PRESETS.map((level) => (
-              <button
-                type="button"
-                key={level}
-                className={`chip-toggle${sweepLeverages.includes(level) ? " is-active" : ""}`}
-                onClick={() => toggleSweepLeverage(level)}
-              >
-                {level}x
-              </button>
-            ))}
-          </div>
-        </div>
-        <button className="run-btn run-btn--ghost" onClick={handleRunFuturesSweep} disabled={loadingSweep}>
-          {loadingSweep ? t("bt.sweep.running") : t("bt.sweep.run")}
-        </button>
-        {sweepError && <p className="news-error reveal">{sweepError}</p>}
       </div>
 
       <div className="guide-card glass-card reveal">
@@ -327,6 +286,18 @@ export default function Backtest() {
             <Stat label={t("bt.stat.avgloss")} value={result.avgLoss} suffix="%" decimals={2} tone="down" />
             <Stat label={t("bt.stat.trades")} value={result.tradeCount} decimals={0} />
             <Stat label={t("bt.stat.exposure")} value={result.exposurePercent} suffix="%" decimals={0} tip="glossary.exposure" />
+            {isFutures && (
+              <>
+                <Stat label={t("bt.stat.leverage")} value={effectiveLeverage} suffix="x" decimals={0} />
+                <Stat label={t("bt.stat.longShort")} value={result.longCount ?? 0} decimals={0} suffix={` / ${result.shortCount ?? 0}`} />
+                <Stat
+                  label={t("bt.stat.liquidations")}
+                  value={result.liquidationCount ?? 0}
+                  decimals={0}
+                  tone={(result.liquidationCount ?? 0) > 0 ? "down" : ""}
+                />
+              </>
+            )}
           </div>
           <div className="glass-card chart-card">
             <MarketContextBar module="Backtest equity" />
@@ -349,6 +320,7 @@ export default function Backtest() {
                       <th>{t("bt.col.exit")}</th>
                       <th>{t("bt.col.entryPrice")}</th>
                       <th>{t("bt.col.exitPrice")}</th>
+                      {isFutures && <th>{t("bt.col.side")}</th>}
                       <th>{t("bt.col.pnl")}</th>
                     </tr>
                   </thead>
@@ -359,6 +331,14 @@ export default function Backtest() {
                         <td className="num">{new Date(tr.exitTime * 1000).toLocaleDateString(locale)}</td>
                         <td className="num">{formatUsd(tr.entryPrice, market.precision, { mode: "trading" })}</td>
                         <td className="num">{formatUsd(tr.exitPrice, market.precision, { mode: "trading" })}</td>
+                        {isFutures && (
+                          <td className="num">
+                            <span className={`side-badge side-badge--${tr.side === -1 ? "short" : "long"}`}>
+                              {tr.side === -1 ? t("bt.direction.short") : t("bt.direction.long")}
+                            </span>
+                            {tr.liquidated && <span className="risk-badge risk-badge--liquidated">{t("bt.badgeLiquidated")}</span>}
+                          </td>
+                        )}
                         <td className={`num ${tr.pnlPercent >= 0 ? "up" : "down"}`}>{tr.pnlPercent >= 0 ? "+" : ""}{tr.pnlPercent.toFixed(2)}%</td>
                       </tr>
                     ))}
@@ -378,16 +358,6 @@ export default function Backtest() {
           dataMeta={dataMeta}
           analysisMarket={analysisMarket}
           market={market}
-          onInspect={handleInspectStrategy}
-        />
-      )}
-
-      {sweepResult && (
-        <FuturesSweepResults
-          sweep={sweepResult}
-          t={t}
-          lang={lang}
-          marketType={sweepMarketType}
           onInspect={handleInspectStrategy}
         />
       )}
@@ -438,6 +408,12 @@ function AggregateResults({ aggregate, t, lang, dataMeta, analysisMarket, market
             <strong className="agg-kpi__value num">{summary.profitable}/{summary.count}</strong>
             <span className="agg-kpi__sub">{t("bt.agg.avgReturn")}: <span className={summary.avgReturn >= 0 ? "up" : "down"}>{signed(summary.avgReturn)}%</span></span>
           </div>
+          {summary.liquidated > 0 && (
+            <div className="agg-kpi">
+              <span className="agg-kpi__label">{t("bt.stat.liquidations")}</span>
+              <strong className="agg-kpi__value num down">{summary.liquidated}/{summary.count}</strong>
+            </div>
+          )}
         </div>
       </div>
 
@@ -492,6 +468,7 @@ function AggregateResults({ aggregate, t, lang, dataMeta, analysisMarket, market
                 <th>{t("bt.stat.sharpe")}</th>
                 <th>{t("bt.stat.pf")}</th>
                 <th>{t("bt.stat.trades")}</th>
+                {summary.liquidated > 0 && <th>{t("bt.stat.liquidations")}</th>}
               </tr>
             </thead>
             <tbody>
@@ -509,126 +486,16 @@ function AggregateResults({ aggregate, t, lang, dataMeta, analysisMarket, market
                   <td className={`num ${Number.isFinite(row.result.sharpe) && row.result.sharpe >= 1 ? "up" : ""}`}>{fmt(row.result.sharpe, 2)}</td>
                   <td className="num">{row.result.profitFactor === Infinity ? "∞" : fmt(row.result.profitFactor, 2)}</td>
                   <td className="num">{row.result.tradeCount}</td>
+                  {summary.liquidated > 0 && (
+                    <td className="num">
+                      {row.result.wasLiquidated ? <span className="risk-badge risk-badge--liquidated">{t("bt.badgeLiquidated")}</span> : "-"}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-      </div>
-    </div>
-  );
-}
-
-/**
- * Renders the result of runFuturesSweep(): every strategy run across every
- * chosen timeframe × leverage combination. Unlike AggregateResults (one
- * market/timeframe at 1x), rows here are sorted across all combinations, so
- * the table surfaces which timeframe+leverage pairing actually worked best
- * for each strategy — and flags any row whose drawdown implies it would
- * have been liquidated.
- */
-function FuturesSweepResults({ sweep, t, lang, marketType, onInspect }) {
-  const { rows, summary, errors } = sweep;
-  const fmt = (v, d = 1) => (Number.isFinite(v) ? v.toFixed(d) : "-");
-  const signed = (v, d = 1) => (Number.isFinite(v) ? `${v >= 0 ? "+" : ""}${v.toFixed(d)}` : "-");
-  const [showAll, setShowAll] = useState(false);
-  const visibleRows = showAll ? rows : rows.slice(0, 25);
-
-  return (
-    <div className="aggregate-results reveal">
-      <div className="glass-card chart-card">
-        <div className="panel-header"><h2>{t("bt.sweep.resultsTitle")}</h2></div>
-        <p className="section-note">{t("bt.sweep.resultsSubtitle", { n: summary.count, market: marketType })}</p>
-
-        <div className="agg-kpi-grid">
-          <div className="agg-kpi agg-kpi--accent">
-            <span className="agg-kpi__label">{t("bt.agg.best")}</span>
-            <strong className="agg-kpi__value">{summary.best ? pick(lang, summary.best.label) : "-"}</strong>
-            <span className={`agg-kpi__sub ${summary.best && summary.best.result.totalReturnPercent >= 0 ? "up" : "down"}`}>
-              {summary.best ? `${signed(summary.best.result.totalReturnPercent)}% · ${summary.best.timeframe} · ${summary.best.leverage}x` : ""}
-            </span>
-          </div>
-          <div className="agg-kpi">
-            <span className="agg-kpi__label">{t("bt.agg.bestSharpe")}</span>
-            <strong className="agg-kpi__value">{summary.bestBySharpe ? pick(lang, summary.bestBySharpe.label) : "-"}</strong>
-            <span className="agg-kpi__sub">
-              {summary.bestBySharpe
-                ? `${t("bt.stat.sharpe")} ${fmt(summary.bestBySharpe.result.sharpe, 2)} · ${summary.bestBySharpe.timeframe} · ${summary.bestBySharpe.leverage}x`
-                : ""}
-            </span>
-          </div>
-          <div className="agg-kpi">
-            <span className="agg-kpi__label">{t("bt.agg.profitable")}</span>
-            <strong className="agg-kpi__value num">{summary.profitable}/{summary.count}</strong>
-            <span className="agg-kpi__sub">{t("bt.agg.avgReturn")}: <span className={summary.avgReturn >= 0 ? "up" : "down"}>{signed(summary.avgReturn)}%</span></span>
-          </div>
-          <div className="agg-kpi">
-            <span className="agg-kpi__label">{t("bt.sweep.liquidated")}</span>
-            <strong className={`agg-kpi__value num ${summary.liquidated > 0 ? "down" : ""}`}>{summary.liquidated}/{summary.count}</strong>
-            <span className="agg-kpi__sub">{t("bt.sweep.liquidatedHint")}</span>
-          </div>
-        </div>
-
-        {errors.length > 0 && (
-          <p className="news-error reveal">
-            {t("bt.sweep.partialError", { n: errors.length })}: {errors.map((e) => e.timeframe).join(", ")}
-          </p>
-        )}
-      </div>
-
-      <div className="glass-card table-card">
-        <div className="panel-header"><h2>{t("bt.sweep.tableTitle")}</h2></div>
-        <p className="section-note">{t("bt.sweep.tableHint")}</p>
-        <div className="table-scroll">
-          <table className="trades-table agg-table">
-            <thead>
-              <tr>
-                <th>{t("bt.agg.col.rank")}</th>
-                <th className="agg-table__name">{t("bt.agg.col.strategy")}</th>
-                <th>{t("bt.sweep.col.timeframe")}</th>
-                <th>{t("bt.sweep.col.leverage")}</th>
-                <th>{t("bt.stat.return")}</th>
-                <th>{t("bt.agg.col.excess")}</th>
-                <th>{t("bt.stat.dd")}</th>
-                <th>{t("bt.stat.sharpe")}</th>
-                <th>{t("bt.stat.trades")}</th>
-                <th>{t("bt.sweep.col.risk")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {visibleRows.map((row, i) => (
-                <tr key={`${row.key}-${row.timeframe}-${row.leverage}`} className="agg-row" onClick={() => onInspect(row.key)} title={t("bt.agg.hint")}>
-                  <td className="num agg-table__rank">{i + 1}</td>
-                  <td className="agg-table__name">
-                    <span className="agg-name">{pick(lang, row.label)}</span>
-                    <small>{t(`cat.${row.category}`)}</small>
-                  </td>
-                  <td className="num">{row.timeframe}</td>
-                  <td className="num">{row.leverage}x</td>
-                  <td className={`num ${row.result.totalReturnPercent >= 0 ? "up" : "down"}`}>{signed(row.result.totalReturnPercent)}%</td>
-                  <td className={`num ${row.excessReturn >= 0 ? "up" : "down"}`}>{signed(row.excessReturn)}%</td>
-                  <td className="num down">-{fmt(row.result.maxDrawdownPercent)}%</td>
-                  <td className={`num ${Number.isFinite(row.result.sharpe) && row.result.sharpe >= 1 ? "up" : ""}`}>{fmt(row.result.sharpe, 2)}</td>
-                  <td className="num">{row.result.tradeCount}</td>
-                  <td className="num">
-                    {row.result.wasLiquidated ? (
-                      <span className="risk-badge risk-badge--liquidated">{t("bt.sweep.badgeLiquidated")}</span>
-                    ) : row.liquidationRisk ? (
-                      <span className="risk-badge risk-badge--warn">{t("bt.sweep.badgeRisk")}</span>
-                    ) : (
-                      <span className="risk-badge risk-badge--ok">{t("bt.sweep.badgeOk")}</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {rows.length > 25 && (
-          <button type="button" className="ghost-btn" onClick={() => setShowAll((v) => !v)}>
-            {showAll ? t("bt.sweep.showFewer") : t("bt.sweep.showAll", { n: rows.length })}
-          </button>
-        )}
       </div>
     </div>
   );

@@ -6,6 +6,8 @@
 // IMPORTANT: this measures how a *rule* would have performed on *past* data.
 // Past performance of a rule is not a forecast of future performance.
 
+import { combineDirectionalSignals } from "./strategies.js";
+
 export function runBacktest({ candles, signals, feePercent = 0.1, initialCapital = 10000 }) {
   if (candles.length !== signals.length) {
     throw new Error("candles و signals باید طول یکسان داشته باشند");
@@ -129,42 +131,52 @@ export function runBacktest({ candles, signals, feePercent = 0.1, initialCapital
 // Leveraged / futures backtest
 // ---------------------------------------------------------------------------
 //
-// runBacktest() above models a simple all-in/all-out spot position (1x).
-// runLeveragedBacktest() reuses the same long/flat signal convention but
-// marks the position to market on every bar so a leveraged position can be
-// liquidated mid-trade — something an entry-vs-exit-price-only calculation
-// would miss entirely. The full account balance is committed as collateral
-// on entry (isolated margin against the whole account, not a fraction of
-// it), and the position's notional exposure — and therefore its P&L — is
-// the underlying percentage move amplified by `leverage`. If mark-to-market
-// losses would amplify to a -100% (or worse) move on that collateral before
-// the exit signal fires, the trade is force-closed at the bar where it
-// crosses that line ("liquidated") — mirroring how a real isolated-margin
-// futures position behaves, instead of pretending the account can ride out
-// an unbounded drawdown.
+// runBacktest() above models a simple all-in/all-out spot position (1x,
+// long-only — spot can't short). runLeveragedBacktest() is for futures: it
+// accepts a position series of -1 (short) / 0 (flat) / 1 (long) — not just
+// 0/1 — and marks the position to market on every bar so a leveraged
+// position can be liquidated mid-trade, something an entry-vs-exit-price-
+// only calculation would miss entirely. The full account balance is
+// committed as collateral on entry (isolated margin against the whole
+// account, not a fraction of it), and the position's notional exposure —
+// and therefore its P&L — is the underlying percentage move amplified by
+// `leverage`, with the sign flipped for a short (a short profits when price
+// falls). If mark-to-market losses would amplify to a -100% (or worse) move
+// on that collateral before the exit signal fires, the trade is force-closed
+// at the bar where it crosses that line ("liquidated") — mirroring how a
+// real isolated-margin futures position behaves, instead of pretending the
+// account can ride out an unbounded drawdown.
 export function runLeveragedBacktest({ candles, signals, feePercent = 0.1, initialCapital = 10000, leverage = 1 }) {
   if (candles.length !== signals.length) {
     throw new Error("candles و signals باید طول یکسان داشته باشند");
   }
   const lev = Math.max(1, Number(leverage) || 1);
-  if (lev === 1) return runBacktest({ candles, signals, feePercent, initialCapital });
+  const hasShorts = signals.some((s) => s < 0);
+  if (lev === 1 && !hasShorts) return runBacktest({ candles, signals, feePercent, initialCapital });
 
   const equityCurve = [];
   const trades = [];
   let cash = initialCapital;
-  // notional/margin of the currently open position. The position's notional
-  // exposure is `leverage × the account equity committed to it`, so the
-  // *entire* available cash backs the trade (as collateral) while only
-  // `equity` is actually at risk — leverage amplifies the P&L on that same
-  // committed equity, it does not shrink how much equity is committed.
-  let positionEquity = 0; // collateral backing the open position (this account's "skin in the game")
+  // collateral backing the open position (this account's "skin in the
+  // game"). The position's notional exposure is `leverage × that
+  // collateral`, so the entire available cash backs the trade while only
+  // `equity` is actually at risk.
+  let positionEquity = 0;
+  let positionSide = 0; // 1 = long, -1 = short, 0 = flat
   let entryPrice = null;
   let entryTime = null;
   let liquidated = false;
-  let prevSignal = 0;
+  let prevDirection = 0;
+
+  // Signed percentage move of the position, from entryPrice to atPrice,
+  // already amplified by leverage. Positive = profit for the open side.
+  function movePercent(atPrice) {
+    const rawPercent = ((atPrice - entryPrice) / entryPrice) * 100 * positionSide;
+    return rawPercent * lev;
+  }
 
   function closePosition(exitPrice, exitTime, { isLiquidation = false } = {}) {
-    const rawPnlPercent = ((exitPrice - entryPrice) / entryPrice) * 100 * lev;
+    const rawPnlPercent = movePercent(exitPrice);
     // Collateral can't go below zero: a liquidation caps the loss at -100%
     // of the committed equity (the rest of the account, if any was held
     // back, is untouched — isolated margin, not cross margin).
@@ -179,41 +191,59 @@ export function runLeveragedBacktest({ candles, signals, feePercent = 0.1, initi
       exitPrice,
       pnlPercent: pnlPercentOnEquity,
       leverage: lev,
+      side: positionSide,
       liquidated: isLiquidation,
     });
     positionEquity = 0;
+    positionSide = 0;
     entryPrice = null;
     entryTime = null;
+    // The account is wiped out the instant a liquidation happens — flag it
+    // here, synchronously, rather than waiting until the end of the loop
+    // iteration. Checking only at the end would let the very same bar that
+    // triggered the liquidation immediately re-open a fresh position (since
+    // entryPrice was just cleared above), effectively giving the account a
+    // free re-entry it shouldn't have.
+    if (isLiquidation) liquidated = true;
+  }
+
+  function openPosition(side, atPrice, atTime) {
+    const fee = cash * (feePercent / 100);
+    positionEquity = Math.max(0, cash - fee);
+    cash -= positionEquity + fee;
+    positionSide = side;
+    entryPrice = atPrice;
+    entryTime = atTime;
   }
 
   for (let i = 0; i < candles.length; i++) {
     const { time, close, low, high } = candles[i];
-    const signal = liquidated ? 0 : signals[i];
+    const direction = liquidated ? 0 : Math.sign(signals[i] ?? 0);
 
-    if (prevSignal === 0 && signal === 1 && !liquidated) {
-      const fee = cash * (feePercent / 100);
-      positionEquity = Math.max(0, cash - fee);
-      cash -= positionEquity + fee;
-      entryPrice = close;
-      entryTime = time;
-    } else if (entryPrice != null) {
+    if (entryPrice != null) {
       // Mark-to-market against the bar's worst excursion before checking the
       // exit signal, since a liquidation can happen intrabar even on the
-      // same candle that would otherwise have produced a clean exit.
-      const worstPrice = Number.isFinite(low) && Number.isFinite(high) ? low : close;
-      const worstMovePercent = ((worstPrice - entryPrice) / entryPrice) * 100 * lev;
+      // same candle that would otherwise have produced a clean exit. The
+      // "worst" price for a long is the bar's low; for a short it's the
+      // bar's high — whichever moves against the open side.
+      const worstPrice =
+        Number.isFinite(low) && Number.isFinite(high) ? (positionSide === 1 ? low : high) : close;
+      const worstMovePercent = movePercent(worstPrice);
       if (worstMovePercent <= -100) {
         closePosition(worstPrice, time, { isLiquidation: true });
-      } else if (prevSignal === 1 && signal === 0) {
+      } else if (direction !== prevDirection) {
         closePosition(close, time);
       }
     }
 
+    if (entryPrice == null && direction !== 0 && !liquidated) {
+      openPosition(direction, close, time);
+    }
+
     const markPrice = close;
-    const openEquity =
-      entryPrice != null ? positionEquity * (1 + (((markPrice - entryPrice) / entryPrice) * 100 * lev) / 100) : 0;
+    const openEquity = entryPrice != null ? positionEquity * (1 + movePercent(markPrice) / 100) : 0;
     equityCurve.push({ time, equity: cash + Math.max(0, openEquity) });
-    prevSignal = liquidated ? 0 : signal;
+    prevDirection = liquidated ? 0 : direction;
     if (entryPrice == null && positionEquity === 0 && cash <= 0) liquidated = true;
   }
 
@@ -261,7 +291,9 @@ export function runLeveragedBacktest({ candles, signals, feePercent = 0.1, initi
 
   const benchmarkReturnPercent =
     ((candles[candles.length - 1].close - candles[0].close) / candles[0].close) * 100;
-  const exposurePercent = (signals.filter((s) => s === 1).length / signals.length) * 100;
+  const exposurePercent = (signals.filter((s) => s !== 0).length / signals.length) * 100;
+  const longCount = trades.filter((t) => t.side === 1).length;
+  const shortCount = trades.filter((t) => t.side === -1).length;
 
   return {
     equityCurve,
@@ -285,16 +317,23 @@ export function runLeveragedBacktest({ candles, signals, feePercent = 0.1, initi
     leverage: lev,
     liquidationCount,
     wasLiquidated: liquidationCount > 0,
+    longCount,
+    shortCount,
   };
 }
 
 // Run every non-benchmark strategy (with its default params) on the same
 // candles and compare them against a single Buy & Hold benchmark. Returns the
 // per-strategy rows plus a set of aggregate KPIs for a portfolio-level view.
-// `leverage` defaults to 1 (spot, unleveraged) — passing >1 reuses the exact
-// same strategy set against runLeveragedBacktest, which is what the futures
-// sweep below builds on for each timeframe × leverage combination.
-export function runAllStrategies({ candles, strategies, feePercent = 0.1, leverage = 1 }) {
+//
+// `leverage` defaults to 1 (spot, unleveraged) and `direction` defaults to
+// "long" (spot can't short). Passing leverage > 1 and/or direction !== "long"
+// reuses the exact same strategy set against runLeveragedBacktest with
+// combineDirectionalSignals(), so the same "Run all strategies" view works
+// for Spot and for futures — the market/timeframe/leverage/direction the
+// caller is already on, not a separate sweep across other markets.
+export function runAllStrategies({ candles, strategies, feePercent = 0.1, leverage = 1, direction = "long" }) {
+  const isFutures = leverage > 1 || direction !== "long";
   const benchmarkDef = strategies.buyAndHold;
   const benchmark = runBacktest({
     candles,
@@ -305,11 +344,12 @@ export function runAllStrategies({ candles, strategies, feePercent = 0.1, levera
   const rows = Object.entries(strategies)
     .filter(([, s]) => s.category !== "benchmark")
     .map(([key, strategy]) => {
-      const signals = strategy.generateSignals(candles, strategy.params);
-      const result =
-        leverage > 1
-          ? runLeveragedBacktest({ candles, signals, feePercent, leverage })
-          : runBacktest({ candles, signals, feePercent });
+      const signals = isFutures
+        ? combineDirectionalSignals(strategy, candles, strategy.params, direction)
+        : strategy.generateSignals(candles, strategy.params);
+      const result = isFutures
+        ? runLeveragedBacktest({ candles, signals, feePercent, leverage })
+        : runBacktest({ candles, signals, feePercent });
       return {
         key,
         label: strategy.label,
@@ -318,6 +358,7 @@ export function runAllStrategies({ candles, strategies, feePercent = 0.1, levera
         result,
         excessReturn: result.totalReturnPercent - benchmark.totalReturnPercent,
         beatsBenchmark: result.totalReturnPercent > benchmark.totalReturnPercent,
+        supportsShort: typeof strategy.generateShortSignals === "function",
       };
     })
     .sort((a, b) => b.result.totalReturnPercent - a.result.totalReturnPercent);
@@ -337,6 +378,7 @@ export function runAllStrategies({ candles, strategies, feePercent = 0.1, levera
     beatsBenchmark: rows.filter((r) => r.beatsBenchmark).length,
     profitable: rows.filter((r) => r.result.totalReturnPercent > 0).length,
     avgReturn: mean(returns),
+    liquidated: isFutures ? rows.filter((r) => r.result.wasLiquidated).length : 0,
   };
 
   const aggregateEquityCurve = averageEquityCurves(rows);
@@ -347,96 +389,6 @@ export function runAllStrategies({ candles, strategies, feePercent = 0.1, levera
   });
 
   return { benchmark, rows, summary, aggregateEquityCurve, aggregate: { equityCurve: aggregateEquityCurve, result: aggregateResult } };
-}
-
-// ---------------------------------------------------------------------------
-// Futures sweep: every strategy × every chosen timeframe × every chosen
-// leverage level, all on futures candles. "Run All" only ever exercised the
-// currently-selected market/timeframe at 1x; this sweep is what lets a
-// USD-M/Coin-M Futures backtest actually exercise leverage and timeframe as
-// first-class dimensions instead of fixed inputs.
-// ---------------------------------------------------------------------------
-
-/**
- * fetchCandlesForTimeframe(timeframeId) must return the candle array for
- * that timeframe (already scoped to the chosen symbol/exchange/market type
- * by the caller) — kept as an injected function so this module stays free
- * of any networking/data-source concerns.
- */
-export async function runFuturesSweep({
-  strategies,
-  timeframes,
-  leverageLevels,
-  feePercent = 0.1,
-  fetchCandlesForTimeframe,
-  minCandles = 30,
-}) {
-  const strategyEntries = Object.entries(strategies).filter(([, s]) => s.category !== "benchmark");
-  const rows = [];
-  const errors = [];
-
-  for (const timeframe of timeframes) {
-    let candles;
-    try {
-      candles = await fetchCandlesForTimeframe(timeframe);
-    } catch (err) {
-      errors.push({ timeframe, message: err.message });
-      continue;
-    }
-    if (!candles || candles.length < minCandles) {
-      errors.push({ timeframe, message: "Not enough candles for this timeframe" });
-      continue;
-    }
-
-    const benchmark = runBacktest({ candles, signals: strategies.buyAndHold.generateSignals(candles), feePercent });
-
-    for (const leverage of leverageLevels) {
-      for (const [key, strategy] of strategyEntries) {
-        const signals = strategy.generateSignals(candles, strategy.params);
-        const result =
-          leverage > 1
-            ? runLeveragedBacktest({ candles, signals, feePercent, leverage })
-            : runBacktest({ candles, signals, feePercent });
-        rows.push({
-          key,
-          label: strategy.label,
-          category: strategy.category,
-          timeframe,
-          leverage,
-          candleCount: candles.length,
-          result,
-          excessReturn: result.totalReturnPercent - benchmark.totalReturnPercent,
-          beatsBenchmark: result.totalReturnPercent > benchmark.totalReturnPercent,
-          // A leveraged max drawdown that reaches 100% of margin means the
-          // position would have been liquidated at some point in this
-          // window — flagged independently of whether the strategy's exit
-          // signal happened to fire first, so risk is visible even on runs
-          // that technically "survived" to the end of the backtest.
-          liquidationRisk: leverage > 1 && result.maxDrawdownPercent >= 99.5,
-        });
-      }
-    }
-  }
-
-  rows.sort((a, b) => b.result.totalReturnPercent - a.result.totalReturnPercent);
-
-  const sharpeRows = rows.filter((r) => Number.isFinite(r.result.sharpe));
-  const bestBySharpe = sharpeRows.length
-    ? sharpeRows.reduce((best, r) => (r.result.sharpe > best.result.sharpe ? r : best))
-    : null;
-
-  const summary = {
-    count: rows.length,
-    timeframeCount: timeframes.length,
-    leverageCount: leverageLevels.length,
-    best: rows[0] || null,
-    bestBySharpe,
-    profitable: rows.filter((r) => r.result.totalReturnPercent > 0).length,
-    liquidated: rows.filter((r) => r.result.wasLiquidated).length,
-    avgReturn: mean(rows.map((r) => r.result.totalReturnPercent)),
-  };
-
-  return { rows, summary, errors };
 }
 
 /** Equal-weight average of normalized equity curves (each starts at the same capital). */

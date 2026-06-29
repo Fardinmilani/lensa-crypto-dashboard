@@ -96,11 +96,17 @@ export default function ChartDrawingLayer({ chart, series, candles, context, ren
   const redoStack = useRef([]);
   const dragState = useRef(null); // { id, handle, startAnchor, original }
   const fileInputRef = useRef(null);
+  const svgRef = useRef(null);
 
   // Fall back to the stage if no canvasRef was supplied, so this component
   // still degrades gracefully rather than crashing.
   const surfaceRef = canvasRef?.current ? canvasRef : stageRef;
-  const chartWidth = surfaceRef.current?.clientWidth || 1000;
+  // svgRef's own box already excludes the 46px toolbar strip (see .dlayer
+  // CSS: left: 46px), so it matches the chart's actual drawable width.
+  // surfaceRef.current.clientWidth would instead include that padding and
+  // overstate the width by 46px, throwing off every anchorToPixel/hitTest
+  // calculation that uses chartWidth as a clamp bound.
+  const chartWidth = svgRef.current?.getBoundingClientRect().width || surfaceRef.current?.clientWidth || 1000;
   const selected = drawings.find((d) => d.id === selectedId) || null;
   const activeTool = DRAWING_TOOLS.find((t) => t.id === tool) || DRAWING_TOOLS[0];
 
@@ -213,8 +219,9 @@ export default function ChartDrawingLayer({ chart, series, candles, context, ren
   }
 
   function readAnchor(clientX, clientY) {
-    if (!surfaceRef.current || !chart || !series) return null;
-    const rect = surfaceRef.current.getBoundingClientRect();
+    const box = svgRef.current || surfaceRef.current;
+    if (!box || !chart || !series) return null;
+    const rect = box.getBoundingClientRect();
     const x = clamp(clientX - rect.left, 0, rect.width);
     const y = clamp(clientY - rect.top, 0, rect.height);
     const anchor = anchorFromPixel(x, y, chart, series);
@@ -223,7 +230,8 @@ export default function ChartDrawingLayer({ chart, series, candles, context, ren
   }
 
   function pixelPoint(clientX, clientY) {
-    const rect = surfaceRef.current.getBoundingClientRect();
+    const box = svgRef.current || surfaceRef.current;
+    const rect = box.getBoundingClientRect();
     return { x: clamp(clientX - rect.left, 0, rect.width), y: clamp(clientY - rect.top, 0, rect.height) };
   }
 
@@ -495,6 +503,7 @@ export default function ChartDrawingLayer({ chart, series, candles, context, ren
       </aside>
 
       <svg
+        ref={svgRef}
         className={`dlayer ${cursorClass}`}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
