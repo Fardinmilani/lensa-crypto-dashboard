@@ -6,7 +6,7 @@ import TimeframePicker from "../components/TimeframePicker";
 import SymbolSearch from "../components/SymbolSearch";
 import MarketContextBar from "../components/MarketContextBar";
 import { getCoinDetail } from "../lib/coingecko";
-import { formatUsd } from "../lib/priceFormat";
+import { formatPrice, formatUsd } from "../lib/priceFormat";
 import { useCoin } from "../context/coinStore";
 import { MARKET_TYPES, useMarket } from "../context/MarketContext";
 import { useI18n } from "../i18n/langStore";
@@ -66,7 +66,9 @@ export default function Dashboard() {
               {detail?.rank && <span className="coin-hero__rank">#{detail.rank}</span>}
             </h1>
             <div className="coin-hero__price">
-              <span className="num price-big">{formatUsd(detail?.price, market.precision)}</span>
+              <span className="num price-big">
+                {market.isForex ? formatPrice(detail?.price, market.precision) : formatUsd(detail?.price, market.precision)}
+              </span>
               {change24 != null && (
                 <span className={`num pill ${up ? "up" : "down"}`}>
                   {up ? "▲" : "▼"} {Math.abs(change24).toFixed(2)}%
@@ -77,10 +79,16 @@ export default function Dashboard() {
           </div>
         </div>
         <div className="coin-hero__stats">
-          <Mini label={t("hero.vol24")} value={fmtCompact(detail?.volume24h)} />
-          <Mini label={t("hero.mcap")} value={fmtCompact(detail?.marketCap)} />
-          <Mini label={t("hero.high24")} value={formatUsd(detail?.high24h, market.precision)} />
-          <Mini label={t("hero.low24")} value={formatUsd(detail?.low24h, market.precision)} />
+          {!market.isForex && <Mini label={t("hero.vol24")} value={fmtCompact(detail?.volume24h)} />}
+          {!market.isForex && <Mini label={t("hero.mcap")} value={fmtCompact(detail?.marketCap)} />}
+          <Mini
+            label={t("hero.high24")}
+            value={market.isForex ? formatPrice(detail?.high24h, market.precision) : formatUsd(detail?.high24h, market.precision)}
+          />
+          <Mini
+            label={t("hero.low24")}
+            value={market.isForex ? formatPrice(detail?.low24h, market.precision) : formatUsd(detail?.low24h, market.precision)}
+          />
         </div>
       </div>
 
@@ -91,7 +99,7 @@ export default function Dashboard() {
           </div>
           <MarketContextBar module="Chart + Drawings" lastPrice={detail?.price} />
           <div className="chart-toolbar no-print">
-            <TimeframePicker value={market.timeframe} onChange={setTimeframe} />
+            <TimeframePicker value={market.timeframe} onChange={setTimeframe} intradayDisabled={market.isForex} />
             <SymbolSearch
               coin={coin}
               source={market.exchange}
@@ -101,14 +109,16 @@ export default function Dashboard() {
                 setPair(pair);
               }}
             />
-            <div className="chart-toolbar__field">
-              <label>Market</label>
-              <select value={market.marketType} onChange={(e) => setMarketType(e.target.value)}>
-                {MARKET_TYPES.map((type) => (
-                  <option key={type} value={type}>{type}</option>
-                ))}
-              </select>
-            </div>
+            {!market.isForex && (
+              <div className="chart-toolbar__field">
+                <label>Market</label>
+                <select value={market.marketType} onChange={(e) => setMarketType(e.target.value)}>
+                  {MARKET_TYPES.map((type) => (
+                    <option key={type} value={type}>{type}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div className="chart-toolbar__field">
               <label>{t("chart.type")}</label>
               <select value={chartType} onChange={(e) => setChartType(e.target.value)}>

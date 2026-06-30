@@ -8,10 +8,145 @@
 
 import { combineDirectionalSignals } from "./strategies.js";
 
-export function runBacktest({ candles, signals, feePercent = 0.1, initialCapital = 10000 }) {
+// ---------------------------------------------------------------------------
+// Stop-loss / take-profit overlay
+// ---------------------------------------------------------------------------
+//
+// Optional, off by default. When enabled, this scans each open trade for an
+// intrabar breach of a max-loss or max-gain percentage (checked against the
+// bar's low/high, not just its close, since a stop can be hit and recover
+// within the same candle) and forces an exit at that bound — but only as a
+// CEILING/FLOOR. If the strategy's own exit signal would have closed the
+// trade earlier, at a smaller profit or loss than the configured bound,
+// that earlier signal exit is respected as-is; this overlay never holds a
+// position open longer than the strategy says to, it only ever closes it
+// *sooner*, before price can run further in either direction.
+//
+// Implemented as a signal-array transform (rather than inside each engine's
+// accounting loop) so the exact same logic applies uniformly to the spot
+// engine (runBacktest, long-only) and the leveraged engine
+// (runLeveragedBacktest, long/short with leverage): both engines already
+// just replay whatever 0/1 or -1/0/1 signal they're given, so forcing an
+// early flip to 0 here is equivalent to the strategy itself having signalled
+// the exit on that bar.
+//
+// `riskParams`: { stopLossPercent, takeProfitPercent } — either or both may
+// be omitted/null to disable that side independently. Percentages are
+// always interpreted as a magnitude (e.g. stopLossPercent: 2 means "exit if
+// the position is down 2%", not literally -2).
+export function applyRiskExits(candles, signals, riskParams) {
+  const stopLossPercent = positiveOrNull(riskParams?.stopLossPercent);
+  const takeProfitPercent = positiveOrNull(riskParams?.takeProfitPercent);
+  if (stopLossPercent == null && takeProfitPercent == null) return signals;
+
+  const out = signals.slice();
+  let side = 0; // 1 long, -1 short, 0 flat — sign of the signal that opened the current trade
+  let entryPrice = null;
+  // After a forced SL/TP exit, re-entry is blocked until the raw strategy
+  // signal itself returns to flat (0) at least once — even if it never
+  // actually left "long"/"short" on the candle that triggered the forced
+  // exit. Without this, a strategy whose signal stays continuously 1 would
+  // get flipped right back into a fresh position on the very next bar,
+  // defeating the point of having stopped out.
+  let awaitingFlatBeforeReentry = false;
+
+  for (let i = 0; i < candles.length; i++) {
+    const rawSignal = Math.sign(signals[i] ?? 0);
+    const { close, low, high } = candles[i];
+    const hasRange = Number.isFinite(low) && Number.isFinite(high);
+
+    if (awaitingFlatBeforeReentry) {
+      if (rawSignal === 0) awaitingFlatBeforeReentry = false;
+      out[i] = 0;
+      continue;
+    }
+
+    if (side !== 0) {
+      // Percentage move of the open side from entry to each bound,
+      // amplified by nothing here (leverage is applied later by whichever
+      // engine consumes this signal; this overlay works in underlying-price
+      // percentage terms, matching how stopLossPercent/takeProfitPercent are
+      // presented to the user as "% move against/for the position").
+      const worstPrice = hasRange ? (side === 1 ? low : high) : close;
+      const bestPrice = hasRange ? (side === 1 ? high : low) : close;
+      const worstMove = ((worstPrice - entryPrice) / entryPrice) * 100 * side; // negative = loss
+      const bestMove = ((bestPrice - entryPrice) / entryPrice) * 100 * side; // positive = gain
+
+      const stopHit = stopLossPercent != null && worstMove <= -stopLossPercent;
+      const profitHit = takeProfitPercent != null && bestMove >= takeProfitPercent;
+
+      if (stopHit || profitHit) {
+        // Force flat on this bar. If both bounds are somehow crossed on the
+        // same bar, the stop-loss takes priority (the more conservative,
+        // capital-preserving assumption when intrabar order isn't known).
+        out[i] = 0;
+        side = 0;
+        entryPrice = null;
+        // Only hold off re-entry if the strategy's own signal is still
+        // "in position" on this very bar — if it had already gone flat on
+        // its own (or flat is what triggered this loop iteration), there's
+        // nothing to wait for.
+        if (rawSignal !== 0) awaitingFlatBeforeReentry = true;
+        continue; // a forced exit this bar can't also re-enter the same bar
+      }
+    }
+
+    if (side === 0 && rawSignal !== 0) {
+      side = rawSignal;
+      entryPrice = close;
+    } else if (side !== 0 && rawSignal === 0) {
+      side = 0;
+      entryPrice = null;
+    } else if (side !== 0 && rawSignal !== side) {
+      // direction flip (long -> short or vice versa) without an
+      // intermediate flat bar
+      side = rawSignal;
+      entryPrice = close;
+    }
+  }
+
+  return out;
+}
+
+function positiveOrNull(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/**
+ * Grid-searches a small set of stop-loss / take-profit combinations against
+ * the given signals and returns the combination with the best Sharpe ratio
+ * (falling back to total return when Sharpe can't be computed for any
+ * candidate, e.g. too few trades). Used for the backtest page's "Auto-fit
+ * SL/TP" option — runs entirely client-side, no extra network calls.
+ */
+export function autoFitRiskExits({ candles, signals, feePercent = 0.1, initialCapital = 10000, leverage = 1 }) {
+  const STOP_CANDIDATES = [1, 2, 3, 5, 8, 12];
+  const TARGET_CANDIDATES = [2, 4, 6, 10, 15, 20, 30];
+  const runOne = (signalsForRun) =>
+    leverage > 1 || signalsForRun.some((s) => s < 0)
+      ? runLeveragedBacktest({ candles, signals: signalsForRun, feePercent, initialCapital, leverage })
+      : runBacktest({ candles, signals: signalsForRun, feePercent, initialCapital });
+
+  let best = null;
+  for (const stopLossPercent of STOP_CANDIDATES) {
+    for (const takeProfitPercent of TARGET_CANDIDATES) {
+      const adjusted = applyRiskExits(candles, signals, { stopLossPercent, takeProfitPercent });
+      const result = runOne(adjusted);
+      const score = Number.isFinite(result.sharpe) ? result.sharpe : result.totalReturnPercent / 100;
+      if (!best || score > best.score) {
+        best = { stopLossPercent, takeProfitPercent, score, result };
+      }
+    }
+  }
+  return best;
+}
+
+export function runBacktest({ candles, signals, feePercent = 0.1, initialCapital = 10000, riskParams = null }) {
   if (candles.length !== signals.length) {
     throw new Error("candles و signals باید طول یکسان داشته باشند");
   }
+  const effectiveSignals = riskParams ? applyRiskExits(candles, signals, riskParams) : signals;
 
   const equityCurve = [];
   const trades = [];
@@ -23,7 +158,7 @@ export function runBacktest({ candles, signals, feePercent = 0.1, initialCapital
 
   for (let i = 0; i < candles.length; i++) {
     const { time, close } = candles[i];
-    const signal = signals[i];
+    const signal = effectiveSignals[i];
 
     if (prevSignal === 0 && signal === 1) {
       const fee = cash * (feePercent / 100);
@@ -103,7 +238,7 @@ export function runBacktest({ candles, signals, feePercent = 0.1, initialCapital
     ((candles[candles.length - 1].close - candles[0].close) / candles[0].close) * 100;
 
   // Time exposed to the market (fraction of periods holding)
-  const exposurePercent = (signals.filter((s) => s === 1).length / signals.length) * 100;
+  const exposurePercent = (effectiveSignals.filter((s) => s === 1).length / effectiveSignals.length) * 100;
 
   return {
     equityCurve,
@@ -124,12 +259,11 @@ export function runBacktest({ candles, signals, feePercent = 0.1, initialCapital
     bestTrade,
     worstTrade,
     exposurePercent,
+    riskParams: riskParams || null,
   };
 }
-
 // ---------------------------------------------------------------------------
 // Leveraged / futures backtest
-// ---------------------------------------------------------------------------
 //
 // runBacktest() above models a simple all-in/all-out spot position (1x,
 // long-only — spot can't short). runLeveragedBacktest() is for futures: it
@@ -146,13 +280,14 @@ export function runBacktest({ candles, signals, feePercent = 0.1, initialCapital
 // at the bar where it crosses that line ("liquidated") — mirroring how a
 // real isolated-margin futures position behaves, instead of pretending the
 // account can ride out an unbounded drawdown.
-export function runLeveragedBacktest({ candles, signals, feePercent = 0.1, initialCapital = 10000, leverage = 1 }) {
+export function runLeveragedBacktest({ candles, signals, feePercent = 0.1, initialCapital = 10000, leverage = 1, riskParams = null }) {
   if (candles.length !== signals.length) {
     throw new Error("candles و signals باید طول یکسان داشته باشند");
   }
+  const effectiveSignals = riskParams ? applyRiskExits(candles, signals, riskParams) : signals;
   const lev = Math.max(1, Number(leverage) || 1);
-  const hasShorts = signals.some((s) => s < 0);
-  if (lev === 1 && !hasShorts) return runBacktest({ candles, signals, feePercent, initialCapital });
+  const hasShorts = effectiveSignals.some((s) => s < 0);
+  if (lev === 1 && !hasShorts) return runBacktest({ candles, signals: effectiveSignals, feePercent, initialCapital, riskParams: null });
 
   const equityCurve = [];
   const trades = [];
@@ -218,7 +353,7 @@ export function runLeveragedBacktest({ candles, signals, feePercent = 0.1, initi
 
   for (let i = 0; i < candles.length; i++) {
     const { time, close, low, high } = candles[i];
-    const direction = liquidated ? 0 : Math.sign(signals[i] ?? 0);
+    const direction = liquidated ? 0 : Math.sign(effectiveSignals[i] ?? 0);
 
     if (entryPrice != null) {
       // Mark-to-market against the bar's worst excursion before checking the
@@ -291,7 +426,7 @@ export function runLeveragedBacktest({ candles, signals, feePercent = 0.1, initi
 
   const benchmarkReturnPercent =
     ((candles[candles.length - 1].close - candles[0].close) / candles[0].close) * 100;
-  const exposurePercent = (signals.filter((s) => s !== 0).length / signals.length) * 100;
+  const exposurePercent = (effectiveSignals.filter((s) => s !== 0).length / effectiveSignals.length) * 100;
   const longCount = trades.filter((t) => t.side === 1).length;
   const shortCount = trades.filter((t) => t.side === -1).length;
 
@@ -319,6 +454,7 @@ export function runLeveragedBacktest({ candles, signals, feePercent = 0.1, initi
     wasLiquidated: liquidationCount > 0,
     longCount,
     shortCount,
+    riskParams: riskParams || null,
   };
 }
 
@@ -332,7 +468,7 @@ export function runLeveragedBacktest({ candles, signals, feePercent = 0.1, initi
 // combineDirectionalSignals(), so the same "Run all strategies" view works
 // for Spot and for futures — the market/timeframe/leverage/direction the
 // caller is already on, not a separate sweep across other markets.
-export function runAllStrategies({ candles, strategies, feePercent = 0.1, leverage = 1, direction = "long" }) {
+export function runAllStrategies({ candles, strategies, feePercent = 0.1, leverage = 1, direction = "long", riskParams = null }) {
   const isFutures = leverage > 1 || direction !== "long";
   const benchmarkDef = strategies.buyAndHold;
   const benchmark = runBacktest({
@@ -348,8 +484,8 @@ export function runAllStrategies({ candles, strategies, feePercent = 0.1, levera
         ? combineDirectionalSignals(strategy, candles, strategy.params, direction)
         : strategy.generateSignals(candles, strategy.params);
       const result = isFutures
-        ? runLeveragedBacktest({ candles, signals, feePercent, leverage })
-        : runBacktest({ candles, signals, feePercent });
+        ? runLeveragedBacktest({ candles, signals, feePercent, leverage, riskParams })
+        : runBacktest({ candles, signals, feePercent, riskParams });
       return {
         key,
         label: strategy.label,

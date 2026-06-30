@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { STRATEGIES, PARAM_LABELS, DIRECTION_MODES, combineDirectionalSignals } from "../lib/strategies";
-import { runBacktest, runLeveragedBacktest, runAllStrategies } from "../lib/backtest";
+import { runBacktest, runLeveragedBacktest, runAllStrategies, autoFitRiskExits } from "../lib/backtest";
 import { getChartCandles } from "../lib/coingecko";
 import { formatUsd } from "../lib/priceFormat";
 import { qualityMetaFromError } from "../lib/dataQuality";
@@ -52,6 +52,28 @@ export default function Backtest() {
   const effectiveDirection = isFutures ? direction : "long";
   const supportsShort = typeof strategy.generateShortSignals === "function";
 
+  // Risk management (stop-loss / take-profit). Off by default — riskEnabled
+  // gates everything below it so a user who never opens this section gets
+  // byte-for-byte the same backtest behavior as before this feature existed.
+  // stopLossPercent/takeProfitPercent act as a floor/ceiling on top of the
+  // strategy's own exit signal (see applyRiskExits in lib/backtest.js): an
+  // earlier strategy exit is always respected as-is, these only force an
+  // *earlier* exit, never a later one.
+  const [riskEnabled, setRiskEnabled] = useLocalStorageState("lensa.backtest.risk.enabled", false);
+  const [stopLossPercent, setStopLossPercent] = useLocalStorageState("lensa.backtest.risk.sl", 5);
+  const [takeProfitPercent, setTakeProfitPercent] = useLocalStorageState("lensa.backtest.risk.tp", 15);
+  const [autoFit, setAutoFit] = useLocalStorageState("lensa.backtest.risk.autofit", false);
+  const [autoFitResult, setAutoFitResult] = useState(null);
+
+  const [collapsedSections, setCollapsedSections] = useLocalStorageState("lensa.backtest.collapsed", {});
+  const toggleSection = (id) => setCollapsedSections((prev) => ({ ...prev, [id]: !prev[id] }));
+
+  const riskParams = riskEnabled
+    ? autoFit && autoFitResult
+      ? { stopLossPercent: autoFitResult.stopLossPercent, takeProfitPercent: autoFitResult.takeProfitPercent }
+      : { stopLossPercent: Number(stopLossPercent) || null, takeProfitPercent: Number(takeProfitPercent) || null }
+    : null;
+
   function handleStrategyChange(key) {
     setStrategyKey(key);
     setParams(STRATEGIES[key].params);
@@ -74,6 +96,7 @@ export default function Backtest() {
     setLoading(true);
     setError(null);
     setAggregate(null);
+    setAutoFitResult(null);
     try {
       const candles = await fetchCandles();
       if (candles.length < 30) throw new Error(t("bt.noData"));
@@ -81,10 +104,25 @@ export default function Backtest() {
       setDataMeta(candles.meta || null);
       setAnalysisMarket(snapshotMarket(market));
       const signals = combineDirectionalSignals(strategy, candles, params, effectiveDirection);
+
+      let effectiveRiskParams = riskParams;
+      if (riskEnabled && autoFit) {
+        const fit = autoFitRiskExits({
+          candles,
+          signals,
+          feePercent: Number(fee),
+          leverage: effectiveLeverage,
+        });
+        setAutoFitResult(fit);
+        effectiveRiskParams = fit
+          ? { stopLossPercent: fit.stopLossPercent, takeProfitPercent: fit.takeProfitPercent }
+          : null;
+      }
+
       const strategyResult =
         effectiveLeverage > 1 || effectiveDirection !== "long"
-          ? runLeveragedBacktest({ candles, signals, feePercent: Number(fee), leverage: effectiveLeverage })
-          : runBacktest({ candles, signals, feePercent: Number(fee) });
+          ? runLeveragedBacktest({ candles, signals, feePercent: Number(fee), leverage: effectiveLeverage, riskParams: effectiveRiskParams })
+          : runBacktest({ candles, signals, feePercent: Number(fee), riskParams: effectiveRiskParams });
       const benchmark = runBacktest({
         candles,
         signals: STRATEGIES.buyAndHold.generateSignals(candles),
@@ -117,6 +155,7 @@ export default function Backtest() {
           feePercent: Number(fee),
           leverage: effectiveLeverage,
           direction: effectiveDirection,
+          riskParams: riskEnabled && !autoFit ? riskParams : null,
         })
       );
     } catch (err) {
@@ -149,6 +188,8 @@ export default function Backtest() {
           fee,
           leverage: effectiveLeverage,
           direction: effectiveDirection,
+          riskParams: result.riskParams || null,
+          autoFit: riskEnabled && autoFit ? autoFitResult : null,
           result,
           benchmark: benchmarkResult,
         }
@@ -161,105 +202,173 @@ export default function Backtest() {
       <DataQualityGuard module="Backtest" meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
 
       <div className="backtest-controls glass-card reveal">
-        <div className="control-group control-group--wide">
-          <label>{t("common.activeCoin")}</label>
-          <div className="active-coin-chip">
-            {coin.thumb && <img src={coin.thumb} alt="" width="18" height="18" />}
-            <strong>{coin.symbol}</strong>
-            <span>{coin.name}</span>
+        <ControlsSection
+          id="market"
+          title={t("bt.section.market")}
+          collapsed={collapsedSections.market}
+          onToggle={() => toggleSection("market")}
+        >
+          <div className="control-group control-group--wide">
+            <label>{t("common.activeCoin")}</label>
+            <div className="active-coin-chip">
+              {coin.thumb && <img src={coin.thumb} alt="" width="18" height="18" />}
+              <strong>{coin.symbol}</strong>
+              <span>{coin.name}</span>
+            </div>
           </div>
-        </div>
-        <div className="control-group control-group--wide">
-          <label>{t("bt.strategy")}</label>
-          <select value={strategyKey} onChange={(e) => handleStrategyChange(e.target.value)}>
-            {grouped.map((g) => (
-              <optgroup key={g.cat} label={t(`cat.${g.cat}`)}>
-                {g.items.map(([key, s]) => <option key={key} value={key}>{pick(lang, s.label)}</option>)}
-              </optgroup>
-            ))}
-          </select>
-        </div>
-        <div className="control-group">
-          <label>{t("bt.fee")}</label>
-          <input type="number" step="0.05" value={fee} onChange={(e) => setFee(e.target.value)} />
-        </div>
-        {Object.entries(params).map(([name, value]) => (
-          <div className="control-group" key={name}>
-            <label>{pick(lang, PARAM_LABELS[name]) || name}</label>
-            <input type="number" value={value} onChange={(e) => setParams((prev) => ({ ...prev, [name]: Number(e.target.value) }))} />
-          </div>
-        ))}
-        <div className="control-group control-group--full">
-          <label>{t("bt.candleInterval")}</label>
-          <TimeframePicker value={market.timeframe} onChange={setTimeframe} />
-        </div>
-        <div className="control-group control-group--wide">
-          <label>{t("bt.lookback")}</label>
-          <div className="lookback-control">
-            <select
-              value={LOOKBACK_PRESETS.includes(Number(lookbackDays)) ? lookbackDays : ""}
-              onChange={(e) => e.target.value && setLookbackDays(Number(e.target.value))}
-            >
-              {!LOOKBACK_PRESETS.includes(Number(lookbackDays)) && (
-                <option value="">{t("tf.days", { n: lookbackDays })}</option>
-              )}
-              {LOOKBACK_PRESETS.map((days) => (
-                <option key={days} value={days}>
-                  {t("tf.days", { n: days })}
-                </option>
+          <div className="control-group control-group--wide">
+            <label>{t("bt.strategy")}</label>
+            <select value={strategyKey} onChange={(e) => handleStrategyChange(e.target.value)}>
+              {grouped.map((g) => (
+                <optgroup key={g.cat} label={t(`cat.${g.cat}`)}>
+                  {g.items.map(([key, s]) => <option key={key} value={key}>{pick(lang, s.label)}</option>)}
+                </optgroup>
               ))}
             </select>
-            <input
-              type="number"
-              min="30"
-              max="3650"
-              value={lookbackDays}
-              onChange={(e) => setLookbackDays(e.target.value)}
-              aria-label={t("bt.lookback")}
-            />
           </div>
-          <small className="control-hint">{t("bt.lookback.hint")}</small>
-        </div>
-        {isFutures && (
-          <>
-            <div className="control-group">
-              <label>{t("bt.leverage")}</label>
-              <select value={LEVERAGE_PRESETS.includes(Number(leverage)) ? leverage : ""} onChange={(e) => e.target.value && setLeverage(Number(e.target.value))}>
-                {!LEVERAGE_PRESETS.includes(Number(leverage)) && <option value="">{leverage}x</option>}
-                {LEVERAGE_PRESETS.map((lv) => (
-                  <option key={lv} value={lv}>{lv}x</option>
+          <div className="control-group">
+            <label>{t("bt.fee")}</label>
+            <input type="number" step="0.05" value={fee} onChange={(e) => setFee(e.target.value)} />
+          </div>
+          {Object.entries(params).map(([name, value]) => (
+            <div className="control-group" key={name}>
+              <label>{pick(lang, PARAM_LABELS[name]) || name}</label>
+              <input type="number" value={value} onChange={(e) => setParams((prev) => ({ ...prev, [name]: Number(e.target.value) }))} />
+            </div>
+          ))}
+          <div className="control-group control-group--full">
+            <label>{t("bt.candleInterval")}</label>
+            <TimeframePicker value={market.timeframe} onChange={setTimeframe} intradayDisabled={market.isForex} />
+          </div>
+          <div className="control-group control-group--wide">
+            <label>{t("bt.lookback")}</label>
+            <div className="lookback-control">
+              <select
+                value={LOOKBACK_PRESETS.includes(Number(lookbackDays)) ? lookbackDays : ""}
+                onChange={(e) => e.target.value && setLookbackDays(Number(e.target.value))}
+              >
+                {!LOOKBACK_PRESETS.includes(Number(lookbackDays)) && (
+                  <option value="">{t("tf.days", { n: lookbackDays })}</option>
+                )}
+                {LOOKBACK_PRESETS.map((days) => (
+                  <option key={days} value={days}>
+                    {t("tf.days", { n: days })}
+                  </option>
                 ))}
               </select>
-              <small className="control-hint">{t("bt.leverage.hint", { market: market.marketType })}</small>
+              <input
+                type="number"
+                min="30"
+                max="3650"
+                value={lookbackDays}
+                onChange={(e) => setLookbackDays(e.target.value)}
+                aria-label={t("bt.lookback")}
+              />
             </div>
-            <div className="control-group">
-              <label>{t("bt.direction")}</label>
-              <div className="chip-toggle-group">
-                {DIRECTION_MODES.map((mode) => (
-                  <button
-                    type="button"
-                    key={mode}
-                    className={`chip-toggle${direction === mode ? " is-active" : ""}`}
-                    onClick={() => setDirection(mode)}
-                    disabled={mode !== "long" && !supportsShort}
-                    title={mode !== "long" && !supportsShort ? t("bt.direction.noShortRule") : undefined}
-                  >
-                    {t(`bt.direction.${mode}`)}
-                  </button>
-                ))}
+            <small className="control-hint">{t("bt.lookback.hint")}</small>
+          </div>
+          {isFutures && (
+            <>
+              <div className="control-group">
+                <label>{t("bt.leverage")}</label>
+                <select value={LEVERAGE_PRESETS.includes(Number(leverage)) ? leverage : ""} onChange={(e) => e.target.value && setLeverage(Number(e.target.value))}>
+                  {!LEVERAGE_PRESETS.includes(Number(leverage)) && <option value="">{leverage}x</option>}
+                  {LEVERAGE_PRESETS.map((lv) => (
+                    <option key={lv} value={lv}>{lv}x</option>
+                  ))}
+                </select>
+                <small className="control-hint">{t("bt.leverage.hint", { market: market.marketType })}</small>
               </div>
-              {!supportsShort && direction !== "long" && (
-                <small className="control-hint control-hint--warn">{t("bt.direction.noShortRule")}</small>
-              )}
-            </div>
-          </>
-        )}
-        <button className="run-btn" onClick={handleRun} disabled={loading || loadingAll}>
-          {loading ? t("bt.running") : t("bt.run")}
-        </button>
-        <button className="run-btn run-btn--ghost" onClick={handleRunAll} disabled={loading || loadingAll}>
-          {loadingAll ? t("bt.runningAll") : t("bt.runAll")}
-        </button>
+              <div className="control-group">
+                <label>{t("bt.direction")}</label>
+                <div className="chip-toggle-group">
+                  {DIRECTION_MODES.map((mode) => (
+                    <button
+                      type="button"
+                      key={mode}
+                      className={`chip-toggle${direction === mode ? " is-active" : ""}`}
+                      onClick={() => setDirection(mode)}
+                      disabled={mode !== "long" && !supportsShort}
+                      title={mode !== "long" && !supportsShort ? t("bt.direction.noShortRule") : undefined}
+                    >
+                      {t(`bt.direction.${mode}`)}
+                    </button>
+                  ))}
+                </div>
+                {!supportsShort && direction !== "long" && (
+                  <small className="control-hint control-hint--warn">{t("bt.direction.noShortRule")}</small>
+                )}
+              </div>
+            </>
+          )}
+        </ControlsSection>
+
+        <ControlsSection
+          id="risk"
+          title={t("bt.section.risk")}
+          badge={riskEnabled ? t("bt.section.risk.on") : t("bt.section.risk.off")}
+          collapsed={collapsedSections.risk}
+          onToggle={() => toggleSection("risk")}
+        >
+          <div className="controls-section__row control-group--full">
+            <label className="toggle-row">
+              <input type="checkbox" checked={riskEnabled} onChange={(e) => setRiskEnabled(e.target.checked)} />
+              {t("bt.risk.enable")}
+            </label>
+          </div>
+          {riskEnabled && (
+            <>
+              <div className="control-group">
+                <label>{t("bt.risk.sl")}<InfoTip term="glossary.btStopLoss" /></label>
+                <input
+                  type="number"
+                  min="0.1"
+                  step="0.5"
+                  value={stopLossPercent}
+                  disabled={autoFit}
+                  onChange={(e) => setStopLossPercent(e.target.value)}
+                />
+                <small className="control-hint">{t("bt.risk.sl.hint")}</small>
+              </div>
+              <div className="control-group">
+                <label>{t("bt.risk.tp")}<InfoTip term="glossary.btTakeProfit" /></label>
+                <input
+                  type="number"
+                  min="0.1"
+                  step="0.5"
+                  value={takeProfitPercent}
+                  disabled={autoFit}
+                  onChange={(e) => setTakeProfitPercent(e.target.value)}
+                />
+                <small className="control-hint">{t("bt.risk.tp.hint")}</small>
+              </div>
+              <div className="control-group control-group--full">
+                <label className="toggle-row">
+                  <input type="checkbox" checked={autoFit} onChange={(e) => setAutoFit(e.target.checked)} />
+                  {t("bt.risk.autofit")}
+                </label>
+                <small className="control-hint">{t("bt.risk.autofit.hint")}</small>
+                {autoFit && autoFitResult && (
+                  <small className="control-hint control-hint--accent">
+                    {t("bt.risk.autofit.result", {
+                      sl: autoFitResult.stopLossPercent,
+                      tp: autoFitResult.takeProfitPercent,
+                    })}
+                  </small>
+                )}
+              </div>
+            </>
+          )}
+        </ControlsSection>
+
+        <ControlsSection id="run" title={t("bt.section.run")} collapsed={false} onToggle={null}>
+          <button className="run-btn" onClick={handleRun} disabled={loading || loadingAll}>
+            {loading ? t("bt.running") : t("bt.run")}
+          </button>
+          <button className="run-btn run-btn--ghost" onClick={handleRunAll} disabled={loading || loadingAll}>
+            {loadingAll ? t("bt.runningAll") : t("bt.runAll")}
+          </button>
+        </ControlsSection>
       </div>
 
       <div className="guide-card glass-card reveal">
@@ -297,6 +406,12 @@ export default function Backtest() {
                   tone={(result.liquidationCount ?? 0) > 0 ? "down" : ""}
                 />
               </>
+            )}
+            {result.riskParams?.stopLossPercent != null && (
+              <Stat label={t("bt.risk.sl")} value={result.riskParams.stopLossPercent} suffix="%" decimals={1} tone="down" tip="glossary.btStopLoss" />
+            )}
+            {result.riskParams?.takeProfitPercent != null && (
+              <Stat label={t("bt.risk.tp")} value={result.riskParams.takeProfitPercent} suffix="%" decimals={1} tone="up" tip="glossary.btTakeProfit" />
             )}
           </div>
           <div className="glass-card chart-card">
@@ -508,6 +623,28 @@ function snapshotMarket(market) {
     marketType: market.marketType,
     timeframe: market.timeframe,
   };
+}
+
+function ControlsSection({ id, title, badge, collapsed, onToggle, children }) {
+  const isCollapsible = typeof onToggle === "function";
+  return (
+    <div className={`controls-section${collapsed ? " is-collapsed" : ""}`} data-section={id}>
+      {isCollapsible ? (
+        <button type="button" className="controls-section__header" onClick={onToggle} aria-expanded={!collapsed}>
+          <span className="controls-section__title">
+            {title}
+            {badge && <span className="controls-section__badge">{badge}</span>}
+          </span>
+          <span className="controls-section__chevron">▾</span>
+        </button>
+      ) : (
+        <div className="controls-section__header" style={{ cursor: "default" }}>
+          <span className="controls-section__title">{title}</span>
+        </div>
+      )}
+      {!collapsed && <div className="controls-section__body">{children}</div>}
+    </div>
+  );
 }
 
 function Stat({ label, value, suffix = "", prefix = "", decimals = 1, tone = "", abs = false, fallback = "-", tip }) {

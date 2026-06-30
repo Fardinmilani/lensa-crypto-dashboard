@@ -16,7 +16,11 @@ export default function MarketContextBar({ module, lastPrice }) {
       <span>Source {market.dataSourceStatus}</span>
       <span>Quality {market.dataQualityStatus}</span>
       <span>{lastTime}</span>
-      {lastPrice != null && <span className="num">{formatPrice(lastPrice, market.precision, { currency: true, mode: "trading" })}</span>}
+      {lastPrice != null && (
+        <span className="num">
+          {formatPrice(lastPrice, market.precision, { currency: !market.isForex, mode: "trading" })}
+        </span>
+      )}
     </div>
   );
 }

@@ -1,6 +1,15 @@
 // Browser-only market data client for static hosting.
 // Every endpoint below is a public API called directly from the user's browser.
 import { analyzeCandleQuality, fillCandleGaps } from "./dataQuality.js";
+import {
+  FOREX_SOURCE_ID,
+  FOREX_SOURCE_LABEL,
+  forexCoinId,
+  forexPairLabel,
+  getForexDailyCandles,
+  parseForexCoinId,
+  searchForexPairs,
+} from "./forex.js";
 
 const API_BASES = {
   coingecko: "https://api.coingecko.com/api/v3",
@@ -28,6 +37,7 @@ const SOURCE_LABELS = {
   coinbase: "Coinbase spot",
   binanceUsdFutures: "Binance USD-M futures",
   binanceCoinFutures: "Binance Coin-M futures",
+  [FOREX_SOURCE_ID]: FOREX_SOURCE_LABEL,
 };
 
 export const CHART_SOURCES = [
@@ -41,7 +51,7 @@ export const CHART_SOURCES = [
 const cache = new Map();
 const inflight = new Map();
 const sourceHealth = new Map(
-  Object.keys(API_BASES).map((id) => [
+  [...Object.keys(API_BASES), FOREX_SOURCE_ID].map((id) => [
     id,
     {
       id,
@@ -183,23 +193,53 @@ export async function getMarketSnapshot(ids) {
   return data;
 }
 
-/** Free-text coin search -> list of matches. */
-export async function searchCoins(query) {
+/** Free-text coin search -> list of matches. Merges CoinGecko crypto coins
+ * with forex pair matches (e.g. typing "EUR" or "EURUSD" surfaces EUR/USD,
+ * EUR/GBP, etc. from Frankfurter) so one search box covers both asset
+ * classes. Each source is independent: if CoinGecko is rate-limited/CORS-
+ * blocked, forex matches still come through, and vice versa.
+ *
+ * `options.cryptoQuery` lets a caller send a different, pre-processed
+ * string to the CoinGecko half (e.g. with a quote-currency suffix like
+ * "USDT" stripped off) while the forex half still sees the raw query, since
+ * a directly-typed 6-letter pair like "EURUSD" needs to stay intact for the
+ * forex fast-path. Defaults to the same query for callers that don't care. */
+export async function searchCoins(query, options = {}) {
   const q = query.trim();
   if (!q) return [];
-  const data = await cachedJson("coingecko", `/search?query=${encodeURIComponent(q)}`, 120_000);
-  return (data.coins || []).map((c) => ({
-    id: c.id,
-    symbol: (c.symbol || "").toUpperCase(),
-    name: c.name,
-    rank: c.market_cap_rank ?? null,
-    thumb: c.thumb,
-    large: c.large,
-  }));
+  const cryptoQuery = (options.cryptoQuery ?? q).trim();
+
+  const [cryptoResult, forexResult] = await Promise.allSettled([
+    cryptoQuery ? cachedJson("coingecko", `/search?query=${encodeURIComponent(cryptoQuery)}`, 120_000) : Promise.resolve({ coins: [] }),
+    searchForexPairs(q),
+  ]);
+
+  const crypto =
+    cryptoResult.status === "fulfilled"
+      ? (cryptoResult.value.coins || []).map((c) => ({
+          id: c.id,
+          symbol: (c.symbol || "").toUpperCase(),
+          name: c.name,
+          rank: c.market_cap_rank ?? null,
+          thumb: c.thumb,
+          large: c.large,
+        }))
+      : [];
+  const forex = forexResult.status === "fulfilled" ? forexResult.value : [];
+
+  // Forex pairs are a deliberate, exact match on intent (the user typed a
+  // currency code or pair), so they lead; crypto market-cap-ranked results
+  // follow.
+  return [...forex, ...crypto];
 }
 
-/** Rich metadata for a single coin (price, image, links). */
+/** Rich metadata for a single coin (price, image, links). Branches to
+ * Frankfurter for forex pseudo-ids (see lib/forex.js) since those aren't
+ * CoinGecko coins at all. */
 export async function getCoinDetail(id, ttl = 15_000) {
+  const forexPair = parseForexCoinId(id);
+  if (forexPair) return getForexDetail(forexPair.base, forexPair.quote);
+
   const data = await cachedJson(
     "coingecko",
     `/coins/${id}?localization=false&tickers=false&market_data=true&community_data=false&developer_data=false&sparkline=false`,
@@ -221,6 +261,36 @@ export async function getCoinDetail(id, ttl = 15_000) {
     atl: data.market_data?.atl?.usd ?? null,
     rank: data.market_cap_rank ?? null,
   };
+}
+
+async function getForexDetail(base, quote) {
+  setSourceHealth(FOREX_SOURCE_ID, SOURCE_STATUS.LIMITED, "Checking Frankfurter…");
+  try {
+    const candles = await getForexDailyCandles(base, quote, 7);
+    const last = candles.at(-1);
+    const prev = candles.at(-2) ?? last;
+    setSourceHealth(FOREX_SOURCE_ID, SOURCE_STATUS.HEALTHY, "Direct browser fetch succeeded.");
+    return {
+      id: forexCoinId(base, quote),
+      symbol: `${base}${quote}`,
+      name: forexPairLabel(base, quote),
+      image: null,
+      price: last?.close ?? null,
+      change24h: prev?.close ? ((last.close - prev.close) / prev.close) * 100 : null,
+      change7d: candles[0]?.close ? ((last.close - candles[0].close) / candles[0].close) * 100 : null,
+      marketCap: null,
+      volume24h: null,
+      high24h: last?.high ?? null,
+      low24h: last?.low ?? null,
+      ath: null,
+      atl: null,
+      rank: null,
+    };
+  } catch (err) {
+    const status = classifyFetchError(err);
+    setSourceHealth(FOREX_SOURCE_ID, status, friendlyMessage(FOREX_SOURCE_ID, status, err));
+    throw err;
+  }
 }
 
 const OHLC_ALLOWED = [1, 7, 14, 30, 90, 180, 365];
@@ -263,7 +333,18 @@ function candlesNeeded(intervalMinutes, days) {
 }
 
 export function defaultPairForSymbol(symbol) {
+  const forex = parseForexCoinId(symbol) || (isForexSymbolLike(symbol) ? parseForexPairFromSymbol(symbol) : null);
+  if (forex) return forexPairLabel(forex.base, forex.quote);
   return `${String(symbol || "BTC").replace(/[^a-z0-9]/gi, "").toUpperCase()}USDT`;
+}
+
+function isForexSymbolLike(symbol) {
+  return /^[A-Za-z]{6}$/.test(String(symbol || ""));
+}
+
+function parseForexPairFromSymbol(symbol) {
+  const clean = String(symbol).toUpperCase();
+  return { base: clean.slice(0, 3), quote: clean.slice(3, 6) };
 }
 
 export async function getCandles(id, days = 90) {
@@ -313,6 +394,9 @@ async function getCoinGeckoCandles(id, timeframe = 90, lookbackDays) {
 }
 
 export async function getChartCandles({ id, symbol, timeframe = "4h", lookbackDays, source = "coingecko", pair, marketType = "Spot" }) {
+  const forexPair = parseForexCoinId(id);
+  if (forexPair) return getForexChartCandles(forexPair, { timeframe, lookbackDays });
+
   const requested = source || "coingecko";
   const warnings = [];
   const tf = resolveTimeframe(timeframe);
@@ -369,6 +453,45 @@ export async function getChartCandles({ id, symbol, timeframe = "4h", lookbackDa
 
   const message = warnings.map((w) => `${w.sourceLabel}: ${w.status}`).join("; ");
   throw new Error(`No browser-accessible market source is available. ${message}`);
+}
+
+/**
+ * Forex candle path. Always daily (see lib/forex.js for why: Frankfurter is
+ * the only genuinely free, no-key, CORS-enabled source, and it only
+ * publishes one rate per working day — there is no intraday data to fetch).
+ * `timeframe`/`lookbackDays` here only affect how many days of history are
+ * requested, not the candle interval, which is always 1 day.
+ */
+async function getForexChartCandles({ base, quote }, { timeframe, lookbackDays }) {
+  const tf = resolveTimeframe(timeframe);
+  const days = Math.max(lookbackDays || 0, tf.days || 0, 90);
+  const healthSource = FOREX_SOURCE_ID;
+  try {
+    const rawCandles = await getForexDailyCandles(base, quote, days);
+    const filled = fillCandleGaps(rawCandles, 24 * 60 * 60);
+    const candles = filled.candles;
+    const baseMeta = {
+      source: healthSource,
+      sourceLabel: SOURCE_LABELS[healthSource],
+      requestedSource: healthSource,
+      status: SOURCE_STATUS.HEALTHY,
+      warnings: [],
+      precision: inferPrecisionFromCandles(candles),
+      syntheticCandles: filled.syntheticCount,
+      isForexDaily: true,
+    };
+    setSourceHealth(healthSource, SOURCE_STATUS.HEALTHY, "Direct browser fetch succeeded.");
+    const quality = analyzeCandleQuality({
+      candles,
+      intervalSeconds: 24 * 60 * 60,
+      sourceMeta: baseMeta,
+    });
+    return withMeta(candles, { ...baseMeta, quality, confidence: quality.confidenceFactor });
+  } catch (err) {
+    const status = classifyFetchError(err);
+    setSourceHealth(healthSource, status, friendlyMessage(healthSource, status, err));
+    throw new Error(`No browser-accessible market source is available. ${SOURCE_LABELS[healthSource]}: ${status}`, { cause: err });
+  }
 }
 
 async function getBinancePrecision(pair, marketType = "Spot") {

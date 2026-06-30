@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { defaultPairForSymbol, searchCoins } from "../lib/coingecko";
+import { isForexCoinId, parseForexCoinId, forexPairLabel } from "../lib/forex";
 import { useCoin } from "../context/coinStore";
 import { useI18n } from "../i18n/langStore";
 
-const TABS = ["all", "crypto", "spot", "composite"];
+const TABS = ["all", "crypto", "forex", "spot", "composite"];
 
 export default function SymbolSearch({ coin, source, pair, onSelect }) {
   const { selectCoin } = useCoin();
@@ -14,7 +15,7 @@ export default function SymbolSearch({ coin, source, pair, onSelect }) {
   const [searchResults, setSearchResults] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  // Debounced search for CoinGecko coins
+  // Debounced search across CoinGecko coins and Frankfurter forex pairs.
   useEffect(() => {
     const q = query.trim();
     let cancelled = false;
@@ -25,7 +26,7 @@ export default function SymbolSearch({ coin, source, pair, onSelect }) {
       }
       setLoading(true);
       try {
-        const list = await searchCoins(extractBaseSymbol(q));
+        const list = await searchCoins(q, { cryptoQuery: extractBaseSymbol(q) });
         if (!cancelled) {
           setSearchResults(list.slice(0, 5));
         }
@@ -72,10 +73,16 @@ export default function SymbolSearch({ coin, source, pair, onSelect }) {
     });
   }, [rows, query, tab]);
 
-  const selectedLabel = source === "coingecko" ? `${coin.symbol}/USD` : pair || defaultPairForSymbol(coin.symbol);
-  
-  const selectedVenue =
-    source === "binance" ? "Binance spot" :
+  const isForex = isForexCoinId(coin.id);
+  const selectedLabel = isForex
+    ? pair || defaultPairForSymbol(coin.symbol)
+    : source === "coingecko"
+      ? `${coin.symbol}/USD`
+      : pair || defaultPairForSymbol(coin.symbol);
+
+  const selectedVenue = isForex
+    ? "Frankfurter (daily)"
+    : source === "binance" ? "Binance spot" :
     source === "bybit" ? "Bybit spot" :
     source === "okx" ? "OKX spot" :
     source === "coinbase" ? "Coinbase spot" :
@@ -169,6 +176,23 @@ function extractBaseSymbol(query) {
 }
 
 function makeSymbolRowsForCoin(c) {
+  const forex = parseForexCoinId(c.id);
+  if (forex) {
+    return [
+      {
+        id: `frankfurter-${c.id}`,
+        source: "frankfurter",
+        pair: forexPairLabel(forex.base, forex.quote),
+        base: forex.base,
+        symbol: `${forex.base}${forex.quote}`,
+        name: c.name || forexPairLabel(forex.base, forex.quote),
+        exchange: "Frankfurter",
+        tags: ["forex", "spot"],
+        coin: c,
+      },
+    ];
+  }
+
   const base = String(c.symbol || "").replace(/[^a-z0-9]/gi, "").toUpperCase();
   if (!base) return [];
   const name = c.name || c.symbol;
