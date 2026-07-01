@@ -2040,6 +2040,13 @@
   color: var(--text-primary);
   cursor: pointer;
 }
+/* --inline variant: appears as the field's label row (above the input),
+   styled like a label so the checkbox + text replaces the plain <label> */
+.toggle-row--inline {
+  margin-bottom: 4px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
 .toggle-row input[type="checkbox"] {
   width: 16px;
   height: 16px;
@@ -3480,3 +3487,107 @@
     grid-template-columns: repeat(2, 1fr);
   }
 }
+
+/* ── Strategy Docs ─────────────────────────────────────────── */
+.strategy-docs { display: flex; flex-direction: column; gap: 6px; }
+.strategy-docs__intro { font-size: 0.8rem; color: var(--text-muted); margin: 0 0 6px; }
+
+.strategy-doc-card {
+  border: 1px solid var(--border, rgba(255,255,255,.08));
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgba(255,255,255,.02);
+  transition: border-color 0.15s;
+}
+.strategy-doc-card--active {
+  border-color: var(--gold, #d4af37);
+  background: rgba(212,175,55,.05);
+}
+.strategy-doc-card__header {
+  width: 100%;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: start;
+}
+.strategy-doc-card__cat {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  min-width: 72px;
+  opacity: .9;
+}
+.strategy-doc-card__name {
+  flex: 1;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.strategy-doc-card__active-badge {
+  font-size: 0.65rem;
+  background: var(--gold, #d4af37);
+  color: #000;
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.strategy-doc-card__chevron {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+.strategy-doc-card__body {
+  padding: 0 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.strategy-doc-card__desc {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin: 0;
+  padding-top: 4px;
+  border-top: 1px solid var(--border, rgba(255,255,255,.06));
+}
+.strategy-doc-card__row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.strategy-doc-card__section h5 {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-muted);
+  margin: 0 0 4px;
+}
+.strategy-doc-card__section p {
+  font-size: 0.79rem;
+  color: var(--text-secondary);
+  margin: 0;
+  line-height: 1.55;
+}
+.strategy-doc-card__section--good h5 { color: #4ade80; }
+.strategy-doc-card__section--bad h5 { color: #f87171; }
+
+.strategy-doc-card__footer {
+  padding-top: 6px;
+  border-top: 1px solid var(--border, rgba(255,255,255,.06));
+}
+.strategy-doc-card__short {
+  font-size: 0.73rem;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 4px;
+}
+.strategy-doc-card__short--yes { background: rgba(34,197,94,.12); color: #4ade80; }
+.strategy-doc-card__short--no  { background: rgba(255,255,255,.05); color: var(--text-muted); }

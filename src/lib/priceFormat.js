@@ -23,10 +23,24 @@ export function inferPriceDecimals(price, mode = "display") {
   return MAX_DECIMALS;
 }
 
+// `meta.pricePrecision` is `null`/`undefined` whenever an exchange's
+// precision endpoint hasn't resolved yet or failed (see the several
+// `pricePrecision: null` fallbacks in coingecko.js, and forex's
+// inferPrecisionFromCandles). `Number(null)` is `0` and `Number.isFinite(0)`
+// is true, so a naive `Number.isFinite(Number(meta.pricePrecision))` check
+// would treat "no precision known" as "exactly 0 decimals of precision",
+// silently rounding every price to a whole number. hasExplicitPrecision()
+// requires the value to actually be present (and a real number) before
+// trusting it, so "we don't know" correctly falls through to the
+// price-magnitude-based auto-detection in inferPriceDecimals() instead.
+function hasExplicitPrecision(value) {
+  return value !== null && value !== undefined && Number.isFinite(Number(value));
+}
+
 export function precisionFromMeta(meta = {}, price, mode = "display") {
   const tickDecimals = decimalsFromStep(meta.tickSize);
   if (tickDecimals != null) return tickDecimals;
-  if (Number.isFinite(Number(meta.pricePrecision))) return Math.min(MAX_DECIMALS, Number(meta.pricePrecision));
+  if (hasExplicitPrecision(meta.pricePrecision)) return Math.min(MAX_DECIMALS, Number(meta.pricePrecision));
   return inferPriceDecimals(price, mode);
 }
 
@@ -35,8 +49,12 @@ export function formatPrice(value, meta = {}, options = {}) {
   if (!Number.isFinite(n)) return options.fallback ?? "-";
   const mode = options.mode || "display";
   const decimals = Math.max(0, precisionFromMeta(meta, n, mode));
-  const hasTick = decimalsFromStep(meta.tickSize) != null || Number.isFinite(Number(meta.pricePrecision));
-  const minimumFractionDigits = hasTick && options.preserveTickZeros ? decimals : 0;
+  // Always pad to the inferred/known decimal count, even when the trailing
+  // digits are zero (e.g. EUR/USD at exactly 1.0000, or BTC at an exact
+  // round price). A trimmed "1" instead of "1.0000" is misleading for
+  // forex, where every pip matters, and inconsistent for crypto, where a
+  // price's decimal count is part of reading its scale at a glance.
+  const minimumFractionDigits = decimals;
   const maximumFractionDigits = decimals;
   const formatted = n.toLocaleString("en-US", { minimumFractionDigits, maximumFractionDigits });
   return options.currency ? `$${formatted}` : formatted;

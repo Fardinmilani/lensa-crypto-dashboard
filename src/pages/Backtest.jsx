@@ -9,6 +9,7 @@ import ReportActions from "../components/ReportActions";
 import TimeframePicker from "../components/TimeframePicker";
 import MarketContextBar from "../components/MarketContextBar";
 import DataQualityGuard from "../components/DataQualityGuard";
+import StrategyDocs from "../components/StrategyDocs";
 import { useCoin } from "../context/coinStore";
 import { useMarket } from "../context/MarketContext";
 import { useI18n, pick } from "../i18n/langStore";
@@ -60,6 +61,14 @@ export default function Backtest() {
   // earlier strategy exit is always respected as-is, these only force an
   // *earlier* exit, never a later one.
   const [riskEnabled, setRiskEnabled] = useLocalStorageState("lensa.backtest.risk.enabled", false);
+  // Stop-loss and take-profit are independently toggleable: a user may want
+  // only a stop-loss with no profit cap, only a profit cap with no stop, or
+  // both together. slEnabled/tpEnabled gate each side separately; the
+  // shared riskEnabled checkbox only gates whether the risk section's
+  // effects apply at all (so turning it off is still a single-click way to
+  // fully revert to the no-risk-management backtest).
+  const [slEnabled, setSlEnabled] = useLocalStorageState("lensa.backtest.risk.sl.enabled", true);
+  const [tpEnabled, setTpEnabled] = useLocalStorageState("lensa.backtest.risk.tp.enabled", true);
   const [stopLossPercent, setStopLossPercent] = useLocalStorageState("lensa.backtest.risk.sl", 5);
   const [takeProfitPercent, setTakeProfitPercent] = useLocalStorageState("lensa.backtest.risk.tp", 15);
   const [autoFit, setAutoFit] = useLocalStorageState("lensa.backtest.risk.autofit", false);
@@ -68,10 +77,16 @@ export default function Backtest() {
   const [collapsedSections, setCollapsedSections] = useLocalStorageState("lensa.backtest.collapsed", {});
   const toggleSection = (id) => setCollapsedSections((prev) => ({ ...prev, [id]: !prev[id] }));
 
-  const riskParams = riskEnabled
+  const riskParams = riskEnabled && (slEnabled || tpEnabled)
     ? autoFit && autoFitResult
-      ? { stopLossPercent: autoFitResult.stopLossPercent, takeProfitPercent: autoFitResult.takeProfitPercent }
-      : { stopLossPercent: Number(stopLossPercent) || null, takeProfitPercent: Number(takeProfitPercent) || null }
+      ? {
+          stopLossPercent: slEnabled ? autoFitResult.stopLossPercent : null,
+          takeProfitPercent: tpEnabled ? autoFitResult.takeProfitPercent : null,
+        }
+      : {
+          stopLossPercent: slEnabled ? Number(stopLossPercent) || null : null,
+          takeProfitPercent: tpEnabled ? Number(takeProfitPercent) || null : null,
+        }
     : null;
 
   function handleStrategyChange(key) {
@@ -306,7 +321,17 @@ export default function Backtest() {
         <ControlsSection
           id="risk"
           title={t("bt.section.risk")}
-          badge={riskEnabled ? t("bt.section.risk.on") : t("bt.section.risk.off")}
+          badge={
+            !riskEnabled
+              ? t("bt.section.risk.off")
+              : slEnabled && tpEnabled
+                ? t("bt.section.risk.both")
+                : slEnabled
+                  ? t("bt.section.risk.slonly")
+                  : tpEnabled
+                    ? t("bt.section.risk.tponly")
+                    : t("bt.section.risk.off")
+          }
           collapsed={collapsedSections.risk}
           onToggle={() => toggleSection("risk")}
         >
@@ -319,25 +344,31 @@ export default function Backtest() {
           {riskEnabled && (
             <>
               <div className="control-group">
-                <label>{t("bt.risk.sl")}<InfoTip term="glossary.btStopLoss" /></label>
+                <label className="toggle-row toggle-row--inline">
+                  <input type="checkbox" checked={slEnabled} disabled={autoFit} onChange={(e) => setSlEnabled(e.target.checked)} />
+                  {t("bt.risk.sl")}<InfoTip term="glossary.btStopLoss" />
+                </label>
                 <input
                   type="number"
                   min="0.1"
                   step="0.5"
                   value={stopLossPercent}
-                  disabled={autoFit}
+                  disabled={autoFit || !slEnabled}
                   onChange={(e) => setStopLossPercent(e.target.value)}
                 />
                 <small className="control-hint">{t("bt.risk.sl.hint")}</small>
               </div>
               <div className="control-group">
-                <label>{t("bt.risk.tp")}<InfoTip term="glossary.btTakeProfit" /></label>
+                <label className="toggle-row toggle-row--inline">
+                  <input type="checkbox" checked={tpEnabled} disabled={autoFit} onChange={(e) => setTpEnabled(e.target.checked)} />
+                  {t("bt.risk.tp")}<InfoTip term="glossary.btTakeProfit" />
+                </label>
                 <input
                   type="number"
                   min="0.1"
                   step="0.5"
                   value={takeProfitPercent}
-                  disabled={autoFit}
+                  disabled={autoFit || !tpEnabled}
                   onChange={(e) => setTakeProfitPercent(e.target.value)}
                 />
                 <small className="control-hint">{t("bt.risk.tp.hint")}</small>
@@ -368,6 +399,16 @@ export default function Backtest() {
           <button className="run-btn run-btn--ghost" onClick={handleRunAll} disabled={loading || loadingAll}>
             {loadingAll ? t("bt.runningAll") : t("bt.runAll")}
           </button>
+        </ControlsSection>
+
+        <ControlsSection
+          id="docs"
+          title={t("bt.section.docs")}
+          badge={t("bt.section.docs.badge")}
+          collapsed={collapsedSections.docs !== false}
+          onToggle={() => toggleSection("docs")}
+        >
+          <StrategyDocs activeStrategyKey={strategyKey} />
         </ControlsSection>
       </div>
 

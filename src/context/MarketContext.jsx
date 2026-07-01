@@ -34,6 +34,19 @@ export function MarketProvider({ children }) {
     if (base && !cleanPair.startsWith(base)) setPair(defaultPairForSymbol(coin.symbol));
   }, [coin.symbol, pair, setPair]);
 
+  // `precision` is persisted to localStorage so a returning visitor doesn't
+  // flash unformatted numbers before the first fetch resolves, but that
+  // persistence means it would otherwise carry the PREVIOUS coin's exchange
+  // tick size/decimals across a coin switch until the new coin's own
+  // metadata arrives — e.g. showing EUR/USD with Bitcoin's 2-decimal
+  // precision for a moment, or worse, a stale 0-decimal value from an
+  // earlier failed precision fetch. Clearing it on every coin change forces
+  // a clean fall-back to formatPrice()'s price-magnitude auto-detection
+  // until fresh metadata (if any) replaces it.
+  useEffect(() => {
+    setPrecision({});
+  }, [coin.id, setPrecision]);
+
   // Forex has exactly one valid (exchange, marketType) combination and only
   // ever produces daily candles (see lib/forex.js), so switching to a forex
   // pair snaps these into place automatically rather than leaving whatever

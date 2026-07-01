@@ -1,0 +1,730 @@
+From f7ad8407b66d32241851dd9365d22d3cbb46959f Mon Sep 17 00:00:00 2001
+From: b <b@b.com>
+Date: Wed, 1 Jul 2026 08:47:57 +0000
+Subject: [PATCH] patch2
+
+---
+ src/App.css                     | 111 ++++++++++
+ src/components/StrategyDocs.jsx | 346 ++++++++++++++++++++++++++++++++
+ src/context/MarketContext.jsx   |  13 ++
+ src/i18n/translations.js        |  26 +++
+ src/lib/priceFormat.js          |  24 ++-
+ src/pages/Backtest.jsx          |  57 +++++-
+ 6 files changed, 566 insertions(+), 11 deletions(-)
+ create mode 100644 src/components/StrategyDocs.jsx
+
+diff --git a/src/App.css b/src/App.css
+index 379164d..72228be 100644
+--- a/src/App.css
++++ b/src/App.css
+@@ -2040,6 +2040,13 @@
+   color: var(--text-primary);
+   cursor: pointer;
+ }
++/* --inline variant: appears as the field's label row (above the input),
++   styled like a label so the checkbox + text replaces the plain <label> */
++.toggle-row--inline {
++  margin-bottom: 4px;
++  font-weight: 500;
++  color: var(--text-secondary);
++}
+ .toggle-row input[type="checkbox"] {
+   width: 16px;
+   height: 16px;
+@@ -3480,3 +3487,107 @@
+     grid-template-columns: repeat(2, 1fr);
+   }
+ }
++
++/* ── Strategy Docs ─────────────────────────────────────────── */
++.strategy-docs { display: flex; flex-direction: column; gap: 6px; }
++.strategy-docs__intro { font-size: 0.8rem; color: var(--text-muted); margin: 0 0 6px; }
++
++.strategy-doc-card {
++  border: 1px solid var(--border, rgba(255,255,255,.08));
++  border-radius: 8px;
++  overflow: hidden;
++  background: rgba(255,255,255,.02);
++  transition: border-color 0.15s;
++}
++.strategy-doc-card--active {
++  border-color: var(--gold, #d4af37);
++  background: rgba(212,175,55,.05);
++}
++.strategy-doc-card__header {
++  width: 100%;
++  background: none;
++  border: none;
++  cursor: pointer;
++  padding: 10px 12px;
++  display: flex;
++  align-items: center;
++  gap: 8px;
++  text-align: start;
++}
++.strategy-doc-card__cat {
++  font-size: 0.68rem;
++  font-weight: 700;
++  text-transform: uppercase;
++  letter-spacing: .04em;
++  min-width: 72px;
++  opacity: .9;
++}
++.strategy-doc-card__name {
++  flex: 1;
++  font-size: 0.85rem;
++  font-weight: 600;
++  color: var(--text-primary);
++  display: flex;
++  align-items: center;
++  gap: 6px;
++}
++.strategy-doc-card__active-badge {
++  font-size: 0.65rem;
++  background: var(--gold, #d4af37);
++  color: #000;
++  border-radius: 4px;
++  padding: 1px 5px;
++  font-weight: 700;
++  text-transform: uppercase;
++}
++.strategy-doc-card__chevron {
++  font-size: 0.75rem;
++  color: var(--text-muted);
++}
++.strategy-doc-card__body {
++  padding: 0 14px 14px;
++  display: flex;
++  flex-direction: column;
++  gap: 10px;
++}
++.strategy-doc-card__desc {
++  font-size: 0.8rem;
++  color: var(--text-secondary);
++  margin: 0;
++  padding-top: 4px;
++  border-top: 1px solid var(--border, rgba(255,255,255,.06));
++}
++.strategy-doc-card__row {
++  display: grid;
++  grid-template-columns: 1fr 1fr;
++  gap: 8px;
++}
++.strategy-doc-card__section h5 {
++  font-size: 0.72rem;
++  font-weight: 700;
++  text-transform: uppercase;
++  letter-spacing: .04em;
++  color: var(--text-muted);
++  margin: 0 0 4px;
++}
++.strategy-doc-card__section p {
++  font-size: 0.79rem;
++  color: var(--text-secondary);
++  margin: 0;
++  line-height: 1.55;
++}
++.strategy-doc-card__section--good h5 { color: #4ade80; }
++.strategy-doc-card__section--bad h5 { color: #f87171; }
++
++.strategy-doc-card__footer {
++  padding-top: 6px;
++  border-top: 1px solid var(--border, rgba(255,255,255,.06));
++}
++.strategy-doc-card__short {
++  font-size: 0.73rem;
++  font-weight: 600;
++  padding: 3px 8px;
++  border-radius: 4px;
++}
++.strategy-doc-card__short--yes { background: rgba(34,197,94,.12); color: #4ade80; }
++.strategy-doc-card__short--no  { background: rgba(255,255,255,.05); color: var(--text-muted); }
+diff --git a/src/components/StrategyDocs.jsx b/src/components/StrategyDocs.jsx
+new file mode 100644
+index 0000000..8328d26
+--- /dev/null
++++ b/src/components/StrategyDocs.jsx
+@@ -0,0 +1,346 @@
++import { useState } from "react";
++import { STRATEGIES } from "../lib/strategies";
++import { useI18n } from "../i18n/langStore";
++
++// Rich documentation for every strategy in STRATEGIES. Supplements the
++// one-line `description` already stored on each strategy object with:
++//   - how the entry/exit signal is generated (in plain words)
++//   - which market conditions it works well in
++//   - which market conditions it struggles in
++//   - which parameters matter most and how to tune them
++//   - whether it supports short direction in the backtest engine
++const STRATEGY_DOCS = {
++  smaCrossover: {
++    category_label: { en: "Trend following", fa: "پیرو روند" },
++    entry: {
++      en: "Long when the fast SMA (default: 10) crosses above the slow SMA (default: 30). Exit when the fast crosses back below the slow. No short entry in the base version.",
++      fa: "لانگ وقتی SMA سریع (پیش‌فرض: ۱۰) از SMA کند (پیش‌فرض: ۳۰) عبور کند. خروج در تقاطع معکوس. ورود شورت در حالت پایه وجود ندارد.",
++    },
++    good: {
++      en: "Strong sustained trends. Works well on daily/weekly timeframes and on coins/pairs that trend cleanly for long periods.",
++      fa: "روندهای قوی و طولانی. روی تایم‌فریم روزانه/هفتگی و دارایی‌هایی که روند صاف دارند بهتر عمل می‌کند.",
++    },
++    bad: {
++      en: "Choppy, sideways or range-bound markets — whipsaws constantly. Late entry by design (lags the trend).",
++      fa: "بازارهای رنج و متلاطم — مدام وارد و خارج می‌شود. ذاتاً با تأخیر وارد می‌شود.",
++    },
++    params: {
++      en: "fastPeriod (10): smaller = more responsive but more false signals. slowPeriod (30): larger = cleaner trend filter but more lag. A popular classic pair is 50/200 (Golden Cross).",
++      fa: "fastPeriod (۱۰): کمتر = حساس‌تر، سیگنال کاذب بیشتر. slowPeriod (۳۰): بزرگتر = فیلتر بهتر، تأخیر بیشتر. جفت کلاسیک ۵۰/۲۰۰ معروف است (Golden Cross).",
++    },
++    short: false,
++  },
++  emaCrossover: {
++    category_label: { en: "Trend following (fast)", fa: "پیرو روند (سریع)" },
++    entry: {
++      en: "Same logic as SMA Crossover but using Exponential Moving Averages — EMAs weight recent candles more, so signals appear faster. Default fast: 9, slow: 21.",
++      fa: "مثل SMA Crossover ولی با EMA — EMA به کندل‌های اخیر وزن بیشتر می‌دهد و سیگنال‌ها سریع‌تر می‌آیند. پیش‌فرض: ۹/۲۱.",
++    },
++    good: {
++      en: "Shorter timeframes (1h–4h) where SMA is too slow. Early-stage trends.",
++      fa: "تایم‌فریم‌های کوتاه‌تر (۱h تا ۴h) که SMA خیلی کند است. ابتدای روندها.",
++    },
++    bad: {
++      en: "Even more whipsaw-prone than SMA in sideways markets due to higher sensitivity.",
++      fa: "در بازار رنج بیشتر از SMA سیگنال کاذب می‌دهد چون حساس‌تر است.",
++    },
++    params: {
++      en: "fastPeriod (9) / slowPeriod (21): popular EMA pair for intraday. 12/26 matches the MACD components. 9/50 for medium-term.",
++      fa: "۹/۲۱: جفت محبوب برای intraday. 12/26 همسو با MACD. ۹/۵۰ برای میان‌مدت.",
++    },
++    short: false,
++  },
++  rsiThreshold: {
++    category_label: { en: "Mean reversion", fa: "بازگشت به میانگین" },
++    entry: {
++      en: "Enter long when RSI falls below the oversold threshold (default: 30). Exit when RSI rises above the overbought threshold (default: 70). With Short direction enabled: short when RSI > overbought, cover when RSI < oversold.",
++      fa: "ورود لانگ وقتی RSI زیر آستانه اشباع فروش (پیش‌فرض: ۳۰) برود. خروج وقتی RSI بالای ۷۰ برود. با شورت: ورود شورت بالای ۷۰، پوشش زیر ۳۰.",
++    },
++    good: {
++      en: "Range-bound markets and coins that oscillate within a band. Crypto often see RSI extremes after sharp reversals.",
++      fa: "بازارهای رنج و دارایی‌هایی که نوسان محدود دارند. کریپتو بعد از ریورسال‌های تند اغلب RSI افراطی می‌بیند.",
++    },
++    bad: {
++      en: "Trending markets — an RSI of 30 in a strong downtrend is a 'falling knife', not a reversal.",
++      fa: "بازارهای ترند — RSI زیر ۳۰ در یک روند نزولی قوی چاقوی در حال سقوط است، نه بازگشت.",
++    },
++    params: {
++      en: "period (14): standard. Lower (7–9) for faster but noisier. oversold/overbought: widening to 25/75 reduces signals but improves quality. Narrowing to 40/60 for choppy markets.",
++      fa: "period (۱۴): استاندارد. کمتر (۷–۹) سریع‌تر ولی پر سروصداتر. اشباع ۲۵/۷۵: کمتر ولی باکیفیت. ۴۰/۶۰ برای بازار پر نوسان.",
++    },
++    short: true,
++  },
++  macdCross: {
++    category_label: { en: "Momentum", fa: "مومنتوم" },
++    entry: {
++      en: "Long when the MACD line (difference between fast and slow EMA) crosses above the signal line (9-period EMA of MACD). Exit on the reverse cross.",
++      fa: "لانگ وقتی خط MACD (تفاوت EMA سریع و کند) از خط سیگنال (EMA 9-دوره‌ای MACD) عبور کند. خروج در تقاطع معکوس.",
++    },
++    good: {
++      en: "Trending markets with momentum shifts. The histogram (MACD - signal) visually shows momentum strength — useful alongside the signal.",
++      fa: "بازارهای ترند با تغییر مومنتوم. هیستوگرام (MACD - سیگنال) قدرت مومنتوم را نشان می‌دهد.",
++    },
++    bad: {
++      en: "Flat, low-volatility markets. MACD lags because it's built on lagging EMAs.",
++      fa: "بازارهای آرام و کم‌نوسان. MACD خود ذاتاً با تأخیر است چون روی EMA بنا شده.",
++    },
++    params: {
++      en: "fast (12) / slow (26) / signal (9): the classic triple. A faster version is 5/13/1. Shorter timeframes benefit from smaller values.",
++      fa: "۱۲/۲۶/۹: سه‌گانه کلاسیک. نسخه سریع‌تر: ۵/۱۳/۱. در تایم‌فریم کوچک‌تر از مقادیر کمتر استفاده کنید.",
++    },
++    short: false,
++  },
++  bollingerReversion: {
++    category_label: { en: "Mean reversion", fa: "بازگشت به میانگین" },
++    entry: {
++      en: "Enter long when the closing price drops below the lower Bollinger Band (mean − N×σ). Exit when price returns to the middle band (the SMA). No short entry.",
++      fa: "لانگ وقتی قیمت بسته زیر باند پایین (میانگین − N×σ) برود. خروج در برگشت به باند میانی (SMA). ورود شورت ندارد.",
++    },
++    good: {
++      en: "Ranging markets where extreme moves snap back. Most effective when bands are tight (low volatility = compressed bands).",
++      fa: "بازارهای رنج که حرکات افراطی برمی‌گردند. وقتی باندها فشرده‌اند (نوسان کم) بهتر است.",
++    },
++    bad: {
++      en: "Trending markets — price can \"walk\" along the lower band for many candles. During high-volatility expansions, the lower band doesn't mean oversold.",
++      fa: "بازارهای ترند — قیمت می‌تواند چندین کندل روی باند پایین بماند. در انبساط نوسانی بالا، پایین باند به معنای اشباع فروش نیست.",
++    },
++    params: {
++      en: "period (20): the SMA window. mult (2): standard deviation multiplier — increase to 2.5 for fewer but cleaner entries; decrease to 1.5 for more frequent entries in tight markets.",
++      fa: "period (۲۰): پنجره SMA. mult (2): ضریب انحراف معیار — ۲.۵ برای ورودهای کمتر ولی باکیفیت‌تر؛ ۱.۵ برای ورودهای بیشتر در بازار فشرده.",
++    },
++    short: false,
++  },
++  bollingerBreakout: {
++    category_label: { en: "Breakout / Trend", fa: "شکست / ترند" },
++    entry: {
++      en: "Enter long when price closes above the upper Bollinger Band — a breakout from the range. Exit when price falls back below the middle band. With Short: short when price breaks below the lower band.",
++      fa: "لانگ وقتی قیمت بالای باند بالایی بسته شود — شکست از رنج. خروج زیر باند میانی. با شورت: شورت زیر باند پایین.",
++    },
++    good: {
++      en: "Low-volatility squeezes followed by a sharp expansion. Catching the start of a new trend after a compression period.",
++      fa: "فشردگی‌های کم‌نوسان پیش از انبساط تند. گرفتن شروع ترند جدید بعد از دوره فشردگی.",
++    },
++    bad: {
++      en: "Already-trending markets — a close above the upper band in a roaring uptrend is not a breakout signal, it's normal. Can lead to buying tops.",
++      fa: "بازارهای ترند فعال — بسته شدن بالای باند در یک ترند صعودی قوی سیگنال شکست نیست، عادی است. ممکن است سقف بخرد.",
++    },
++    params: {
++      en: "period / mult: same as Bollinger Reversion. A wider band (mult ≥ 2.5) reduces false breakouts.",
++      fa: "period / mult: مثل Bollinger Reversion. باند عریض‌تر (mult ≥ ۲.۵) شکست‌های کاذب را کم می‌کند.",
++    },
++    short: true,
++  },
++  donchianBreakout: {
++    category_label: { en: "Channel breakout", fa: "شکست کانال" },
++    entry: {
++      en: "Long when price exceeds the highest high of the last `entryPeriod` candles (default: 20). Exit when price falls below the lowest low of the last `exitPeriod` candles (default: 10). The classic Turtle Traders' system.",
++      fa: "لانگ وقتی قیمت از بالاترین سقف `entryPeriod` کندل اخیر (پیش‌فرض: ۲۰) بالاتر رود. خروج زیر پایین‌ترین کف `exitPeriod` کندل اخیر (پیش‌فرض: ۱۰). سیستم کلاسیک Turtle Traders.",
++    },
++    good: {
++      en: "Long trending markets, commodities, forex, and any asset that makes sustained directional moves. The asymmetric window (entry wider than exit) locks in gains while staying in trends.",
++      fa: "بازارهای ترند طولانی، کامودیتی، فارکس و هر دارایی که حرکت جهت‌دار پایدار دارد. پنجره نامتقارن (ورود بزرگ‌تر از خروج) سود را حفظ می‌کند.",
++    },
++    bad: {
++      en: "Ranging markets — every small range high/low triggers a false breakout. Performs worst when volatility is cyclically low.",
++      fa: "بازارهای رنج — هر سقف/کف کوچک رنج یک شکست کاذب می‌سازد. در نوسان دوره‌ای پایین بدترین عملکرد را دارد.",
++    },
++    params: {
++      en: "entryPeriod (20): larger = fewer but stronger breakouts. exitPeriod (10): smaller = tighter stop, more exits. Classic Turtle was 20/10 (System 1) and 55/20 (System 2).",
++      fa: "entryPeriod (۲۰): بزرگتر = کمتر ولی قوی‌تر. exitPeriod (۱۰): کمتر = استاپ تنگ‌تر. سیستم کلاسیک Turtle: ۲۰/۱۰ (سیستم ۱) و ۵۵/۲۰ (سیستم ۲).",
++    },
++    short: true,
++  },
++  momentum: {
++    category_label: { en: "Momentum (Rate of Change)", fa: "مومنتوم (نرخ تغییر)" },
++    entry: {
++      en: "Long while the N-period rate-of-change (ROC = (close − close[N]) / close[N] × 100) is positive and above the threshold (default: 0%). Exit when ROC drops below the threshold.",
++      fa: "لانگ تا زمانی که نرخ تغییر N-دوره‌ای (ROC = (close − close[N]) / close[N] × ۱۰۰) مثبت و بالای آستانه (پیش‌فرض: ۰٪) باشد. خروج زیر آستانه.",
++    },
++    good: {
++      en: "Markets with clear, persistent momentum cycles. Works on crypto and forex on daily–weekly timeframes where momentum autocorrelation is observed.",
++      fa: "بازارهای با چرخه‌های مومنتوم واضح. کریپتو و فارکس روی تایم‌فریم روزانه-هفتگی که اتوکرلاسیون مومنتوم دیده می‌شود.",
++    },
++    bad: {
++      en: "Markets with sharp reversals or frequent choppy consolidations.",
++      fa: "بازارهایی با ریورسال‌های تند یا تراکم مکرر.",
++    },
++    params: {
++      en: "period (14): the lookback for ROC. Higher = smoother, fewer trades. threshold (0): raise to 2–5 to filter out weak momentum and reduce over-trading.",
++      fa: "period (۱۴): دوره ROC. بزرگتر = هموارتر، کمتر معامله. threshold (0): تا ۲–۵ بالا ببرید تا مومنتوم ضعیف حذف شود.",
++    },
++    short: false,
++  },
++  trendMomentumHybrid: {
++    category_label: { en: "Hybrid: Trend + Momentum", fa: "ترکیبی: روند + مومنتوم" },
++    entry: {
++      en: "AND gate: enter long only when BOTH conditions hold — fast EMA above slow EMA (trend filter) AND RSI above its floor (default: 50, confirming momentum). Exit when either condition fails.",
++      fa: "دروازه AND: ورود لانگ فقط وقتی هر دو شرط برقرار باشند — EMA سریع بالای کند (فیلتر روند) AND RSI بالای آستانه (پیش‌فرض: ۵۰). خروج وقتی یکی رد شود.",
++    },
++    good: {
++      en: "Markets with defined trends. The dual filter dramatically cuts false signals that plague single-indicator strategies — particularly useful on noisy lower timeframes.",
++      fa: "بازارهای با روند مشخص. فیلتر دوگانه سیگنال کاذب را به شدت کم می‌کند — مخصوصاً روی تایم‌فریم‌های پر سروصدای پایین‌تر.",
++    },
++    bad: {
++      en: "Slow, ranging markets where both conditions may never align long enough to generate any trades. Can have long flat (unexposed) periods.",
++      fa: "بازارهای رنج آهسته که ممکن است هر دو شرط هیچ‌وقت کافی هم‌راستا نشوند. ممکن است دوره‌های فلت طولانی داشته باشد.",
++    },
++    params: {
++      en: "fastPeriod/slowPeriod: EMA pair (9/21 default). rsiPeriod (14): RSI window. rsiFloor (50): the momentum cutoff — raise to 55–60 for stricter confirmation.",
++      fa: "fastPeriod/slowPeriod: جفت EMA (پیش‌فرض ۹/۲۱). rsiPeriod (۱۴): پنجره RSI. rsiFloor (۵۰): آستانه مومنتوم — تا ۵۵–۶۰ بالا ببرید برای تأیید سخت‌تر.",
++    },
++    short: false,
++  },
++  macdRsiHybrid: {
++    category_label: { en: "Hybrid: MACD + RSI", fa: "ترکیبی: MACD + RSI" },
++    entry: {
++      en: "Long when MACD line crosses above signal AND RSI is at or above rsiFloor (default: 45, preventing entries when oversold momentum is still weak). Exit when MACD crosses below signal.",
++      fa: "لانگ وقتی MACD از سیگنال بالا رود AND RSI بالای rsiFloor (پیش‌فرض: ۴۵) باشد تا مومنتوم خیلی ضعیف وارد نشود. خروج در تقاطع معکوس MACD.",
++    },
++    good: {
++      en: "Medium-term timeframes (4h, daily). Good at catching momentum surges after genuine bottoms rather than false-bottom MACD crosses in downtrends.",
++      fa: "تایم‌فریم میان‌مدت (۴h، روزانه). خوب است برای گرفتن سرج مومنتوم بعد از کف واقعی نه تقاطع MACD کاذب در روند نزولی.",
++    },
++    bad: {
++      en: "Can miss early entries in strong trending markets if RSI hasn't cooled to rsiFloor first.",
++      fa: "ممکن است ورودهای اولیه در ترندهای قوی را از دست بدهد اگر RSI هنوز تا rsiFloor سرد نشده باشد.",
++    },
++    params: {
++      en: "fast/slow/signal (12/26/9): MACD params. rsiPeriod (14). rsiFloor (45): lower = more entries (less restrictive); 50+ = only enters when momentum is genuinely building.",
++      fa: "fast/slow/signal (۱۲/۲۶/۹): پارامترهای MACD. rsiPeriod (۱۴). rsiFloor (۴۵): کمتر = ورودهای بیشتر؛ ۵۰+ = فقط ورود با مومنتوم واقعی.",
++    },
++    short: false,
++  },
++  tripleConfluence: {
++    category_label: { en: "Hybrid: Triple Confluence", fa: "ترکیبی: هم‌گرایی سه‌گانه" },
++    entry: {
++      en: "Three simultaneous conditions required — (1) price above a long SMA (trend), (2) positive MACD histogram (momentum), (3) RSI between rsiFloor (48) and rsiCap (78) (avoiding extremes). Exit when any fails.",
++      fa: "سه شرط همزمان لازم است — (۱) قیمت بالای SMA بلند (روند)، (۲) هیستوگرام MACD مثبت (مومنتوم)، (۳) RSI بین ۴۸ و ۷۸ (اجتناب از افراط). خروج با خرابی هر کدام.",
++    },
++    good: {
++      en: "Conservative traders who prioritize low drawdown over maximum return. Generates fewer trades but each has multiple confirming factors behind it.",
++      fa: "معامله‌گران محافظه‌کار که کاهش سرمایه کم را به بازده حداکثری ترجیح می‌دهند. معاملات کمتر ولی هر کدام چندین تأیید دارند.",
++    },
++    bad: {
++      en: "Fast-moving or very short timeframe markets where the three conditions rarely converge in time. Low exposure means low return even when right.",
++      fa: "بازارهای سریع یا تایم‌فریم خیلی کوتاه که سه شرط به ندرت همزمان می‌شوند. exposure پایین = بازده پایین حتی با سیگنال درست.",
++    },
++    params: {
++      en: "trendPeriod (50): SMA length for the trend filter. rsiPeriod (14). rsiFloor/rsiCap (48/78): the RSI window that's considered 'normal' — widen to 40/80 for more trades.",
++      fa: "trendPeriod (۵۰): طول SMA روند. rsiPeriod (۱۴). rsiFloor/rsiCap (۴۸/۷۸): پنجره RSI 'نرمال' — تا ۴۰/۸۰ گشادتر کنید برای معامله بیشتر.",
++    },
++    short: false,
++  },
++  buyAndHold: {
++    category_label: { en: "Benchmark", fa: "معیار مقایسه" },
++    entry: {
++      en: "Buys at the first candle and holds until the final candle of the lookback window. No signal logic whatsoever — it is the passive investment baseline.",
++      fa: "از اولین کندل می‌خرد و تا آخرین کندل بازه نگه می‌دارد. هیچ منطق سیگنالی ندارد — این خط پایه سرمایه‌گذاری غیرفعال است.",
++    },
++    good: {
++      en: "Any asset in a long-term uptrend. The strategy to beat — if yours can't beat buy-and-hold, it's just adding complexity for nothing.",
++      fa: "هر دارایی در ترند صعودی بلندمدت. این استراتژی را باید شکست داد — اگر استراتژی شما از آن بهتر نیست، فقط پیچیدگی اضافه کرده‌اید.",
++    },
++    bad: {
++      en: "Drawdowns during bear markets are fully exposed — no stop-loss, no exit. For the backtest, it's only a reference comparison, not a tradeable strategy.",
++      fa: "در بازارهای نزولی کاملاً در معرض ریزش است — بدون استاپ. برای بک‌تست فقط مرجع مقایسه است، نه استراتژی معاملاتی.",
++    },
++    params: {
++      en: "No parameters.",
++      fa: "پارامتری ندارد.",
++    },
++    short: false,
++  },
++};
++
++const CATEGORY_COLORS = {
++  trend: "var(--gold, #d4af37)",
++  reversion: "var(--cyan, #06b6d4)",
++  momentum: "#a78bfa",
++  hybrid: "#34d399",
++  benchmark: "var(--text-muted)",
++};
++
++export default function StrategyDocs({ activeStrategyKey }) {
++  const { t, lang } = useI18n();
++  const [expanded, setExpanded] = useState(activeStrategyKey || null);
++
++  const strategies = Object.entries(STRATEGIES).filter(([k]) => k !== "buyAndHold");
++  const benchmark = Object.entries(STRATEGIES).filter(([k]) => k === "buyAndHold");
++  const all = [...strategies, ...benchmark];
++
++  function getLabel(obj) {
++    return typeof obj === "object" ? (obj[lang] ?? obj.en ?? String(obj)) : obj;
++  }
++
++  return (
++    <div className="strategy-docs">
++      <p className="strategy-docs__intro">
++        {t("bt.docs.intro")}
++      </p>
++      {all.map(([key, strategy]) => {
++        const doc = STRATEGY_DOCS[key];
++        const isOpen = expanded === key;
++        const isActive = activeStrategyKey === key;
++        const catColor = CATEGORY_COLORS[strategy.category] ?? "var(--text-muted)";
++
++        return (
++          <div
++            key={key}
++            className={`strategy-doc-card${isActive ? " strategy-doc-card--active" : ""}`}
++          >
++            <button
++              className="strategy-doc-card__header"
++              onClick={() => setExpanded(isOpen ? null : key)}
++              aria-expanded={isOpen}
++            >
++              <span
++                className="strategy-doc-card__cat"
++                style={{ color: catColor }}
++              >
++                {getLabel(doc?.category_label)}
++              </span>
++              <span className="strategy-doc-card__name">
++                {getLabel(strategy.label)}
++                {isActive && <span className="strategy-doc-card__active-badge">{t("bt.docs.active")}</span>}
++              </span>
++              <span className="strategy-doc-card__chevron">{isOpen ? "▾" : "▸"}</span>
++            </button>
++
++            {isOpen && doc && (
++              <div className="strategy-doc-card__body">
++                <p className="strategy-doc-card__desc">{getLabel(strategy.description)}</p>
++
++                <div className="strategy-doc-card__section">
++                  <h5>{t("bt.docs.entry")}</h5>
++                  <p>{getLabel(doc.entry)}</p>
++                </div>
++
++                <div className="strategy-doc-card__row">
++                  <div className="strategy-doc-card__section strategy-doc-card__section--good">
++                    <h5>✓ {t("bt.docs.good")}</h5>
++                    <p>{getLabel(doc.good)}</p>
++                  </div>
++                  <div className="strategy-doc-card__section strategy-doc-card__section--bad">
++                    <h5>✗ {t("bt.docs.bad")}</h5>
++                    <p>{getLabel(doc.bad)}</p>
++                  </div>
++                </div>
++
++                <div className="strategy-doc-card__section">
++                  <h5>{t("bt.docs.params")}</h5>
++                  <p>{getLabel(doc.params)}</p>
++                </div>
++
++                <div className="strategy-doc-card__footer">
++                  <span className={`strategy-doc-card__short strategy-doc-card__short--${doc.short ? "yes" : "no"}`}>
++                    {doc.short ? `✓ ${t("bt.docs.shortSupport")}` : `✗ ${t("bt.docs.noShort")}`}
++                  </span>
++                </div>
++              </div>
++            )}
++          </div>
++        );
++      })}
++    </div>
++  );
++}
+diff --git a/src/context/MarketContext.jsx b/src/context/MarketContext.jsx
+index a16f86b..50faa14 100644
+--- a/src/context/MarketContext.jsx
++++ b/src/context/MarketContext.jsx
+@@ -34,6 +34,19 @@ export function MarketProvider({ children }) {
+     if (base && !cleanPair.startsWith(base)) setPair(defaultPairForSymbol(coin.symbol));
+   }, [coin.symbol, pair, setPair]);
+ 
++  // `precision` is persisted to localStorage so a returning visitor doesn't
++  // flash unformatted numbers before the first fetch resolves, but that
++  // persistence means it would otherwise carry the PREVIOUS coin's exchange
++  // tick size/decimals across a coin switch until the new coin's own
++  // metadata arrives — e.g. showing EUR/USD with Bitcoin's 2-decimal
++  // precision for a moment, or worse, a stale 0-decimal value from an
++  // earlier failed precision fetch. Clearing it on every coin change forces
++  // a clean fall-back to formatPrice()'s price-magnitude auto-detection
++  // until fresh metadata (if any) replaces it.
++  useEffect(() => {
++    setPrecision({});
++  }, [coin.id, setPrecision]);
++
+   // Forex has exactly one valid (exchange, marketType) combination and only
+   // ever produces daily candles (see lib/forex.js), so switching to a forex
+   // pair snaps these into place automatically rather than leaving whatever
+diff --git a/src/i18n/translations.js b/src/i18n/translations.js
+index 3d4d86e..09811c3 100644
+--- a/src/i18n/translations.js
++++ b/src/i18n/translations.js
+@@ -846,7 +846,20 @@ export const translations = {
+     "bt.section.risk": "Risk management",
+     "bt.section.risk.on": "On",
+     "bt.section.risk.off": "Off",
++    "bt.section.risk.both": "SL + TP",
++    "bt.section.risk.slonly": "SL only",
++    "bt.section.risk.tponly": "TP only",
+     "bt.section.run": "Run",
++    "bt.section.docs": "Strategy Guide",
++    "bt.section.docs.badge": "Reference",
++    "bt.docs.intro": "Each strategy's entry/exit logic, best market conditions, and parameter guidance. Expand any to learn more.",
++    "bt.docs.entry": "Entry & Exit logic",
++    "bt.docs.good": "Works well in",
++    "bt.docs.bad": "Struggles in",
++    "bt.docs.params": "Key parameters",
++    "bt.docs.active": "active",
++    "bt.docs.shortSupport": "Supports short direction",
++    "bt.docs.noShort": "Long-only",
+     "bt.risk.enable": "Enable stop-loss / take-profit",
+     "bt.risk.sl": "Stop-loss (%)",
+     "bt.risk.sl.hint": "Force-exit if the open position moves against you by this percentage, checked against each candle's intrabar low/high.",
+@@ -1128,7 +1141,20 @@ export const translations = {
+     "bt.section.risk": "مدیریت ریسک",
+     "bt.section.risk.on": "فعال",
+     "bt.section.risk.off": "غیرفعال",
++    "bt.section.risk.both": "SL + TP",
++    "bt.section.risk.slonly": "فقط SL",
++    "bt.section.risk.tponly": "فقط TP",
+     "bt.section.run": "اجرا",
++    "bt.section.docs": "راهنمای استراتژی",
++    "bt.section.docs.badge": "مرجع",
++    "bt.docs.intro": "منطق ورود/خروج، بهترین شرایط بازار و راهنمای پارامترها برای هر استراتژی. برای مطالعه هر کدام را باز کنید.",
++    "bt.docs.entry": "منطق ورود و خروج",
++    "bt.docs.good": "شرایط مناسب",
++    "bt.docs.bad": "شرایط نامناسب",
++    "bt.docs.params": "پارامترهای کلیدی",
++    "bt.docs.active": "فعال",
++    "bt.docs.shortSupport": "پشتیبانی از شورت",
++    "bt.docs.noShort": "فقط لانگ",
+     "bt.risk.enable": "فعال‌سازی حد ضرر / حد سود",
+     "bt.risk.sl": "حد ضرر (٪)",
+     "bt.risk.sl.hint": "اگر پوزیشن باز به این درصد برخلاف شما حرکت کند، با بررسی بیشینه/کمینه هر کندل، معامله به‌اجبار بسته می‌شود.",
+diff --git a/src/lib/priceFormat.js b/src/lib/priceFormat.js
+index e9ba731..54137e3 100644
+--- a/src/lib/priceFormat.js
++++ b/src/lib/priceFormat.js
+@@ -23,10 +23,24 @@ export function inferPriceDecimals(price, mode = "display") {
+   return MAX_DECIMALS;
+ }
+ 
++// `meta.pricePrecision` is `null`/`undefined` whenever an exchange's
++// precision endpoint hasn't resolved yet or failed (see the several
++// `pricePrecision: null` fallbacks in coingecko.js, and forex's
++// inferPrecisionFromCandles). `Number(null)` is `0` and `Number.isFinite(0)`
++// is true, so a naive `Number.isFinite(Number(meta.pricePrecision))` check
++// would treat "no precision known" as "exactly 0 decimals of precision",
++// silently rounding every price to a whole number. hasExplicitPrecision()
++// requires the value to actually be present (and a real number) before
++// trusting it, so "we don't know" correctly falls through to the
++// price-magnitude-based auto-detection in inferPriceDecimals() instead.
++function hasExplicitPrecision(value) {
++  return value !== null && value !== undefined && Number.isFinite(Number(value));
++}
++
+ export function precisionFromMeta(meta = {}, price, mode = "display") {
+   const tickDecimals = decimalsFromStep(meta.tickSize);
+   if (tickDecimals != null) return tickDecimals;
+-  if (Number.isFinite(Number(meta.pricePrecision))) return Math.min(MAX_DECIMALS, Number(meta.pricePrecision));
++  if (hasExplicitPrecision(meta.pricePrecision)) return Math.min(MAX_DECIMALS, Number(meta.pricePrecision));
+   return inferPriceDecimals(price, mode);
+ }
+ 
+@@ -35,8 +49,12 @@ export function formatPrice(value, meta = {}, options = {}) {
+   if (!Number.isFinite(n)) return options.fallback ?? "-";
+   const mode = options.mode || "display";
+   const decimals = Math.max(0, precisionFromMeta(meta, n, mode));
+-  const hasTick = decimalsFromStep(meta.tickSize) != null || Number.isFinite(Number(meta.pricePrecision));
+-  const minimumFractionDigits = hasTick && options.preserveTickZeros ? decimals : 0;
++  // Always pad to the inferred/known decimal count, even when the trailing
++  // digits are zero (e.g. EUR/USD at exactly 1.0000, or BTC at an exact
++  // round price). A trimmed "1" instead of "1.0000" is misleading for
++  // forex, where every pip matters, and inconsistent for crypto, where a
++  // price's decimal count is part of reading its scale at a glance.
++  const minimumFractionDigits = decimals;
+   const maximumFractionDigits = decimals;
+   const formatted = n.toLocaleString("en-US", { minimumFractionDigits, maximumFractionDigits });
+   return options.currency ? `$${formatted}` : formatted;
+diff --git a/src/pages/Backtest.jsx b/src/pages/Backtest.jsx
+index e56b48a..9f7e6a1 100644
+--- a/src/pages/Backtest.jsx
++++ b/src/pages/Backtest.jsx
+@@ -9,6 +9,7 @@ import ReportActions from "../components/ReportActions";
+ import TimeframePicker from "../components/TimeframePicker";
+ import MarketContextBar from "../components/MarketContextBar";
+ import DataQualityGuard from "../components/DataQualityGuard";
++import StrategyDocs from "../components/StrategyDocs";
+ import { useCoin } from "../context/coinStore";
+ import { useMarket } from "../context/MarketContext";
+ import { useI18n, pick } from "../i18n/langStore";
+@@ -60,6 +61,14 @@ export default function Backtest() {
+   // earlier strategy exit is always respected as-is, these only force an
+   // *earlier* exit, never a later one.
+   const [riskEnabled, setRiskEnabled] = useLocalStorageState("lensa.backtest.risk.enabled", false);
++  // Stop-loss and take-profit are independently toggleable: a user may want
++  // only a stop-loss with no profit cap, only a profit cap with no stop, or
++  // both together. slEnabled/tpEnabled gate each side separately; the
++  // shared riskEnabled checkbox only gates whether the risk section's
++  // effects apply at all (so turning it off is still a single-click way to
++  // fully revert to the no-risk-management backtest).
++  const [slEnabled, setSlEnabled] = useLocalStorageState("lensa.backtest.risk.sl.enabled", true);
++  const [tpEnabled, setTpEnabled] = useLocalStorageState("lensa.backtest.risk.tp.enabled", true);
+   const [stopLossPercent, setStopLossPercent] = useLocalStorageState("lensa.backtest.risk.sl", 5);
+   const [takeProfitPercent, setTakeProfitPercent] = useLocalStorageState("lensa.backtest.risk.tp", 15);
+   const [autoFit, setAutoFit] = useLocalStorageState("lensa.backtest.risk.autofit", false);
+@@ -68,10 +77,16 @@ export default function Backtest() {
+   const [collapsedSections, setCollapsedSections] = useLocalStorageState("lensa.backtest.collapsed", {});
+   const toggleSection = (id) => setCollapsedSections((prev) => ({ ...prev, [id]: !prev[id] }));
+ 
+-  const riskParams = riskEnabled
++  const riskParams = riskEnabled && (slEnabled || tpEnabled)
+     ? autoFit && autoFitResult
+-      ? { stopLossPercent: autoFitResult.stopLossPercent, takeProfitPercent: autoFitResult.takeProfitPercent }
+-      : { stopLossPercent: Number(stopLossPercent) || null, takeProfitPercent: Number(takeProfitPercent) || null }
++      ? {
++          stopLossPercent: slEnabled ? autoFitResult.stopLossPercent : null,
++          takeProfitPercent: tpEnabled ? autoFitResult.takeProfitPercent : null,
++        }
++      : {
++          stopLossPercent: slEnabled ? Number(stopLossPercent) || null : null,
++          takeProfitPercent: tpEnabled ? Number(takeProfitPercent) || null : null,
++        }
+     : null;
+ 
+   function handleStrategyChange(key) {
+@@ -306,7 +321,17 @@ export default function Backtest() {
+         <ControlsSection
+           id="risk"
+           title={t("bt.section.risk")}
+-          badge={riskEnabled ? t("bt.section.risk.on") : t("bt.section.risk.off")}
++          badge={
++            !riskEnabled
++              ? t("bt.section.risk.off")
++              : slEnabled && tpEnabled
++                ? t("bt.section.risk.both")
++                : slEnabled
++                  ? t("bt.section.risk.slonly")
++                  : tpEnabled
++                    ? t("bt.section.risk.tponly")
++                    : t("bt.section.risk.off")
++          }
+           collapsed={collapsedSections.risk}
+           onToggle={() => toggleSection("risk")}
+         >
+@@ -319,25 +344,31 @@ export default function Backtest() {
+           {riskEnabled && (
+             <>
+               <div className="control-group">
+-                <label>{t("bt.risk.sl")}<InfoTip term="glossary.btStopLoss" /></label>
++                <label className="toggle-row toggle-row--inline">
++                  <input type="checkbox" checked={slEnabled} disabled={autoFit} onChange={(e) => setSlEnabled(e.target.checked)} />
++                  {t("bt.risk.sl")}<InfoTip term="glossary.btStopLoss" />
++                </label>
+                 <input
+                   type="number"
+                   min="0.1"
+                   step="0.5"
+                   value={stopLossPercent}
+-                  disabled={autoFit}
++                  disabled={autoFit || !slEnabled}
+                   onChange={(e) => setStopLossPercent(e.target.value)}
+                 />
+                 <small className="control-hint">{t("bt.risk.sl.hint")}</small>
+               </div>
+               <div className="control-group">
+-                <label>{t("bt.risk.tp")}<InfoTip term="glossary.btTakeProfit" /></label>
++                <label className="toggle-row toggle-row--inline">
++                  <input type="checkbox" checked={tpEnabled} disabled={autoFit} onChange={(e) => setTpEnabled(e.target.checked)} />
++                  {t("bt.risk.tp")}<InfoTip term="glossary.btTakeProfit" />
++                </label>
+                 <input
+                   type="number"
+                   min="0.1"
+                   step="0.5"
+                   value={takeProfitPercent}
+-                  disabled={autoFit}
++                  disabled={autoFit || !tpEnabled}
+                   onChange={(e) => setTakeProfitPercent(e.target.value)}
+                 />
+                 <small className="control-hint">{t("bt.risk.tp.hint")}</small>
+@@ -369,6 +400,16 @@ export default function Backtest() {
+             {loadingAll ? t("bt.runningAll") : t("bt.runAll")}
+           </button>
+         </ControlsSection>
++
++        <ControlsSection
++          id="docs"
++          title={t("bt.section.docs")}
++          badge={t("bt.section.docs.badge")}
++          collapsed={collapsedSections.docs !== false}
++          onToggle={() => toggleSection("docs")}
++        >
++          <StrategyDocs activeStrategyKey={strategyKey} />
++        </ControlsSection>
+       </div>
+ 
+       <div className="guide-card glass-card reveal">
+-- 
+2.43.0
+
