@@ -104,9 +104,10 @@ export default function Dashboard() {
               coin={coin}
               source={market.exchange}
               pair={market.pair}
-              onSelect={({ source, pair }) => {
+              onSelect={({ source, pair, marketType: selectedMarketType }) => {
                 setExchange(source);
                 setPair(pair);
+                if (selectedMarketType) setMarketType(selectedMarketType);
               }}
             />
             {!market.isForex && (

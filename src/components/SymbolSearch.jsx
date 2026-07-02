@@ -4,7 +4,7 @@ import { isForexCoinId, parseForexCoinId, forexPairLabel } from "../lib/forex";
 import { useCoin } from "../context/coinStore";
 import { useI18n } from "../i18n/langStore";
 
-const TABS = ["all", "crypto", "forex", "spot", "composite"];
+const TABS = ["all", "crypto", "forex", "spot", "futures", "composite"];
 
 export default function SymbolSearch({ coin, source, pair, onSelect }) {
   const { selectCoin } = useCoin();
@@ -92,7 +92,7 @@ export default function SymbolSearch({ coin, source, pair, onSelect }) {
     if (row.coin && row.coin.id !== coin.id) {
       selectCoin(row.coin);
     }
-    onSelect({ source: row.source, pair: row.pair });
+    onSelect({ source: row.source, pair: row.pair, marketType: row.marketType ?? "Spot" });
     setOpen(false);
     setQuery("");
   }
@@ -207,6 +207,7 @@ function makeSymbolRowsForCoin(c) {
       name: `${name} / USDT`,
       exchange: "Binance",
       tags: ["crypto", "spot"],
+      marketType: "Spot",
       coin: c,
     },
     {
@@ -218,6 +219,31 @@ function makeSymbolRowsForCoin(c) {
       name: `${name} / USDC`,
       exchange: "Binance",
       tags: ["crypto", "spot"],
+      marketType: "Spot",
+      coin: c,
+    },
+    {
+      id: `binance-futures-${base}-USDT`,
+      source: "binance",
+      pair: `${base}USDT`,
+      base,
+      symbol: `${base}USDT`,
+      name: `${name} / USDT Perp`,
+      exchange: "Binance USD-M Futures",
+      tags: ["crypto", "futures"],
+      marketType: "USD-M Futures",
+      coin: c,
+    },
+    {
+      id: `binance-coinfutures-${base}-USD`,
+      source: "binance",
+      pair: `${base}USD_PERP`,
+      base,
+      symbol: `${base}USD_PERP`,
+      name: `${name} / USD Perp (Coin-M)`,
+      exchange: "Binance Coin-M Futures",
+      tags: ["crypto", "futures"],
+      marketType: "Coin-M Futures",
       coin: c,
     },
   ];

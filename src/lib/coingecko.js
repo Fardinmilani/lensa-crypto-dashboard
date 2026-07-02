@@ -43,6 +43,8 @@ const SOURCE_LABELS = {
 export const CHART_SOURCES = [
   { id: "coingecko", label: SOURCE_LABELS.coingecko },
   { id: "binance", label: SOURCE_LABELS.binance },
+  { id: "binanceUsdFutures", label: SOURCE_LABELS.binanceUsdFutures },
+  { id: "binanceCoinFutures", label: SOURCE_LABELS.binanceCoinFutures },
   { id: "bybit", label: SOURCE_LABELS.bybit },
   { id: "okx", label: SOURCE_LABELS.okx },
   { id: "coinbase", label: SOURCE_LABELS.coinbase },
@@ -397,15 +399,19 @@ export async function getChartCandles({ id, symbol, timeframe = "4h", lookbackDa
   const forexPair = parseForexCoinId(id);
   if (forexPair) return getForexChartCandles(forexPair, { timeframe, lookbackDays });
 
-  const requested = source || "coingecko";
+  const requested = source || "binance";
   const warnings = [];
   const tf = resolveTimeframe(timeframe);
   const effectiveDays = resolveLookbackDays(timeframe, lookbackDays);
+  // Binance is always the preferred source for crypto: 24/7 continuous data
+  // with no gaps, consistent OHLCV from a single exchange feed, and candles
+  // available at every interval from 1m to 1M. CoinGecko is kept as the
+  // last-resort fallback only (slower, aggregated, more gap-prone).
   const candidates =
     marketType !== "Spot"
       ? ["binance"]
       : requested === "coingecko"
-      ? [tf.intervalMinutes < 1440 ? "binance" : "coingecko", "coingecko"]
+      ? ["binance", "coingecko"]
       : [requested, "binance", "coingecko"];
 
   const uniqueCandidates = [...new Set(candidates)];

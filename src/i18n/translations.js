@@ -756,6 +756,7 @@ export const translations = {
     "symbol.crypto": "Crypto",
     "symbol.forex": "Forex",
     "symbol.spot": "Spot",
+    "symbol.futures": "Futures",
     "symbol.composite": "Composite",
     "symbol.symbol": "Symbol",
     "symbol.description": "Description",
