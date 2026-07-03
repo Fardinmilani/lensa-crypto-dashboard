@@ -2099,6 +2099,35 @@
 .imported-strategy-banner {
   border-left: 3px solid var(--gold, #d4af37);
 }
+.backtest-config-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 14px;
+}
+.config-chip {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.72rem;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--text-secondary);
+}
+.config-chip--strategy {
+  color: var(--gold-2);
+  border-color: rgba(245, 158, 11, 0.26);
+  background: rgba(245, 158, 11, 0.07);
+}
+.config-chip--risk {
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.26);
+  background: rgba(239, 68, 68, 0.07);
+}
+.config-chip--muted {
+  color: var(--text-tertiary);
+}
 .risk-badge {
   display: inline-flex;
   align-items: center;
@@ -3484,18 +3513,18 @@
     max-width: 100%;
   }
   .table-scroll {
-    overflow: visible;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
   }
   .trades-table {
-    table-layout: fixed;
-    font-size: 8px;
-    width: 100%;
+    font-size: 0.72rem;
+    width: max-content;
+    min-width: 100%;
   }
   .trades-table th,
   .trades-table td {
-    white-space: normal;
-    overflow-wrap: anywhere;
-    padding: 4px 5px;
+    white-space: nowrap;
+    padding: 6px 8px;
     text-align: center;
   }
   .probability-grid {
@@ -3505,12 +3534,6 @@
   .probability-item {
     min-height: auto;
     padding: 8px;
-  }
-  .stat-label,
-  .hl-card__label,
-  .panel-subtitle,
-  .card-hint {
-    color: #4b5563;
   }
   .agg-kpi-grid {
     grid-template-columns: repeat(2, 1fr);

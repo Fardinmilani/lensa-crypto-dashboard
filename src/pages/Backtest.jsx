@@ -706,6 +706,7 @@ export default function Backtest() {
               <DataQualityGuard module="Backtest trades" meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
               <div className="panel-header"><h2>{t("bt.trades", { n: result.tradeCount })}</h2></div>
               <p className="section-note">{t("bt.trades.note")}</p>
+              <BacktestConfigSummary report={report} t={t} lang={lang} />
               <div className="table-scroll">
                 <table className="trades-table">
                   <thead>
@@ -933,6 +934,35 @@ function ControlsSection({ id, title, badge, collapsed, onToggle, children }) {
 // in a position right now, and since when" rather than only "how did it do
 // in the past". Still not a forward guarantee: it's the mechanical output
 // of the same deterministic rule, evaluated on the latest data point.
+// A quick "what exactly was this run?" strip — strategy, every tuned
+// parameter, direction, leverage, fee, and risk exits — placed right above
+// the trade list so it's never ambiguous which configuration produced
+// these numbers (important once params get fitted/changed across runs).
+function BacktestConfigSummary({ report, t, lang }) {
+  if (!report) return null;
+  const paramEntries = Object.entries(report.params || {});
+  return (
+    <div className="backtest-config-summary">
+      <span className="config-chip config-chip--strategy">{report.strategyLabel}</span>
+      <span className="config-chip">{t(`bt.direction.${report.direction}`, undefined) || report.direction}</span>
+      {report.leverage > 1 && <span className="config-chip">{report.leverage}x</span>}
+      <span className="config-chip">{t("bt.config.fee", { fee: report.fee })}</span>
+      {paramEntries.map(([key, value]) => (
+        <span className="config-chip config-chip--param" key={key}>
+          {pick(lang, PARAM_LABELS[key]) || key}: {String(value)}
+        </span>
+      ))}
+      {report.riskParams?.stopLossPercent != null && (
+        <span className="config-chip config-chip--risk">{t("bt.config.sl", { pct: report.riskParams.stopLossPercent })}</span>
+      )}
+      {report.riskParams?.takeProfitPercent != null && (
+        <span className="config-chip config-chip--risk">{t("bt.config.tp", { pct: report.riskParams.takeProfitPercent })}</span>
+      )}
+      {!report.riskParams && <span className="config-chip config-chip--muted">{t("bt.config.noRisk")}</span>}
+    </div>
+  );
+}
+
 function LiveSignalCard({ liveSignal, direction, t, locale }) {
   const { state, barsInState, changedAtTime, lastCandleTime } = liveSignal;
   const changedDate = changedAtTime ? new Date(changedAtTime * 1000).toLocaleString(locale) : null;

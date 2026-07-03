@@ -34,12 +34,23 @@ import { combineDirectionalSignals } from "./strategies.js";
 // be omitted/null to disable that side independently. Percentages are
 // always interpreted as a magnitude (e.g. stopLossPercent: 2 means "exit if
 // the position is down 2%", not literally -2).
+//
+// Returns { signals, exitPrice }. `exitPrice[i]` holds the exact stop/target
+// price on any bar where this overlay forced an exit, or null otherwise.
+// This matters because a forced exit can happen mid-bar (the low/high
+// pierced the bound while the close did not) — if the caller just used that
+// bar's close price to fill the trade, a single large-range candle could
+// report a P/L far beyond the configured stop-loss percentage, which is
+// exactly backwards for a risk control. Filling at the configured bound
+// instead (as a real stop/limit order would, ignoring slippage) is what
+// keeps a trade's realized loss capped at stopLossPercent as configured.
 export function applyRiskExits(candles, signals, riskParams) {
   const stopLossPercent = positiveOrNull(riskParams?.stopLossPercent);
   const takeProfitPercent = positiveOrNull(riskParams?.takeProfitPercent);
-  if (stopLossPercent == null && takeProfitPercent == null) return signals;
+  if (stopLossPercent == null && takeProfitPercent == null) return { signals, exitPrice: new Array(signals.length).fill(null) };
 
   const out = signals.slice();
+  const exitPrice = new Array(signals.length).fill(null);
   let side = 0; // 1 long, -1 short, 0 flat — sign of the signal that opened the current trade
   let entryPrice = null;
   // After a forced SL/TP exit, re-entry is blocked until the raw strategy
@@ -79,7 +90,11 @@ export function applyRiskExits(candles, signals, riskParams) {
         // Force flat on this bar. If both bounds are somehow crossed on the
         // same bar, the stop-loss takes priority (the more conservative,
         // capital-preserving assumption when intrabar order isn't known).
+        // Fill at the exact configured bound rather than the bar's close.
         out[i] = 0;
+        exitPrice[i] = stopHit
+          ? entryPrice * (1 - (stopLossPercent / 100) * side)
+          : entryPrice * (1 + (takeProfitPercent / 100) * side);
         side = 0;
         entryPrice = null;
         // Only hold off re-entry if the strategy's own signal is still
@@ -105,7 +120,7 @@ export function applyRiskExits(candles, signals, riskParams) {
     }
   }
 
-  return out;
+  return { signals: out, exitPrice };
 }
 
 function positiveOrNull(value) {
@@ -123,16 +138,15 @@ function positiveOrNull(value) {
 export function autoFitRiskExits({ candles, signals, feePercent = 0.1, initialCapital = 10000, leverage = 1 }) {
   const STOP_CANDIDATES = [1, 2, 3, 5, 8, 12];
   const TARGET_CANDIDATES = [2, 4, 6, 10, 15, 20, 30];
-  const runOne = (signalsForRun) =>
-    leverage > 1 || signalsForRun.some((s) => s < 0)
-      ? runLeveragedBacktest({ candles, signals: signalsForRun, feePercent, initialCapital, leverage })
-      : runBacktest({ candles, signals: signalsForRun, feePercent, initialCapital });
+  const runOne = (riskParams) =>
+    leverage > 1 || signals.some((s) => s < 0)
+      ? runLeveragedBacktest({ candles, signals, feePercent, initialCapital, leverage, riskParams })
+      : runBacktest({ candles, signals, feePercent, initialCapital, riskParams });
 
   let best = null;
   for (const stopLossPercent of STOP_CANDIDATES) {
     for (const takeProfitPercent of TARGET_CANDIDATES) {
-      const adjusted = applyRiskExits(candles, signals, { stopLossPercent, takeProfitPercent });
-      const result = runOne(adjusted);
+      const result = runOne({ stopLossPercent, takeProfitPercent });
       const score = Number.isFinite(result.sharpe) ? result.sharpe : result.totalReturnPercent / 100;
       if (!best || score > best.score) {
         best = { stopLossPercent, takeProfitPercent, score, result };
@@ -146,7 +160,9 @@ export function runBacktest({ candles, signals, feePercent = 0.1, initialCapital
   if (candles.length !== signals.length) {
     throw new Error("candles و signals باید طول یکسان داشته باشند");
   }
-  const effectiveSignals = riskParams ? applyRiskExits(candles, signals, riskParams) : signals;
+  const { signals: effectiveSignals, exitPrice: forcedExitPrice } = riskParams
+    ? applyRiskExits(candles, signals, riskParams)
+    : { signals, exitPrice: null };
 
   const equityCurve = [];
   const trades = [];
@@ -159,6 +175,7 @@ export function runBacktest({ candles, signals, feePercent = 0.1, initialCapital
   for (let i = 0; i < candles.length; i++) {
     const { time, close } = candles[i];
     const signal = effectiveSignals[i];
+    const fillPrice = forcedExitPrice?.[i] ?? close;
 
     if (prevSignal === 0 && signal === 1) {
       const fee = cash * (feePercent / 100);
@@ -168,11 +185,11 @@ export function runBacktest({ candles, signals, feePercent = 0.1, initialCapital
       entryPrice = close;
       entryTime = time;
     } else if (prevSignal === 1 && signal === 0) {
-      const proceeds = units * close;
+      const proceeds = units * fillPrice;
       const fee = proceeds * (feePercent / 100);
       cash = proceeds - fee;
-      const pnlPercent = ((close - entryPrice) / entryPrice) * 100;
-      trades.push({ entryTime, exitTime: time, entryPrice, exitPrice: close, pnlPercent });
+      const pnlPercent = ((fillPrice - entryPrice) / entryPrice) * 100;
+      trades.push({ entryTime, exitTime: time, entryPrice, exitPrice: fillPrice, pnlPercent });
       units = 0;
       entryPrice = null;
       entryTime = null;
@@ -284,10 +301,12 @@ export function runLeveragedBacktest({ candles, signals, feePercent = 0.1, initi
   if (candles.length !== signals.length) {
     throw new Error("candles و signals باید طول یکسان داشته باشند");
   }
-  const effectiveSignals = riskParams ? applyRiskExits(candles, signals, riskParams) : signals;
+  const { signals: effectiveSignals, exitPrice: forcedExitPrice } = riskParams
+    ? applyRiskExits(candles, signals, riskParams)
+    : { signals, exitPrice: null };
   const lev = Math.max(1, Number(leverage) || 1);
   const hasShorts = effectiveSignals.some((s) => s < 0);
-  if (lev === 1 && !hasShorts) return runBacktest({ candles, signals: effectiveSignals, feePercent, initialCapital, riskParams: null });
+  if (lev === 1 && !hasShorts) return runBacktest({ candles, signals, feePercent, initialCapital, riskParams });
 
   const equityCurve = [];
   const trades = [];
@@ -367,7 +386,7 @@ export function runLeveragedBacktest({ candles, signals, feePercent = 0.1, initi
       if (worstMovePercent <= -100) {
         closePosition(worstPrice, time, { isLiquidation: true });
       } else if (direction !== prevDirection) {
-        closePosition(close, time);
+        closePosition(forcedExitPrice?.[i] ?? close, time);
       }
     }
 
