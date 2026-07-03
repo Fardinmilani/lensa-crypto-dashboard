@@ -3,7 +3,8 @@ import MarketContextBar from "../components/MarketContextBar";
 import DataQualityGuard from "../components/DataQualityGuard";
 import { getChartCandles } from "../lib/coingecko";
 import { firstTouchProbabilities, monteCarlo, touchProbability } from "../lib/forecast";
-import { ema, macd, rsi } from "../lib/strategies";
+import { ema, macd, rsi, STRATEGIES, combineDirectionalSignals, currentSignalState } from "../lib/strategies";
+import { runBacktest, runLeveragedBacktest } from "../lib/backtest";
 import { calculateATR } from "../lib/risk";
 import { formatPrice, formatUsd } from "../lib/priceFormat";
 import { qualityMetaFromError } from "../lib/dataQuality";
@@ -22,6 +23,7 @@ const DEFAULT_RISK = {
   slippagePercent: 0.05,
 };
 const WATCH_CACHE_MS = 60_000;
+const IMPORTED_STRATEGY_KEY = "lensa.decision.importedStrategy";
 const JOURNAL_STORE = "paperTrades";
 const DB_NAME = "lensa-decision-center";
 const DB_VERSION = 1;
@@ -208,6 +210,7 @@ export default function DecisionCenter() {
   const [alertDraft, setAlertDraft] = useState({ type: "price", level: "", score: 70, rr: 2 });
   const [note, setNote] = useState("");
   const [alertPrice, setAlertPrice] = useState("");
+  const [importedStrategy, setImportedStrategy] = useLocalStorageState(IMPORTED_STRATEGY_KEY, null);
   const watchCache = useRef(new Map());
   const lastLang = useRef(lang);
   const reveal = useStaggerReveal([decision, error]);
@@ -264,7 +267,7 @@ export default function DecisionCenter() {
       updateFromCandles(candles);
       setDataMeta(candles.meta || null);
       setAnalysisMarket(snapshotContext(market));
-      setDecision(analyzeDecision(candles, candles.meta, market, t));
+      setDecision(analyzeDecision(candles, candles.meta, market, t, importedStrategy));
     } catch (err) {
       setError(err.message);
       setDecision(null);
@@ -484,6 +487,31 @@ export default function DecisionCenter() {
         </div>
       )}
 
+      {importedStrategy?.strategyKey && (
+        <div className="glass-card imported-strategy-banner reveal">
+          <div className="panel-header"><h2>{t("decision.imported.title")}</h2></div>
+          <p className="section-note">
+            {t("decision.imported.body", { label: importedStrategy.label || importedStrategy.strategyKey })}
+          </p>
+          {decision?.imported && (
+            <div className="live-signal-state">
+              <span className={`side-badge side-badge--${decision.imported.live?.state === "short" ? "short" : decision.imported.live?.state === "long" ? "long" : "flat"}`}>
+                {t(`bt.live.state.${decision.imported.live?.state || "flat"}`)}
+              </span>
+              <span className="control-hint">
+                {t("decision.imported.stats", {
+                  trades: decision.imported.result.tradeCount,
+                  ret: Math.round(decision.imported.result.totalReturnPercent || 0),
+                })}
+              </span>
+            </div>
+          )}
+          <button className="run-btn run-btn--ghost" onClick={() => setImportedStrategy(null)}>
+            {t("decision.imported.clear")}
+          </button>
+        </div>
+      )}
+
       {error && <p className="news-error reveal">{error}</p>}
 
       {decision && (
@@ -562,7 +590,32 @@ export default function DecisionCenter() {
   );
 }
 
-function analyzeDecision(candles, meta, market, t) {
+// Evaluate a strategy handed off from the Backtest page ("Send to Decision
+// Center") on the exact candles this Decision Center run is using: its
+// current signal state (long/short/flat, and since when) plus its
+// historical stats over this window, so it can be weighed as one more
+// input alongside the built-in trend/momentum/MC analysis rather than
+// living only in the Backtest page's separate, past-only view.
+function evaluateImportedStrategy(candles, market, importedStrategy) {
+  if (!importedStrategy?.strategyKey) return null;
+  const strategy = STRATEGIES[importedStrategy.strategyKey];
+  if (!strategy) return null;
+  const direction = importedStrategy.direction || "long";
+  const leverage = importedStrategy.leverage || 1;
+  const params = importedStrategy.params || strategy.params;
+  try {
+    const signals = combineDirectionalSignals(strategy, candles, params, direction);
+    const result = leverage > 1 || direction !== "long"
+      ? runLeveragedBacktest({ candles, signals, feePercent: 0.1, leverage })
+      : runBacktest({ candles, signals, feePercent: 0.1 });
+    const live = currentSignalState(strategy, candles, params, direction);
+    return { strategyKey: importedStrategy.strategyKey, label: importedStrategy.label, params, direction, leverage, result, live };
+  } catch {
+    return null;
+  }
+}
+
+function analyzeDecision(candles, meta, market, t, importedStrategy) {
   const closes = candles.map((c) => c.close);
   const volumes = candles.map((c) => c.volume || 0);
   const last = candles.at(-1);
@@ -641,10 +694,11 @@ function analyzeDecision(candles, meta, market, t) {
 
   const finalDecision = chooseFinalDecision(longSetup, shortSetup, qualityFactor);
   const selected = finalDecision === "Long" ? longSetup : finalDecision === "Short" ? shortSetup : longSetup.score >= shortSetup.score ? longSetup : shortSetup;
+  const imported = evaluateImportedStrategy(candles, market, importedStrategy);
   const tests = buildTestSuite({
     trendLong, trendShort, momentumLong, momentumShort, r, hist, prevHist,
     atrPct, volumeSupports, volumeFades, currentVolume, avgVolume, mtfLong, mtfShort,
-    mc, backtest, qualityFactor, meta, longSetup, shortSetup, t,
+    mc, backtest, qualityFactor, meta, longSetup, shortSetup, t, imported,
   });
   const dataQualityScore = Math.round(Math.max(0, Math.min(100, qualityFactor * 100)));
   const riskScore = riskScoreFrom({ atrPct, selected, qualityFactor, backtest });
@@ -682,6 +736,7 @@ function analyzeDecision(candles, meta, market, t) {
     status: meta?.status || market.dataSourceStatus,
     longSetup,
     shortSetup,
+    imported,
   };
 }
 
@@ -764,8 +819,8 @@ function buildSetup({ side, lastPrice, atr, precision, mc, qualityFactor, facts,
   };
 }
 
-function buildTestSuite({ trendLong, trendShort, momentumLong, momentumShort, r, hist, prevHist, atrPct, volumeSupports, volumeFades, currentVolume, avgVolume, mtfLong, mtfShort, mc, backtest, qualityFactor, meta, longSetup, shortSetup, t }) {
-  return {
+function buildTestSuite({ trendLong, trendShort, momentumLong, momentumShort, r, hist, prevHist, atrPct, volumeSupports, volumeFades, currentVolume, avgVolume, mtfLong, mtfShort, mc, backtest, qualityFactor, meta, longSetup, shortSetup, t, imported }) {
+  const suite = {
     trend: {
       score: trendLong ? 75 : trendShort ? 25 : 50,
       summary: trendLong ? tr(t, "decision.test.trend.bullish", undefined, "Bullish EMA structure") : trendShort ? tr(t, "decision.test.trend.bearish", undefined, "Bearish EMA structure") : tr(t, "decision.test.trend.mixed", undefined, "Mixed trend"),
@@ -818,6 +873,26 @@ function buildTestSuite({ trendLong, trendShort, momentumLong, momentumShort, r,
       impact: qualityFactor < 0.75 ? tr(t, "decision.test.quality.capped", undefined, "Decision confidence is capped by data quality.") : tr(t, "decision.test.quality.acceptable", undefined, "Data quality is acceptable."),
     },
   };
+  if (imported) {
+    const { result, live, label } = imported;
+    const stateWord = live?.state === "long" ? "Long" : live?.state === "short" ? "Short" : "Flat";
+    suite.importedStrategy = {
+      score: result.tradeCount < 5 ? 45 : result.profitFactor > 1.25 ? 68 : result.profitFactor < 0.9 ? 32 : 50,
+      summary: tr(
+        t,
+        "decision.test.imported.summary",
+        { label: label || imported.strategyKey, state: decisionTerm(t, stateWord) },
+        `${label || imported.strategyKey} currently signals ${stateWord}`
+      ),
+      impact: tr(
+        t,
+        "decision.test.imported.impact",
+        { trades: result.tradeCount, ret: Math.round(result.totalReturnPercent || 0) },
+        `Over this window: ${result.tradeCount} trades, ${Math.round(result.totalReturnPercent || 0)}% return.`
+      ),
+    };
+  }
+  return suite;
 }
 
 function buildSimulationCards(mc, precision, t) {
@@ -1462,6 +1537,7 @@ function labelize(key, t) {
     riskReward: tr(t, "decision.label.rrQuality", undefined, "Risk/reward quality"),
     expectedValue: tr(t, "decision.metric.expectedValue", undefined, "Expected value"),
     dataQuality: tr(t, "decision.metric.dataQuality", undefined, "Data quality"),
+    importedStrategy: tr(t, "decision.label.imported", undefined, "Imported backtest strategy"),
   };
   if (labels[key]) return labels[key];
   return String(key)

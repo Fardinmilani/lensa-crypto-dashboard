@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { STRATEGIES, PARAM_LABELS, DIRECTION_MODES, combineDirectionalSignals } from "../lib/strategies";
+import { STRATEGIES, PARAM_LABELS, DIRECTION_MODES, combineDirectionalSignals, currentSignalState } from "../lib/strategies";
 import { runBacktest, runLeveragedBacktest, runAllStrategies, autoFitRiskExits } from "../lib/backtest";
+import { optimizeStrategy, optimizeAllStrategies } from "../lib/optimize";
 import { getChartCandles } from "../lib/coingecko";
 import { formatUsd } from "../lib/priceFormat";
 import { qualityMetaFromError } from "../lib/dataQuality";
@@ -11,7 +12,7 @@ import MarketContextBar from "../components/MarketContextBar";
 import DataQualityGuard from "../components/DataQualityGuard";
 import StrategyDocs from "../components/StrategyDocs";
 import { useCoin } from "../context/coinStore";
-import { useMarket } from "../context/MarketContext";
+import { useMarket, MARKET_TYPES } from "../context/MarketContext";
 import { useI18n, pick } from "../i18n/langStore";
 import { useStaggerReveal, useCountUp } from "../hooks/useAnimations";
 import { useLocalStorageState } from "../hooks/useLocalStorageState";
@@ -20,10 +21,11 @@ import InfoTip from "../components/InfoTip";
 const CATEGORY_ORDER = ["trend", "momentum", "reversion", "hybrid"];
 const LOOKBACK_PRESETS = [90, 180, 365, 730];
 const LEVERAGE_PRESETS = [1, 2, 3, 5, 10, 20, 25, 50, 75, 100];
+const IMPORTED_STRATEGY_KEY = "lensa.decision.importedStrategy";
 
 export default function Backtest() {
   const { coin } = useCoin();
-  const { market, setTimeframe, updateFromCandles } = useMarket();
+  const { market, setTimeframe, setMarketType, setExchange, setPair, updateFromCandles } = useMarket();
   const { t, lang } = useI18n();
   const locale = lang === "fa" ? "fa-IR" : "en-US";
   const [strategyKey, setStrategyKey] = useLocalStorageState("lensa.backtest.strategy", "trendMomentumHybrid");
@@ -77,6 +79,19 @@ export default function Backtest() {
   const [collapsedSections, setCollapsedSections] = useLocalStorageState("lensa.backtest.collapsed", {});
   const toggleSection = (id) => setCollapsedSections((prev) => ({ ...prev, [id]: !prev[id] }));
 
+  // Best-fit parameter search (per-strategy and all-strategies) — see
+  // lib/optimize.js. `optimizing`/`optimizingAll` drive button spinners;
+  // `fitInfo` and `fitAllInfo` hold the last search's summary so the UI can
+  // show what changed and how many combinations were tried.
+  const [optimizing, setOptimizing] = useState(false);
+  const [optimizingAll, setOptimizingAll] = useState(false);
+  const [fitInfo, setFitInfo] = useState(null);
+  const [fitAllParams, setFitAllParams] = useState(null); // { [strategyKey]: params } from "fit all"
+  const [fitAllInfo, setFitAllInfo] = useState(null);
+  const [liveSignal, setLiveSignal] = useState(null);
+  const [importedNotice, setImportedNotice] = useState(false);
+  const [, setImportedStrategy] = useLocalStorageState(IMPORTED_STRATEGY_KEY, null);
+
   const riskParams = riskEnabled && (slEnabled || tpEnabled)
     ? autoFit && autoFitResult
       ? {
@@ -89,10 +104,32 @@ export default function Backtest() {
         }
     : null;
 
+  // Binance is the only exchange this app wires up for futures (see
+  // SymbolSearch.jsx), and each market type there uses a different pair
+  // suffix (Coin-M uses `${base}USD_PERP`, not `${base}USDT`), so switching
+  // market type has to update exchange+pair together, not just marketType.
+  const base = String(coin.symbol || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const isBinanceFamily = /^Binance($| )/.test(market.exchange || "");
+  function selectMarketType(mt) {
+    if (mt === "Spot") {
+      setExchange("Binance");
+      setPair(`${base}USDT`);
+    } else if (mt === "USD-M Futures") {
+      setExchange("Binance USD-M Futures");
+      setPair(`${base}USDT`);
+    } else if (mt === "Coin-M Futures") {
+      setExchange("Binance Coin-M Futures");
+      setPair(`${base}USD_PERP`);
+    }
+    setMarketType(mt);
+  }
+
   function handleStrategyChange(key) {
     setStrategyKey(key);
     setParams(STRATEGIES[key].params);
     setResult(null);
+    setFitInfo(null);
+    setLiveSignal(null);
   }
 
   async function fetchCandles() {
@@ -112,6 +149,7 @@ export default function Backtest() {
     setError(null);
     setAggregate(null);
     setAutoFitResult(null);
+    setFitInfo(null);
     try {
       const candles = await fetchCandles();
       if (candles.length < 30) throw new Error(t("bt.noData"));
@@ -145,6 +183,7 @@ export default function Backtest() {
       });
       setResult(strategyResult);
       setBenchmarkResult(benchmark);
+      setLiveSignal(currentSignalState(strategy, candles, params, effectiveDirection));
     } catch (err) {
       setError(err.message);
       setDataMeta(qualityMetaFromError(err, market.exchange));
@@ -154,9 +193,135 @@ export default function Backtest() {
     }
   }
 
+  // Search a bounded grid of parameter values around this strategy's
+  // defaults and adopt whichever combination scored best on this exact
+  // coin/timeframe/direction/leverage, then immediately run it so the
+  // results below reflect the fitted params. See lib/optimize.js for the
+  // scoring rule and in-sample-fitting caveat.
+  async function handleFitBest() {
+    setOptimizing(true);
+    setError(null);
+    try {
+      const candles = await fetchCandles();
+      if (candles.length < 30) throw new Error(t("bt.noData"));
+      updateFromCandles(candles);
+      setDataMeta(candles.meta || null);
+      setAnalysisMarket(snapshotMarket(market));
+      const fit = optimizeStrategy({
+        strategy,
+        candles,
+        direction: effectiveDirection,
+        leverage: effectiveLeverage,
+        feePercent: Number(fee),
+        riskParams: riskEnabled && !autoFit ? riskParams : null,
+      });
+      if (!fit) {
+        setFitInfo({ unavailable: true });
+        return;
+      }
+      setParams(fit.bestParams);
+      setFitInfo({
+        testedCount: fit.testedCount,
+        improved: fit.improved,
+        baselineReturn: fit.baselineResult.totalReturnPercent,
+        bestReturn: fit.bestResult.totalReturnPercent,
+      });
+      const signals = combineDirectionalSignals(strategy, candles, fit.bestParams, effectiveDirection);
+      let effectiveRiskParams = riskEnabled && !autoFit ? riskParams : null;
+      if (riskEnabled && autoFit) {
+        const autoFitted = autoFitRiskExits({ candles, signals, feePercent: Number(fee), leverage: effectiveLeverage });
+        setAutoFitResult(autoFitted);
+        effectiveRiskParams = autoFitted ? { stopLossPercent: autoFitted.stopLossPercent, takeProfitPercent: autoFitted.takeProfitPercent } : null;
+      }
+      const strategyResult =
+        effectiveLeverage > 1 || effectiveDirection !== "long"
+          ? runLeveragedBacktest({ candles, signals, feePercent: Number(fee), leverage: effectiveLeverage, riskParams: effectiveRiskParams })
+          : runBacktest({ candles, signals, feePercent: Number(fee), riskParams: effectiveRiskParams });
+      const benchmark = runBacktest({ candles, signals: STRATEGIES.buyAndHold.generateSignals(candles), feePercent: Number(fee) });
+      setResult(strategyResult);
+      setBenchmarkResult(benchmark);
+      setLiveSignal(currentSignalState(strategy, candles, fit.bestParams, effectiveDirection));
+    } catch (err) {
+      setError(err.message);
+      setDataMeta(qualityMetaFromError(err, market.exchange));
+      setAnalysisMarket(null);
+    } finally {
+      setOptimizing(false);
+    }
+  }
+
+  // Same idea as handleFitBest but across every strategy in the registry,
+  // then re-runs the "all strategies" comparison using each strategy's
+  // fitted params instead of its shipped defaults.
+  async function handleFitAllBest() {
+    setOptimizingAll(true);
+    setError(null);
+    try {
+      const candles = await fetchCandles();
+      if (candles.length < 30) throw new Error(t("bt.noData"));
+      updateFromCandles(candles);
+      setDataMeta(candles.meta || null);
+      setAnalysisMarket(snapshotMarket(market));
+      const fits = optimizeAllStrategies({
+        strategies: STRATEGIES,
+        candles,
+        direction: effectiveDirection,
+        leverage: effectiveLeverage,
+        feePercent: Number(fee),
+        riskParams: riskEnabled && !autoFit ? riskParams : null,
+      });
+      const paramsByKey = {};
+      let improvedCount = 0;
+      for (const [key, fit] of Object.entries(fits)) {
+        paramsByKey[key] = fit.bestParams;
+        if (fit.improved) improvedCount++;
+      }
+      setFitAllParams(paramsByKey);
+      setFitAllInfo({ strategyCount: Object.keys(fits).length, improvedCount });
+      const fittedStrategies = Object.fromEntries(
+        Object.entries(STRATEGIES).map(([key, s]) => [key, paramsByKey[key] ? { ...s, params: paramsByKey[key] } : s])
+      );
+      setAggregate(
+        runAllStrategies({
+          candles,
+          strategies: fittedStrategies,
+          feePercent: Number(fee),
+          leverage: effectiveLeverage,
+          direction: effectiveDirection,
+          riskParams: riskEnabled && !autoFit ? riskParams : null,
+        })
+      );
+    } catch (err) {
+      setError(err.message);
+      setDataMeta(qualityMetaFromError(err, market.exchange));
+      setAnalysisMarket(null);
+    } finally {
+      setOptimizingAll(false);
+    }
+  }
+
+  // Hand the currently configured (or just-fitted) strategy off to the
+  // Decision Center so it can be weighed alongside the built-in analysis
+  // instead of only living in this page's historical view.
+  function handleSendToDecisionCenter() {
+    setImportedStrategy({
+      strategyKey,
+      params,
+      direction: effectiveDirection,
+      leverage: effectiveLeverage,
+      marketType: market.marketType,
+      label: pick(lang, strategy.label),
+      savedAt: Date.now(),
+    });
+    setImportedNotice(true);
+    setTimeout(() => setImportedNotice(false), 4000);
+  }
+
   async function handleRunAll() {
     setLoadingAll(true);
     setError(null);
+    setFitAllParams(null);
+    setFitAllInfo(null);
     try {
       const candles = await fetchCandles();
       if (candles.length < 30) throw new Error(t("bt.noData"));
@@ -231,6 +396,35 @@ export default function Backtest() {
               <span>{coin.name}</span>
             </div>
           </div>
+          {!market.isForex && (
+            <div className="control-group control-group--full">
+              <label>
+                {t("bt.marketType")}
+                <InfoTip term="glossary.btMarketType" />
+              </label>
+              {isBinanceFamily ? (
+                <>
+                  <div className="chip-toggle-group">
+                    {MARKET_TYPES.map((mt) => (
+                      <button
+                        type="button"
+                        key={mt}
+                        className={`chip-toggle${market.marketType === mt ? " is-active" : ""}`}
+                        onClick={() => selectMarketType(mt)}
+                      >
+                        {mt}
+                      </button>
+                    ))}
+                  </div>
+                  <small className="control-hint">
+                    {market.marketType === "Spot" ? t("bt.marketType.spotHint") : t("bt.marketType.futuresHint")}
+                  </small>
+                </>
+              ) : (
+                <small className="control-hint">{t("bt.marketType.binanceOnly")}</small>
+              )}
+            </div>
+          )}
           <div className="control-group control-group--wide">
             <label>{t("bt.strategy")}</label>
             <select value={strategyKey} onChange={(e) => handleStrategyChange(e.target.value)}>
@@ -393,12 +587,47 @@ export default function Backtest() {
         </ControlsSection>
 
         <ControlsSection id="run" title={t("bt.section.run")} collapsed={false} onToggle={null}>
-          <button className="run-btn" onClick={handleRun} disabled={loading || loadingAll}>
-            {loading ? t("bt.running") : t("bt.run")}
-          </button>
-          <button className="run-btn run-btn--ghost" onClick={handleRunAll} disabled={loading || loadingAll}>
-            {loadingAll ? t("bt.runningAll") : t("bt.runAll")}
-          </button>
+          <div className="run-btn-row">
+            <button className="run-btn" onClick={handleRun} disabled={loading || loadingAll || optimizing || optimizingAll}>
+              {loading ? t("bt.running") : t("bt.run")}
+            </button>
+            <button
+              className="run-btn run-btn--ghost"
+              onClick={handleFitBest}
+              disabled={loading || loadingAll || optimizing || optimizingAll}
+              title={t("bt.fit.hint")}
+            >
+              {optimizing ? t("bt.fit.running") : t("bt.fit")}
+            </button>
+          </div>
+          <div className="run-btn-row">
+            <button className="run-btn run-btn--ghost" onClick={handleRunAll} disabled={loading || loadingAll || optimizing || optimizingAll}>
+              {loadingAll ? t("bt.runningAll") : t("bt.runAll")}
+            </button>
+            <button
+              className="run-btn run-btn--ghost"
+              onClick={handleFitAllBest}
+              disabled={loading || loadingAll || optimizing || optimizingAll}
+              title={t("bt.fitAll.hint")}
+            >
+              {optimizingAll ? t("bt.fitAll.running") : t("bt.fitAll")}
+            </button>
+          </div>
+          {fitInfo && !fitInfo.unavailable && (
+            <small className="control-hint control-hint--accent">
+              {t("bt.fit.result", {
+                n: fitInfo.testedCount,
+                from: fitInfo.baselineReturn.toFixed(1),
+                to: fitInfo.bestReturn.toFixed(1),
+              })}
+            </small>
+          )}
+          {fitInfo?.unavailable && <small className="control-hint">{t("bt.fit.unavailable")}</small>}
+          {fitAllInfo && (
+            <small className="control-hint control-hint--accent">
+              {t("bt.fitAll.result", { improved: fitAllInfo.improvedCount, total: fitAllInfo.strategyCount })}
+            </small>
+          )}
         </ControlsSection>
 
         <ControlsSection
@@ -423,6 +652,15 @@ export default function Backtest() {
       {result && (
         <div className="backtest-results">
           <ReportActions report={report} type="backtest" symbol={coin.symbol} />
+          {liveSignal && <LiveSignalCard liveSignal={liveSignal} direction={effectiveDirection} t={t} locale={locale} />}
+          <div className="glass-card decision-handoff reveal">
+            <div className="panel-header"><h2>{t("bt.handoff.title")}</h2></div>
+            <p className="section-note">{t("bt.handoff.body")}</p>
+            <button className="run-btn run-btn--ghost" onClick={handleSendToDecisionCenter}>
+              {t("bt.handoff.button")}
+            </button>
+            {importedNotice && <small className="control-hint control-hint--accent">{t("bt.handoff.sent")}</small>}
+          </div>
           <div className="stats-grid">
             <Stat label={t("bt.stat.return")} value={result.totalReturnPercent} suffix="%" tone={result.totalReturnPercent >= 0 ? "up" : "down"} />
             <Stat label={t("bt.stat.bench")} value={result.benchmarkReturnPercent} suffix="%" tone={result.benchmarkReturnPercent >= 0 ? "up" : "down"} tip="glossary.benchmark" />
@@ -515,13 +753,14 @@ export default function Backtest() {
           analysisMarket={analysisMarket}
           market={market}
           onInspect={handleInspectStrategy}
+          fitAllParams={fitAllParams}
         />
       )}
     </div>
   );
 }
 
-function AggregateResults({ aggregate, t, lang, dataMeta, analysisMarket, market, onInspect }) {
+function AggregateResults({ aggregate, t, lang, dataMeta, analysisMarket, market, onInspect, fitAllParams }) {
   const { rows, summary, benchmark, aggregate: ensemble } = aggregate;
   const fmt = (v, d = 1) => (Number.isFinite(v) ? v.toFixed(d) : "-");
   const signed = (v, d = 1) => (Number.isFinite(v) ? `${v >= 0 ? "+" : ""}${v.toFixed(d)}` : "-");
@@ -634,6 +873,7 @@ function AggregateResults({ aggregate, t, lang, dataMeta, analysisMarket, market
                   <td className="agg-table__name">
                     <span className="agg-name">{pick(lang, row.label)}</span>
                     <small>{t(`cat.${row.category}`)}</small>
+                    {fitAllParams?.[row.key] && <small className="control-hint control-hint--accent">{t("bt.agg.fitted")}</small>}
                   </td>
                   <td className={`num ${row.result.totalReturnPercent >= 0 ? "up" : "down"}`}>{signed(row.result.totalReturnPercent)}%</td>
                   <td className={`num ${row.excessReturn >= 0 ? "up" : "down"}`}>{signed(row.excessReturn)}%</td>
@@ -684,6 +924,33 @@ function ControlsSection({ id, title, badge, collapsed, onToggle, children }) {
         </div>
       )}
       {!collapsed && <div className="controls-section__body">{children}</div>}
+    </div>
+  );
+}
+
+// Shows where the strategy stands on the most recent candle, distinct from
+// the historical equity curve above — answers "is this rule saying to be
+// in a position right now, and since when" rather than only "how did it do
+// in the past". Still not a forward guarantee: it's the mechanical output
+// of the same deterministic rule, evaluated on the latest data point.
+function LiveSignalCard({ liveSignal, direction, t, locale }) {
+  const { state, barsInState, changedAtTime, lastCandleTime } = liveSignal;
+  const changedDate = changedAtTime ? new Date(changedAtTime * 1000).toLocaleString(locale) : null;
+  const asOfDate = lastCandleTime ? new Date(lastCandleTime * 1000).toLocaleString(locale) : null;
+  return (
+    <div className={`glass-card live-signal-card reveal live-signal-card--${state}`}>
+      <div className="panel-header"><h2>{t("bt.live.title")}</h2></div>
+      <p className="section-note">{t("bt.live.note")}</p>
+      <div className="live-signal-state">
+        <span className={`side-badge side-badge--${state === "short" ? "short" : state === "long" ? "long" : "flat"}`}>
+          {t(`bt.live.state.${state}`)}
+        </span>
+        {state !== "flat" && (
+          <span className="control-hint">{t("bt.live.since", { n: barsInState, date: changedDate || "-" })}</span>
+        )}
+      </div>
+      <small className="control-hint">{t("bt.live.asOf", { date: asOfDate || "-" })}</small>
+      {direction === "long" && state === "flat" && <small className="control-hint">{t("bt.live.longOnlyFlat")}</small>}
     </div>
   );
 }

@@ -2070,6 +2070,35 @@
   background: rgba(239, 68, 68, 0.14);
   color: #f87171;
 }
+.side-badge--flat {
+  background: rgba(148, 163, 184, 0.16);
+  color: var(--text-secondary);
+}
+.run-btn-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.live-signal-card {
+  border-left: 3px solid var(--border-strong);
+}
+.live-signal-card--long {
+  border-left-color: #4ade80;
+}
+.live-signal-card--short {
+  border-left-color: #f87171;
+}
+.live-signal-state {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 6px 0;
+}
+.imported-strategy-banner {
+  border-left: 3px solid var(--gold, #d4af37);
+}
 .risk-badge {
   display: inline-flex;
   align-items: center;

@@ -555,6 +555,33 @@ export function combineDirectionalSignals(strategy, candles, params, direction =
   });
 }
 
+/**
+ * Describe where a strategy's signal stands *right now*, on the most
+ * recent candle, rather than only summarizing its past performance.
+ * This is what lets a user answer "given this strategy, should I be in a
+ * position today?" instead of only "how would this strategy have done
+ * historically?" — the backtest equity curve alone doesn't answer that.
+ *
+ * Returns null if there isn't enough data to produce a signal at all.
+ */
+export function currentSignalState(strategy, candles, params, direction = "long") {
+  if (!candles || candles.length < 2) return null;
+  const positions = combineDirectionalSignals(strategy, candles, params, direction);
+  const last = positions[positions.length - 1];
+  const state = last === 1 ? "long" : last === -1 ? "short" : "flat";
+
+  let changedAtIndex = positions.length - 1;
+  for (let i = positions.length - 2; i >= 0; i--) {
+    if (positions[i] !== last) break;
+    changedAtIndex = i;
+  }
+  const barsInState = positions.length - changedAtIndex;
+  const changedAtTime = candles[changedAtIndex]?.time ?? null;
+  const lastCandleTime = candles[candles.length - 1]?.time ?? null;
+
+  return { state, barsInState, changedAtTime, lastCandleTime, lastClose: candles[candles.length - 1]?.close ?? null };
+}
+
 // Bilingual labels for tunable parameters.
 export const PARAM_LABELS = {
   fastPeriod: { en: "Fast period", fa: "دوره سریع" },
