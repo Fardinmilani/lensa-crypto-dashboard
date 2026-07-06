@@ -303,18 +303,36 @@ export default function Backtest() {
   // Hand the currently configured (or just-fitted) strategy off to the
   // Decision Center so it can be weighed alongside the built-in analysis
   // instead of only living in this page's historical view.
-  function handleSendToDecisionCenter() {
-    setImportedStrategy({
+  function buildStrategyPayload() {
+    return {
       strategyKey,
       params,
       direction: effectiveDirection,
       leverage: effectiveLeverage,
       marketType: market.marketType,
+      pair: market.pair,
+      exchange: market.exchange,
+      fee: Number(fee),
+      riskParams,
       label: pick(lang, strategy.label),
       savedAt: Date.now(),
-    });
+    };
+  }
+
+  function handleSendToDecisionCenter() {
+    setImportedStrategy(buildStrategyPayload());
     setImportedNotice(true);
     setTimeout(() => setImportedNotice(false), 4000);
+  }
+
+  function handleExportStrategy() {
+    const blob = new Blob([JSON.stringify(buildStrategyPayload(), null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `lensa-strategy-${strategyKey}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
   }
 
   async function handleRunAll() {
@@ -658,6 +676,9 @@ export default function Backtest() {
             <p className="section-note">{t("bt.handoff.body")}</p>
             <button className="run-btn run-btn--ghost" onClick={handleSendToDecisionCenter}>
               {t("bt.handoff.button")}
+            </button>
+            <button className="run-btn run-btn--ghost" onClick={handleExportStrategy}>
+              {t("bt.handoff.export")}
             </button>
             {importedNotice && <small className="control-hint control-hint--accent">{t("bt.handoff.sent")}</small>}
           </div>

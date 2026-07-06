@@ -2096,8 +2096,13 @@
   flex-wrap: wrap;
   margin: 6px 0;
 }
-.imported-strategy-banner {
-  border-left: 3px solid var(--gold, #d4af37);
+.imported-strategy-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 4px;
+  margin-bottom: 4px;
 }
 .backtest-config-summary {
   display: flex;

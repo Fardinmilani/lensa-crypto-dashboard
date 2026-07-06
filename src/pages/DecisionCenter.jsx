@@ -211,6 +211,8 @@ export default function DecisionCenter() {
   const [note, setNote] = useState("");
   const [alertPrice, setAlertPrice] = useState("");
   const [importedStrategy, setImportedStrategy] = useLocalStorageState(IMPORTED_STRATEGY_KEY, null);
+  const [importNotice, setImportNotice] = useState(null); // { ok: bool, msg }
+  const importFileRef = useRef(null);
   const watchCache = useRef(new Map());
   const lastLang = useRef(lang);
   const reveal = useStaggerReveal([decision, error]);
@@ -298,6 +300,31 @@ export default function DecisionCenter() {
     () => alerts.filter((item) => item.contextKey === contextKey(market)).slice(0, 6),
     [alerts, market]
   );
+
+  function exportImportedStrategy() {
+    if (!importedStrategy) return;
+    const blob = new Blob([JSON.stringify(importedStrategy, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `lensa-strategy-${importedStrategy.strategyKey || "export"}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function importStrategyFile(file) {
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      if (!parsed?.strategyKey || !STRATEGIES[parsed.strategyKey]) throw new Error("invalid");
+      setImportedStrategy({ ...parsed, savedAt: Date.now() });
+      setImportNotice({ ok: true, msg: t("decision.imported.importSuccess") });
+    } catch {
+      setImportNotice({ ok: false, msg: t("decision.imported.importError") });
+    }
+    setTimeout(() => setImportNotice(null), 4000);
+  }
 
   function updateRisk(key, value) {
     setRiskInputs((prev) => ({ ...prev, [key]: Number(value) }));
@@ -487,29 +514,34 @@ export default function DecisionCenter() {
         </div>
       )}
 
-      {importedStrategy?.strategyKey && (
-        <div className="glass-card imported-strategy-banner reveal">
-          <div className="panel-header"><h2>{t("decision.imported.title")}</h2></div>
-          <p className="section-note">
-            {t("decision.imported.body", { label: importedStrategy.label || importedStrategy.strategyKey })}
-          </p>
-          {decision?.imported && (
-            <div className="live-signal-state">
-              <span className={`side-badge side-badge--${decision.imported.live?.state === "short" ? "short" : decision.imported.live?.state === "long" ? "long" : "flat"}`}>
-                {t(`bt.live.state.${decision.imported.live?.state || "flat"}`)}
+      <div className="imported-strategy-strip reveal">
+        {importedStrategy?.strategyKey ? (
+          <>
+            <span className="config-chip config-chip--strategy">
+              {t("decision.imported.title")}: {importedStrategy.label || importedStrategy.strategyKey}
+            </span>
+            {decision?.imported?.marketMismatch && (
+              <span className="config-chip config-chip--risk">
+                {t("decision.imported.marketMismatch", { pair: decision.imported.savedPair, exchange: decision.imported.savedExchange })}
               </span>
-              <span className="control-hint">
-                {t("decision.imported.stats", {
-                  trades: decision.imported.result.tradeCount,
-                  ret: Math.round(decision.imported.result.totalReturnPercent || 0),
-                })}
-              </span>
-            </div>
-          )}
-          <button className="run-btn run-btn--ghost" onClick={() => setImportedStrategy(null)}>
-            {t("decision.imported.clear")}
-          </button>
-        </div>
+            )}
+            <button className="mini-icon-btn" onClick={exportImportedStrategy} title={t("decision.imported.export")}>{t("decision.imported.export")}</button>
+            <button className="mini-icon-btn mini-icon-btn--danger" onClick={() => setImportedStrategy(null)}>{t("decision.imported.clear")}</button>
+          </>
+        ) : (
+          <span className="control-hint">{t("decision.imported.none")}</span>
+        )}
+        <button className="mini-icon-btn" onClick={() => importFileRef.current?.click()}>{t("decision.imported.import")}</button>
+        <input
+          ref={importFileRef}
+          type="file"
+          accept="application/json"
+          style={{ display: "none" }}
+          onChange={(e) => { importStrategyFile(e.target.files?.[0]); e.target.value = ""; }}
+        />
+      </div>
+      {importNotice && (
+        <small className={`control-hint ${importNotice.ok ? "control-hint--accent" : ""}`}>{importNotice.msg}</small>
       )}
 
       {error && <p className="news-error reveal">{error}</p>}
@@ -603,13 +635,32 @@ function evaluateImportedStrategy(candles, market, importedStrategy) {
   const direction = importedStrategy.direction || "long";
   const leverage = importedStrategy.leverage || 1;
   const params = importedStrategy.params || strategy.params;
+  const feePercent = importedStrategy.fee ?? 0.1;
+  const riskParams = importedStrategy.riskParams || null;
   try {
     const signals = combineDirectionalSignals(strategy, candles, params, direction);
     const result = leverage > 1 || direction !== "long"
-      ? runLeveragedBacktest({ candles, signals, feePercent: 0.1, leverage })
-      : runBacktest({ candles, signals, feePercent: 0.1 });
+      ? runLeveragedBacktest({ candles, signals, feePercent, leverage, riskParams })
+      : runBacktest({ candles, signals, feePercent, riskParams });
     const live = currentSignalState(strategy, candles, params, direction);
-    return { strategyKey: importedStrategy.strategyKey, label: importedStrategy.label, params, direction, leverage, result, live };
+    const marketMismatch = Boolean(
+      importedStrategy.pair && importedStrategy.exchange &&
+      (importedStrategy.pair !== market.pair || importedStrategy.exchange !== market.exchange)
+    );
+    return {
+      strategyKey: importedStrategy.strategyKey,
+      label: importedStrategy.label,
+      params,
+      direction,
+      leverage,
+      feePercent,
+      riskParams,
+      result,
+      live,
+      marketMismatch,
+      savedPair: importedStrategy.pair,
+      savedExchange: importedStrategy.exchange,
+    };
   } catch {
     return null;
   }
@@ -650,66 +701,102 @@ function analyzeDecision(candles, meta, market, t, importedStrategy) {
   const mtfLong = hFast > hSlow;
   const mtfShort = hFast < hSlow;
 
-  const longSetup = buildSetup({
-    side: "Long",
-    t,
-    lastPrice: last.close,
-    lastCandleTime: last.time || last.timestamp || null,
-    atr,
-    precision,
-    mc,
-    qualityFactor,
-    facts: {
-      trendOk: trendLong,
-      momentumOk: momentumLong,
-      rsiOk: rsiLong,
-      rsiExtreme: r >= 74,
-      opposingTrend: trendShort,
-      qualityWeak: qualityFactor < 0.75,
-      volumeOk: volumeSupports,
-      mtfOk: mtfLong,
-      spotShort: false,
-    },
-  });
-  const shortSetup = buildSetup({
-    side: "Short",
-    t,
-    lastPrice: last.close,
-    atr,
-    precision,
-    mc,
-    qualityFactor,
-    facts: {
-      trendOk: trendShort,
-      momentumOk: momentumShort,
-      rsiOk: rsiShort,
-      rsiExtreme: r <= 26,
-      opposingTrend: trendLong,
-      qualityWeak: qualityFactor < 0.75,
-      volumeOk: volumeSupports,
-      mtfOk: mtfShort,
-      spotShort: market.marketType === "Spot",
-    },
-  });
-
-  const finalDecision = chooseFinalDecision(longSetup, shortSetup, qualityFactor);
-  const selected = finalDecision === "Long" ? longSetup : finalDecision === "Short" ? shortSetup : longSetup.score >= shortSetup.score ? longSetup : shortSetup;
   const imported = evaluateImportedStrategy(candles, market, importedStrategy);
-  const tests = buildTestSuite({
-    trendLong, trendShort, momentumLong, momentumShort, r, hist, prevHist,
-    atrPct, volumeSupports, volumeFades, currentVolume, avgVolume, mtfLong, mtfShort,
-    mc, backtest, qualityFactor, meta, longSetup, shortSetup, t, imported,
-  });
+  const effectiveBacktest = imported ? mapImportedResultToBacktestShape(imported.result, t) : backtest;
+
+  let longSetup, shortSetup, finalDecision, tests, mainReason, mainReasons, changeDecisionText;
+
+  if (imported) {
+    longSetup = buildImportedSetup({ side: "Long", imported, atr, precision, mc, qualityFactor, t });
+    shortSetup = buildImportedSetup({ side: "Short", imported, atr, precision, mc, qualityFactor, t });
+    finalDecision =
+      qualityFactor < 0.55
+        ? "No Trade"
+        : imported.live?.state === "long"
+        ? "Long"
+        : imported.live?.state === "short"
+        ? "Short"
+        : "Wait";
+    tests = buildImportedTestSuite({ imported, qualityFactor, meta, t });
+    const activeSetup = finalDecision === "Long" ? longSetup : finalDecision === "Short" ? shortSetup : null;
+    mainReason = activeSetup
+      ? activeSetup.reasonsFor[0]
+      : tr(t, "decision.imported.waitMain", { label: imported.label || imported.strategyKey }, `${imported.label || imported.strategyKey} has no active signal right now.`);
+    mainReasons = [
+      mainReason,
+      tests.signal.impact,
+      tests.performance.impact,
+      tests.dataQuality.impact,
+    ].filter(Boolean);
+    changeDecisionText = tr(
+      t,
+      "decision.imported.whatChanges",
+      { label: imported.label || imported.strategyKey },
+      `Watch this exact strategy for its next signal flip — that's what would change this call, not the generic trend/momentum reading.`
+    );
+  } else {
+    longSetup = buildSetup({
+      side: "Long",
+      t,
+      lastPrice: last.close,
+      lastCandleTime: last.time || last.timestamp || null,
+      atr,
+      precision,
+      mc,
+      qualityFactor,
+      facts: {
+        trendOk: trendLong,
+        momentumOk: momentumLong,
+        rsiOk: rsiLong,
+        rsiExtreme: r >= 74,
+        opposingTrend: trendShort,
+        qualityWeak: qualityFactor < 0.75,
+        volumeOk: volumeSupports,
+        mtfOk: mtfLong,
+        spotShort: false,
+      },
+    });
+    shortSetup = buildSetup({
+      side: "Short",
+      t,
+      lastPrice: last.close,
+      atr,
+      precision,
+      mc,
+      qualityFactor,
+      facts: {
+        trendOk: trendShort,
+        momentumOk: momentumShort,
+        rsiOk: rsiShort,
+        rsiExtreme: r <= 26,
+        opposingTrend: trendLong,
+        qualityWeak: qualityFactor < 0.75,
+        volumeOk: volumeSupports,
+        mtfOk: mtfShort,
+        spotShort: market.marketType === "Spot",
+      },
+    });
+    finalDecision = chooseFinalDecision(longSetup, shortSetup, qualityFactor);
+    tests = buildTestSuite({
+      trendLong, trendShort, momentumLong, momentumShort, r, hist, prevHist,
+      atrPct, volumeSupports, volumeFades, currentVolume, avgVolume, mtfLong, mtfShort,
+      mc, backtest, qualityFactor, meta, longSetup, shortSetup, t,
+    });
+  }
+
+  const selected = finalDecision === "Long" ? longSetup : finalDecision === "Short" ? shortSetup : longSetup.score >= shortSetup.score ? longSetup : shortSetup;
   const dataQualityScore = Math.round(Math.max(0, Math.min(100, qualityFactor * 100)));
-  const riskScore = riskScoreFrom({ atrPct, selected, qualityFactor, backtest });
+  const riskScore = riskScoreFrom({ atrPct, selected, qualityFactor, backtest: effectiveBacktest });
   const riskLevel = riskLevelFrom({ atr, price: last.close, qualityFactor, selected });
-  const confidence = aggregateConfidence({ longSetup, shortSetup, tests, qualityFactor, backtest });
-  const mainReason =
-    finalDecision === "No Trade"
-      ? tr(t, "decision.reason.noTradeMain", undefined, "Data quality or setup quality is not strong enough for a trade recommendation.")
-      : selected.reasonsFor[0] || tr(t, "decision.reason.noDominantEdge", undefined, "No dominant directional edge.");
+  const confidence = aggregateConfidence({ longSetup, shortSetup, tests, qualityFactor, backtest: effectiveBacktest });
+  if (!imported) {
+    mainReason =
+      finalDecision === "No Trade"
+        ? tr(t, "decision.reason.noTradeMain", undefined, "Data quality or setup quality is not strong enough for a trade recommendation.")
+        : selected.reasonsFor[0] || tr(t, "decision.reason.noDominantEdge", undefined, "No dominant directional edge.");
+  }
   const simulationCards = buildSimulationCards(mc, precision, t);
-  const mainReasons = aggregateReasons({ tests, selected, finalDecision, t });
+  if (!imported) mainReasons = aggregateReasons({ tests, selected, finalDecision, t });
 
   return {
     finalDecision,
@@ -721,9 +808,10 @@ function analyzeDecision(candles, meta, market, t, importedStrategy) {
     confidence,
     mainReason,
     mainReasons,
-    changeDecision: whatWouldChangeDecision({ finalDecision, longSetup, shortSetup, tests, t }),
+    changeDecision: imported ? changeDecisionText : whatWouldChangeDecision({ finalDecision, longSetup, shortSetup, tests, t }),
     conditionRequired: selected.conditionRequired,
     scenarioInvalidation: selected.invalidation,
+
     lastPrice: last.close,
     lastCandleTime: last.time,
     atr,
@@ -731,7 +819,7 @@ function analyzeDecision(candles, meta, market, t, importedStrategy) {
     tests,
     mc,
     simulationCards,
-    backtest,
+    backtest: effectiveBacktest,
     sourceLabel: meta?.sourceLabel || market.exchange,
     status: meta?.status || market.dataSourceStatus,
     longSetup,
@@ -818,8 +906,134 @@ function buildSetup({ side, lastPrice, atr, precision, mc, qualityFactor, facts,
     conditionRequired: conditionFor({ side, status, facts, entryLow, entryHigh, precision, t }),
   };
 }
+// Builds a setup object for one side (Long or Short) driven entirely by
+// the imported strategy's own signal and its real backtest stats — same
+// shape buildSetup() returns, so SetupCard / RiskEnginePanel (entry zone,
+// stop, targets, R:R, position sizing) work unchanged. This is what
+// answers "what price do I enter at, where's my stop, what's the target"
+// for the specific imported strategy instead of the generic ensemble.
+function buildImportedSetup({ side, imported, atr, mc, qualityFactor, t }) {
+  const direction = side === "Long" ? 1 : -1;
+  const lastPrice = imported.live?.lastClose ?? 0;
+  const activeSide = imported.live?.state === "long" ? "Long" : imported.live?.state === "short" ? "Short" : null;
+  const isActive = side === activeSide;
+  const { result, riskParams } = imported;
 
-function buildTestSuite({ trendLong, trendShort, momentumLong, momentumShort, r, hist, prevHist, atrPct, volumeSupports, volumeFades, currentVolume, avgVolume, mtfLong, mtfShort, mc, backtest, qualityFactor, meta, longSetup, shortSetup, t, imported }) {
+  const slPct = riskParams?.stopLossPercent;
+  const tpPct = riskParams?.takeProfitPercent;
+  const stop = slPct != null ? lastPrice * (1 - (slPct / 100) * direction) : lastPrice - direction * atr * 1.35;
+  const target1 = tpPct != null ? lastPrice * (1 + (tpPct / 100) * direction) : lastPrice + direction * atr * 2.0;
+  const target2 = tpPct != null ? lastPrice * (1 + ((tpPct * 1.6) / 100) * direction) : lastPrice + direction * atr * 3.2;
+  const entryLow = lastPrice - atr * 0.15;
+  const entryHigh = lastPrice + atr * 0.15;
+  const invalidation = stop;
+  const risk = Math.abs(lastPrice - stop);
+  const reward = Math.abs(target1 - lastPrice);
+  const rr = risk > 0 ? reward / risk : 0;
+  const pTarget = mc?.error ? null : touchProbability(mc, target1, side === "Long" ? "up" : "down");
+  const pStop = mc?.error ? null : touchProbability(mc, stop, side === "Long" ? "down" : "up");
+  const firstTouch = mc?.error ? null : firstTouchProbabilities(mc, { target: target1, stop, side });
+  const pTargetBeforeStop = firstTouch?.targetBeforeStop ?? null;
+  const pStopBeforeTarget = firstTouch?.stopBeforeTarget ?? null;
+  const pWin = pTargetBeforeStop ?? pTarget;
+  const pLoss = pStopBeforeTarget ?? pStop;
+  const ev = pWin != null && pLoss != null ? pWin * rr - pLoss : null;
+
+  const label = imported.label || imported.strategyKey;
+  const sideLabel = decisionTerm(t, side);
+  const winRate = Math.round(result.winRate || 0);
+  const pf = Number.isFinite(result.profitFactor) ? formatPrice(result.profitFactor, {}, { mode: "display" }) : "∞";
+
+  const reasonsFor = [];
+  const reasonsAgainst = [];
+  if (isActive) {
+    reasonsFor.push(tr(t, "decision.imported.reason.active", { label, side: sideLabel, n: imported.live.barsInState }, `${label} currently signals ${side} (for ${imported.live.barsInState} candles).`));
+    reasonsFor.push(tr(t, "decision.imported.reason.stats", { trades: result.tradeCount, winRate, pf }, `Backtest: ${result.tradeCount} trades, ${winRate}% win rate, profit factor ${pf}.`));
+    if (result.profitFactor < 1) reasonsAgainst.push(tr(t, "decision.imported.reason.weakPf", undefined, "This strategy's historical profit factor is below 1 over the tested window."));
+    if (result.tradeCount < 8) reasonsAgainst.push(tr(t, "decision.imported.reason.smallSample", undefined, "Few historical trades — treat the win rate/profit factor with caution."));
+  } else {
+    reasonsAgainst.push(tr(t, "decision.imported.reason.inactive", { label, active: activeSide ? decisionTerm(t, activeSide) : tr(t, "decision.term.flat", undefined, "Flat") }, `${label} is not signaling ${side} right now (currently ${activeSide ? activeSide : "Flat"}).`));
+  }
+  if (riskParams?.stopLossPercent != null || riskParams?.takeProfitPercent != null) {
+    reasonsFor.push(tr(t, "decision.imported.reason.riskConfigured", undefined, "Stop-loss/take-profit are taken from this strategy's own saved risk settings, not a generic estimate."));
+  }
+
+  const statScore = Math.max(
+    0,
+    Math.min(
+      100,
+      Math.round(
+        Math.min(45, winRate * 0.45) +
+          (Number.isFinite(result.profitFactor) ? Math.min(35, result.profitFactor * 18) : result.profitFactor === Infinity ? 35 : 0) +
+          Math.min(20, Math.max(0, rr) * 10)
+      )
+    )
+  );
+  const score = Math.round((isActive ? statScore : Math.max(0, statScore - 35)) * qualityFactor);
+  const status = score >= 70 ? "Accepted" : score >= 48 ? "Conditional" : "Rejected";
+
+  return {
+    side,
+    entryLow,
+    entryHigh,
+    entryMid: lastPrice,
+    atr,
+    stop,
+    target1,
+    target2,
+    riskReward: rr,
+    expectedValue: ev,
+    pTarget,
+    pStop,
+    pTargetBeforeStop,
+    pStopBeforeTarget,
+    score,
+    status,
+    reasonsFor,
+    reasonsAgainst,
+    invalidation,
+    conditionRequired: isActive
+      ? tr(t, "decision.imported.condition.active", { label }, `${label}'s signal is active now — this strategy's own rule is what determines entry, not a generic zone.`)
+      : tr(t, "decision.imported.condition.wait", { label, side: sideLabel }, `Wait for ${label} to signal ${side} before considering this side.`),
+  };
+}
+
+// Replaces the generic trend/momentum/RSI/MTF test grid with rows that
+// describe the imported strategy's own signal and real historical
+// performance — so the tests grid tells the truth about what's actually
+// driving the call instead of implying indicators this strategy doesn't use.
+function buildImportedTestSuite({ imported, qualityFactor, meta, t }) {
+  const { result, live, label, riskParams } = imported;
+  const stateWord = live?.state === "long" ? "Long" : live?.state === "short" ? "Short" : "Flat";
+  const winRate = Math.round(result.winRate || 0);
+  const pf = Number.isFinite(result.profitFactor) ? formatPrice(result.profitFactor, {}, { mode: "display" }) : "∞";
+  return {
+    signal: {
+      score: live?.state === "flat" ? 45 : 65,
+      summary: tr(t, "decision.imported.test.signal.summary", { label: label || imported.strategyKey, state: decisionTerm(t, stateWord) }, `${label || imported.strategyKey} signals ${stateWord}`),
+      impact: tr(t, "decision.imported.test.signal.impact", { n: live?.barsInState ?? 0 }, `Active for ${live?.barsInState ?? 0} candles since the last flip.`),
+    },
+    performance: {
+      score: result.tradeCount < 8 ? 40 : result.profitFactor > 1.5 ? 78 : result.profitFactor > 1 ? 58 : 30,
+      summary: tr(t, "decision.imported.test.perf.summary", { trades: result.tradeCount, winRate, pf }, `${result.tradeCount} trades, ${winRate}% win rate, profit factor ${pf}`),
+      impact: tr(t, "decision.imported.test.perf.impact", { dd: Math.round(result.maxDrawdownPercent || 0) }, `Max drawdown over this window: ${Math.round(result.maxDrawdownPercent || 0)}%.`),
+    },
+    riskExits: {
+      score: riskParams?.stopLossPercent != null ? 70 : 45,
+      summary: riskParams?.stopLossPercent != null
+        ? tr(t, "decision.imported.test.risk.configured", { sl: riskParams.stopLossPercent, tp: riskParams.takeProfitPercent ?? "-" }, `Stop-loss ${riskParams.stopLossPercent}%, take-profit ${riskParams.takeProfitPercent ?? "-"}%`)
+        : tr(t, "decision.imported.test.risk.none", undefined, "No stop-loss/take-profit saved — exits rely on the signal flipping."),
+      impact: tr(t, "decision.imported.test.risk.impact", undefined, "This comes from the exact settings saved from the Backtest page, not a generic estimate."),
+    },
+    dataQuality: {
+      score: Math.round(qualityFactor * 100),
+      summary: meta?.quality?.status || meta?.status || "Limited",
+      impact: qualityFactor < 0.75 ? tr(t, "decision.test.quality.capped", undefined, "Decision confidence is capped by data quality.") : tr(t, "decision.test.quality.acceptable", undefined, "Data quality is acceptable."),
+    },
+  };
+}
+
+function buildTestSuite({ trendLong, trendShort, momentumLong, momentumShort, r, hist, prevHist, atrPct, volumeSupports, volumeFades, currentVolume, avgVolume, mtfLong, mtfShort, mc, backtest, qualityFactor, meta, longSetup, shortSetup, t }) {
   const suite = {
     trend: {
       score: trendLong ? 75 : trendShort ? 25 : 50,
@@ -873,25 +1087,6 @@ function buildTestSuite({ trendLong, trendShort, momentumLong, momentumShort, r,
       impact: qualityFactor < 0.75 ? tr(t, "decision.test.quality.capped", undefined, "Decision confidence is capped by data quality.") : tr(t, "decision.test.quality.acceptable", undefined, "Data quality is acceptable."),
     },
   };
-  if (imported) {
-    const { result, live, label } = imported;
-    const stateWord = live?.state === "long" ? "Long" : live?.state === "short" ? "Short" : "Flat";
-    suite.importedStrategy = {
-      score: result.tradeCount < 5 ? 45 : result.profitFactor > 1.25 ? 68 : result.profitFactor < 0.9 ? 32 : 50,
-      summary: tr(
-        t,
-        "decision.test.imported.summary",
-        { label: label || imported.strategyKey, state: decisionTerm(t, stateWord) },
-        `${label || imported.strategyKey} currently signals ${stateWord}`
-      ),
-      impact: tr(
-        t,
-        "decision.test.imported.impact",
-        { trades: result.tradeCount, ret: Math.round(result.totalReturnPercent || 0) },
-        `Over this window: ${result.tradeCount} trades, ${Math.round(result.totalReturnPercent || 0)}% return.`
-      ),
-    };
-  }
   return suite;
 }
 
@@ -957,6 +1152,37 @@ function riskScoreFrom({ atrPct, selected, qualityFactor, backtest }) {
   if (qualityFactor < 0.75) score += 15;
   if (backtest.maxDrawdown > 12) score += 10;
   return Math.max(0, Math.min(100, Math.round(score)));
+}
+
+// Reshapes a real runBacktest()/runLeveragedBacktest() result (from the
+// imported strategy) into the same shape lightweightBacktest() produces,
+// so BacktestSummary / riskScoreFrom / aggregateConfidence can consume it
+// unchanged — but now reflecting the actual imported strategy's real
+// historical performance instead of a generic EMA9/21 crossover proxy.
+function mapImportedResultToBacktestShape(result, t) {
+  const trades = result.trades.map((trade) => ({
+    entryTime: trade.entryTime,
+    exitTime: trade.exitTime,
+    entryPrice: trade.entryPrice,
+    exitPrice: trade.exitPrice,
+    r: trade.pnlPercent,
+  }));
+  let losingStreak = 0;
+  let worstLosingStreak = 0;
+  for (const trade of trades) {
+    losingStreak = trade.r <= 0 ? losingStreak + 1 : 0;
+    worstLosingStreak = Math.max(worstLosingStreak, losingStreak);
+  }
+  return {
+    trades,
+    tradeCount: result.tradeCount,
+    winRate: result.winRate ?? 0,
+    profitFactor: Number.isFinite(result.profitFactor) ? result.profitFactor : result.profitFactor === Infinity ? Infinity : 0,
+    maxDrawdown: result.maxDrawdownPercent ?? 0,
+    averageR: trades.length ? mean(trades.map((t2) => t2.r)) / 100 : 0,
+    worstLosingStreak,
+    reliabilityWarning: trades.length < 8 ? tr(t, "decision.backtest.lowSample", undefined, "Low sample size: backtest is not statistically reliable.") : "",
+  };
 }
 
 function lightweightBacktest(candles, { feePercent = 0.08, slippagePercent = 0.05 } = {}) {
@@ -1538,6 +1764,9 @@ function labelize(key, t) {
     expectedValue: tr(t, "decision.metric.expectedValue", undefined, "Expected value"),
     dataQuality: tr(t, "decision.metric.dataQuality", undefined, "Data quality"),
     importedStrategy: tr(t, "decision.label.imported", undefined, "Imported backtest strategy"),
+    signal: tr(t, "decision.label.signal", undefined, "Current signal"),
+    performance: tr(t, "decision.label.performance", undefined, "Historical performance"),
+    riskExits: tr(t, "decision.label.riskExits", undefined, "Stop-loss / take-profit"),
   };
   if (labels[key]) return labels[key];
   return String(key)
