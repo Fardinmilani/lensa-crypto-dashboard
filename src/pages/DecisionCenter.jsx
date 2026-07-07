@@ -525,13 +525,13 @@ export default function DecisionCenter() {
                 {t("decision.imported.marketMismatch", { pair: decision.imported.savedPair, exchange: decision.imported.savedExchange })}
               </span>
             )}
-            <button className="mini-icon-btn" onClick={exportImportedStrategy} title={t("decision.imported.export")}>{t("decision.imported.export")}</button>
-            <button className="mini-icon-btn mini-icon-btn--danger" onClick={() => setImportedStrategy(null)}>{t("decision.imported.clear")}</button>
+            <button className="strip-btn" onClick={exportImportedStrategy} title={t("decision.imported.export")}>{t("decision.imported.export")}</button>
+            <button className="strip-btn strip-btn--danger" onClick={() => setImportedStrategy(null)}>{t("decision.imported.clear")}</button>
           </>
         ) : (
           <span className="control-hint">{t("decision.imported.none")}</span>
         )}
-        <button className="mini-icon-btn" onClick={() => importFileRef.current?.click()}>{t("decision.imported.import")}</button>
+        <button className="strip-btn" onClick={() => importFileRef.current?.click()}>{t("decision.imported.import")}</button>
         <input
           ref={importFileRef}
           type="file"

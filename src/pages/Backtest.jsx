@@ -743,19 +743,19 @@ export default function Backtest() {
                   <tbody>
                     {result.trades.map((tr, i) => (
                       <tr key={i}>
-                        <td className="num">{new Date(tr.entryTime * 1000).toLocaleDateString(locale)}</td>
-                        <td className="num">{new Date(tr.exitTime * 1000).toLocaleDateString(locale)}</td>
-                        <td className="num">{formatUsd(tr.entryPrice, market.precision, { mode: "trading" })}</td>
-                        <td className="num">{formatUsd(tr.exitPrice, market.precision, { mode: "trading" })}</td>
+                        <td className="num" data-label={t("bt.col.entry")}>{new Date(tr.entryTime * 1000).toLocaleDateString(locale)}</td>
+                        <td className="num" data-label={t("bt.col.exit")}>{new Date(tr.exitTime * 1000).toLocaleDateString(locale)}</td>
+                        <td className="num" data-label={t("bt.col.entryPrice")}>{formatUsd(tr.entryPrice, market.precision, { mode: "trading" })}</td>
+                        <td className="num" data-label={t("bt.col.exitPrice")}>{formatUsd(tr.exitPrice, market.precision, { mode: "trading" })}</td>
                         {isFutures && (
-                          <td className="num">
+                          <td className="num" data-label={t("bt.col.side")}>
                             <span className={`side-badge side-badge--${tr.side === -1 ? "short" : "long"}`}>
                               {tr.side === -1 ? t("bt.direction.short") : t("bt.direction.long")}
                             </span>
                             {tr.liquidated && <span className="risk-badge risk-badge--liquidated">{t("bt.badgeLiquidated")}</span>}
                           </td>
                         )}
-                        <td className={`num ${tr.pnlPercent >= 0 ? "up" : "down"}`}>{tr.pnlPercent >= 0 ? "+" : ""}{tr.pnlPercent.toFixed(2)}%</td>
+                        <td className={`num ${tr.pnlPercent >= 0 ? "up" : "down"}`} data-label={t("bt.col.pnl")}>{tr.pnlPercent >= 0 ? "+" : ""}{tr.pnlPercent.toFixed(2)}%</td>
                       </tr>
                     ))}
                   </tbody>
@@ -891,21 +891,21 @@ function AggregateResults({ aggregate, t, lang, dataMeta, analysisMarket, market
             <tbody>
               {rows.map((row, i) => (
                 <tr key={row.key} className="agg-row" onClick={() => onInspect(row.key)} title={t("bt.agg.hint")}>
-                  <td className="num agg-table__rank">{i + 1}</td>
-                  <td className="agg-table__name">
+                  <td className="num agg-table__rank" data-label={t("bt.agg.col.rank")}>{i + 1}</td>
+                  <td className="agg-table__name" data-label={t("bt.agg.col.strategy")}>
                     <span className="agg-name">{pick(lang, row.label)}</span>
                     <small>{t(`cat.${row.category}`)}</small>
                     {fitAllParams?.[row.key] && <small className="control-hint control-hint--accent">{t("bt.agg.fitted")}</small>}
                   </td>
-                  <td className={`num ${row.result.totalReturnPercent >= 0 ? "up" : "down"}`}>{signed(row.result.totalReturnPercent)}%</td>
-                  <td className={`num ${row.excessReturn >= 0 ? "up" : "down"}`}>{signed(row.excessReturn)}%</td>
-                  <td className="num down">-{fmt(row.result.maxDrawdownPercent)}%</td>
-                  <td className="num">{Number.isFinite(row.result.winRate) ? `${fmt(row.result.winRate, 0)}%` : "-"}</td>
-                  <td className={`num ${Number.isFinite(row.result.sharpe) && row.result.sharpe >= 1 ? "up" : ""}`}>{fmt(row.result.sharpe, 2)}</td>
-                  <td className="num">{row.result.profitFactor === Infinity ? "∞" : fmt(row.result.profitFactor, 2)}</td>
-                  <td className="num">{row.result.tradeCount}</td>
+                  <td className={`num ${row.result.totalReturnPercent >= 0 ? "up" : "down"}`} data-label={t("bt.stat.return")}>{signed(row.result.totalReturnPercent)}%</td>
+                  <td className={`num ${row.excessReturn >= 0 ? "up" : "down"}`} data-label={t("bt.agg.col.excess")}>{signed(row.excessReturn)}%</td>
+                  <td className="num down" data-label={t("bt.stat.dd")}>-{fmt(row.result.maxDrawdownPercent)}%</td>
+                  <td className="num" data-label={t("bt.stat.winrate")}>{Number.isFinite(row.result.winRate) ? `${fmt(row.result.winRate, 0)}%` : "-"}</td>
+                  <td className={`num ${Number.isFinite(row.result.sharpe) && row.result.sharpe >= 1 ? "up" : ""}`} data-label={t("bt.stat.sharpe")}>{fmt(row.result.sharpe, 2)}</td>
+                  <td className="num" data-label={t("bt.stat.pf")}>{row.result.profitFactor === Infinity ? "∞" : fmt(row.result.profitFactor, 2)}</td>
+                  <td className="num" data-label={t("bt.stat.trades")}>{row.result.tradeCount}</td>
                   {summary.liquidated > 0 && (
-                    <td className="num">
+                    <td className="num" data-label={t("bt.stat.liquidations")}>
                       {row.result.wasLiquidated ? <span className="risk-badge risk-badge--liquidated">{t("bt.badgeLiquidated")}</span> : "-"}
                     </td>
                   )}

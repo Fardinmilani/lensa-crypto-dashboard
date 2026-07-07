@@ -2103,6 +2103,28 @@
   gap: 8px;
   padding: 8px 4px;
   margin-bottom: 4px;
+  max-width: 100%;
+}
+.strip-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  font-size: 0.72rem;
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.strip-btn:hover {
+  color: var(--gold);
+  border-color: var(--border-glow);
+}
+.strip-btn--danger:hover {
+  color: var(--negative);
+  border-color: rgba(239, 68, 68, 0.4);
 }
 .backtest-config-summary {
   display: flex;
@@ -2113,6 +2135,7 @@
 .config-chip {
   display: inline-flex;
   align-items: center;
+  max-width: 100%;
   font-size: 0.72rem;
   padding: 3px 9px;
   border-radius: 999px;
@@ -2562,7 +2585,7 @@
   height: 15px;
   border-radius: 50%;
   border: 1px solid var(--border-subtle);
-  background: color-mix(in srgb, var(--surface-elevated) 88%, transparent);
+  background: color-mix(in srgb, var(--bg-panel-solid) 88%, transparent);
   color: var(--text-tertiary);
   font-size: 0.58rem;
   font-weight: 700;
@@ -2591,9 +2614,9 @@
   max-width: min(280px, 80vw);
   padding: 8px 10px;
   border-radius: 8px;
-  background: var(--surface-elevated);
-  border: 1px solid var(--border-subtle);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  background: var(--bg-panel-solid);
+  border: 1px solid var(--border-strong);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
   font-size: 0.72rem;
   font-weight: 400;
   line-height: 1.55;
@@ -2609,16 +2632,17 @@
   z-index: 10000;
   bottom: auto;
   inset-inline-start: auto;
+  /* Always center horizontally on the trigger and sit just above it —
+     direction (RTL/LTR) doesn't change what "centered above" means, so
+     there's no separate RTL case here (a prior RTL-specific override used
+     to shove this to the wrong side). */
   transform: translate(-50%, calc(-100% - 8px));
   opacity: 1;
   visibility: visible;
   pointer-events: auto;
 }
-[dir="rtl"] .info-tip__bubble {
-  transform: translateX(50%);
-}
-[dir="rtl"] .info-tip__bubble--portal {
-  transform: translate(50%, calc(-100% - 8px));
+.info-tip__bubble--below.info-tip__bubble--portal {
+  transform: translate(-50%, 8px);
 }
 @media (hover: hover) and (pointer: fine) {
   .info-tip:hover .info-tip__bubble:not(.info-tip__bubble--portal),
@@ -3399,6 +3423,74 @@
   }
   .control-group {
     min-width: 100%;
+  }
+}
+
+/* Wide data tables (trade lists, strategy comparison, R:R setups) never
+   get a horizontal scrollbar on phones — instead each row becomes a small
+   stacked card with the column name shown above its value. Vertical
+   length grows, which is the acceptable tradeoff versus any horizontal
+   scrolling on a locked-width mobile layout. */
+@media (max-width: 700px) {
+  .table-scroll {
+    overflow-x: visible;
+  }
+  .trades-table {
+    width: 100%;
+    font-size: 0.8rem;
+  }
+  .trades-table thead {
+    display: none;
+  }
+  .trades-table,
+  .trades-table tbody,
+  .trades-table tr {
+    display: block;
+    width: 100%;
+  }
+  .trades-table tr {
+    margin-bottom: 10px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    padding: 4px 10px;
+    background: rgba(255, 255, 255, 0.02);
+  }
+  .trades-table tr:last-child {
+    margin-bottom: 0;
+  }
+  .trades-table td {
+    display: block;
+    text-align: end;
+    padding: 7px 0;
+    border: none;
+    border-bottom: 1px solid var(--border-subtle);
+    white-space: normal;
+  }
+  .trades-table td:last-child {
+    border-bottom: none;
+  }
+  .trades-table td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    color: var(--text-tertiary);
+    font-size: 0.68rem;
+    text-align: start;
+    margin-bottom: 2px;
+  }
+  .trades-table .agg-table__name {
+    display: block;
+    text-align: start;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .trades-table .agg-table__name::before {
+    content: attr(data-label);
+    display: block;
+    color: var(--text-tertiary);
+    font-size: 0.68rem;
+    margin-bottom: 2px;
+  }
+  .agg-row {
+    cursor: pointer;
   }
 }
 

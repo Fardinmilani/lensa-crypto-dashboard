@@ -15,9 +15,17 @@ export default function InfoTip({ term }) {
     const el = ref.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
+    const margin = 12;
+    const estBubbleWidth = Math.min(280, window.innerWidth * 0.8);
+    const estBubbleHeight = 90; // rough upper-bound estimate; good enough to decide flip direction
+    let left = rect.left + rect.width / 2;
+    left = Math.max(estBubbleWidth / 2 + margin, Math.min(left, window.innerWidth - estBubbleWidth / 2 - margin));
+    const flipBelow = rect.top < estBubbleHeight + margin;
     setPos({
       top: rect.top,
-      left: rect.left + rect.width / 2,
+      bottom: rect.bottom,
+      left,
+      flipBelow,
     });
   }, []);
 
@@ -57,8 +65,8 @@ export default function InfoTip({ term }) {
           <span
             id={tipId}
             role="tooltip"
-            className="info-tip__bubble info-tip__bubble--portal"
-            style={{ top: pos.top, left: pos.left }}
+            className={`info-tip__bubble info-tip__bubble--portal${pos.flipBelow ? " info-tip__bubble--below" : ""}`}
+            style={{ top: pos.flipBelow ? pos.bottom : pos.top, left: pos.left }}
           >
             {text}
           </span>,

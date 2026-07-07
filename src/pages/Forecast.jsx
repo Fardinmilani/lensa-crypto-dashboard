@@ -263,12 +263,12 @@ export default function Forecast() {
                   <tbody>
                     {extra.setups.map((s, i) => (
                       <tr key={i}>
-                        <td className="num up">{formatUsd(s.target, market.precision, { mode: "futures" })}<br /><small>{pct(s.targetPct)}</small></td>
-                        <td className="num down">{formatUsd(s.stop, market.precision, { mode: "futures" })}<br /><small>{pct(s.stopPct)}</small></td>
-                        <td className="num"><strong>1:{s.rr?.toFixed(2)}</strong></td>
-                        <td className="num up">{(s.pTarget * 100).toFixed(0)}%</td>
-                        <td className="num down">{(s.pStop * 100).toFixed(0)}%</td>
-                        <td className={`num ${(s.ev ?? 0) >= 0 ? "up" : "down"}`}>{s.ev?.toFixed(2)}</td>
+                        <td className="num up" data-label={t("fc.col.target")}>{formatUsd(s.target, market.precision, { mode: "futures" })}<br /><small>{pct(s.targetPct)}</small></td>
+                        <td className="num down" data-label={t("fc.col.stop")}>{formatUsd(s.stop, market.precision, { mode: "futures" })}<br /><small>{pct(s.stopPct)}</small></td>
+                        <td className="num" data-label={t("fc.col.rr")}><strong>1:{s.rr?.toFixed(2)}</strong></td>
+                        <td className="num up" data-label={t("fc.col.ptarget")}>{(s.pTarget * 100).toFixed(0)}%</td>
+                        <td className="num down" data-label={t("fc.col.pstop")}>{(s.pStop * 100).toFixed(0)}%</td>
+                        <td className={`num ${(s.ev ?? 0) >= 0 ? "up" : "down"}`} data-label={t("fc.col.ev")}>{s.ev?.toFixed(2)}</td>
                       </tr>
                     ))}
                   </tbody>
