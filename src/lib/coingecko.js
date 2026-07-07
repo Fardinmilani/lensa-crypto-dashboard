@@ -66,6 +66,68 @@ const sourceHealth = new Map(
 );
 
 const CACHE_TTL_MS = 60_000;
+const FETCH_TIMEOUT_MS = 8_000;
+
+// Optional Cloudflare Worker CORS proxies. This is a purely static (GitHub
+// Pages / Actions) site with no backend, so when an exchange geo-blocks the
+// visitor's IP (e.g. Binance 451, Bybit 403 for some regions) no amount of
+// frontend code can fix that -- the request itself must originate from an
+// IP the exchange doesn't block. A tiny Cloudflare Worker re-issues the
+// request from Cloudflare's edge and adds CORS headers.
+//
+// Configure one or more deployed worker URLs via the VITE_MARKET_PROXY_ENDPOINTS
+// build-time env var (comma-separated, no trailing slash), e.g.:
+//   VITE_MARKET_PROXY_ENDPOINTS=https://lensa-proxy-1.acct1.workers.dev,https://lensa-proxy-2.acct2.workers.dev
+// Each entry can be on a *different* free Cloudflare account, since each
+// account gets its own independent 100k requests/day quota. If it's empty,
+// the app behaves exactly as before (direct browser fetch only).
+const PROXY_ENDPOINTS = (import.meta.env.VITE_MARKET_PROXY_ENDPOINTS || "")
+  .split(",")
+  .map((s) => s.trim().replace(/\/$/, ""))
+  .filter(Boolean);
+
+let rrIndex = 0;
+/** Rotates the proxy list by one position on every call so consecutive
+ * requests spread across accounts instead of always hammering the first
+ * one -- a crude but effective load balancer across quotas. */
+function rotateProxies() {
+  if (PROXY_ENDPOINTS.length < 2) return PROXY_ENDPOINTS;
+  const i = rrIndex % PROXY_ENDPOINTS.length;
+  rrIndex++;
+  return [...PROXY_ENDPOINTS.slice(i), ...PROXY_ENDPOINTS.slice(0, i)];
+}
+
+/** Builds the ordered list of URLs to try for one request: every configured
+ * proxy (rotated), then the direct browser fetch as the final fallback. If
+ * a proxy has exhausted its daily quota it fails immediately (Cloudflare
+ * returns a non-2xx/error page rather than making us wait), so we move on
+ * to the next candidate right away -- never blocked waiting for a quota
+ * reset. */
+function buildCandidateUrls(source, path) {
+  const direct = path.startsWith("http") ? path : `${API_BASES[source]}${path}`;
+  if (!PROXY_ENDPOINTS.length || !(source in API_BASES)) return [direct];
+  let upstreamPath = "";
+  let upstreamSearch = "";
+  try {
+    const u = new URL(direct);
+    upstreamPath = u.pathname;
+    upstreamSearch = u.search;
+  } catch {
+    return [direct];
+  }
+  const proxied = rotateProxies().map((base) => `${base}/proxy/${source}${upstreamPath}${upstreamSearch}`);
+  return [...proxied, direct];
+}
+
+async function fetchWithTimeout(url, ms = FETCH_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    return await fetch(url, { mode: "cors", headers: { Accept: "application/json" }, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const publicPath = (...parts) => `/${parts.join("/")}`;
@@ -108,34 +170,46 @@ async function cachedJson(source, path, ttl = CACHE_TTL_MS) {
   if (hit && Date.now() - hit.time < ttl) return hit.data;
   if (inflight.has(url)) return inflight.get(url);
 
+  const candidates = buildCandidateUrls(source, path);
+
   const promise = (async () => {
     let lastErr;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        const res = await fetch(url, {
-          mode: "cors",
-          headers: { Accept: "application/json" },
-        });
-        if (res.ok) {
-          const data = await res.json();
-          cache.set(url, { data, time: Date.now() });
-          setSourceHealth(source, SOURCE_STATUS.HEALTHY, "Direct browser fetch succeeded.");
-          return data;
-        }
-        const err = new Error(`HTTP ${res.status}`);
-        err.status = res.status;
-        if (res.status === 429) {
+    for (const candidateUrl of candidates) {
+      const viaProxy = candidateUrl !== url;
+      // Up to 2 tries per candidate, but ONLY to ride out a transient 429.
+      // Any other failure (CORS, geo-block 403/451, a proxy whose daily
+      // quota is exhausted, timeout, ...) moves to the next candidate
+      // immediately -- we never sit around waiting for something to reset.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const res = await fetchWithTimeout(candidateUrl);
+          if (res.ok) {
+            const data = await res.json();
+            cache.set(url, { data, time: Date.now() });
+            setSourceHealth(
+              source,
+              SOURCE_STATUS.HEALTHY,
+              viaProxy ? "Fetched via CORS proxy." : "Direct browser fetch succeeded."
+            );
+            return data;
+          }
+          const err = new Error(`HTTP ${res.status}`);
+          err.status = res.status;
+          if (res.status === 429) {
+            lastErr = err;
+            setSourceHealth(source, SOURCE_STATUS.RATE_LIMITED, friendlyMessage(source, SOURCE_STATUS.RATE_LIMITED, err));
+            await sleep(500);
+            continue;
+          }
           lastErr = err;
-          setSourceHealth(source, SOURCE_STATUS.RATE_LIMITED, friendlyMessage(source, SOURCE_STATUS.RATE_LIMITED, err));
-          await sleep(900 * (attempt + 1));
-          continue;
+          setSourceHealth(source, classifyFetchError(err), friendlyMessage(source, classifyFetchError(err), err));
+          break;
+        } catch (err) {
+          lastErr = err;
+          const status = classifyFetchError(err);
+          setSourceHealth(source, status, friendlyMessage(source, status, err));
+          break;
         }
-        throw err;
-      } catch (err) {
-        lastErr = err;
-        const status = classifyFetchError(err);
-        setSourceHealth(source, status, friendlyMessage(source, status, err));
-        if (status !== SOURCE_STATUS.RATE_LIMITED) break;
       }
     }
     if (hit) {

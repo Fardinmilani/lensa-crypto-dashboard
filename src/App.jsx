@@ -19,7 +19,7 @@ const TABS = [
   { id: "decision", labelKey: "tab.decision", component: DecisionCenter, icon: ShieldIcon, group: "core" },
   { id: "forecast", labelKey: "tab.forecast", component: Forecast, icon: WaveIcon, group: "advanced" },
   { id: "backtest", labelKey: "tab.backtest", component: Backtest, icon: ChartIcon, group: "advanced" },
-  { id: "risk", labelKey: "tab.risk", component: RiskTools, icon: ShieldIcon, group: "advanced" },
+  { id: "risk", labelKey: "tab.risk", component: RiskTools, icon: GaugeIcon, group: "advanced" },
   { id: "about", labelKey: "tab.about", component: About, icon: InfoIcon, group: "meta" },
 ];
 
@@ -114,6 +114,15 @@ function ChartIcon() {
   return (
     <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
       <path d="M4 19V5M4 19h16M8 16v-5M12 16V8M16 16v-3M20 16V6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+function GaugeIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <path d="M4 15a8 8 0 1 1 16 0" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <path d="M12 15l4-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <circle cx="12" cy="15" r="1.3" fill="currentColor" />
     </svg>
   );
 }

@@ -32,6 +32,8 @@ jobs:
         run: npm ci
 
       - name: Build
+        env:
+          VITE_MARKET_PROXY_ENDPOINTS: ${{ secrets.VITE_MARKET_PROXY_ENDPOINTS }}
         run: npm run build
 
       - name: Configure GitHub Pages

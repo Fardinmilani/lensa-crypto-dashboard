@@ -111,7 +111,7 @@ export default function Forecast() {
   return (
     <div className="forecast-page" ref={reveal}>
       <div className="disclaimer-banner reveal">{t("fc.disclaimer")}</div>
-      <MarketContextBar module="Scenario analysis" lastPrice={mc?.current} />
+      <MarketContextBar lastPrice={mc?.current} />
       <DataQualityGuard module="Scenario analysis" meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
 
       <div className="backtest-controls glass-card reveal">
@@ -197,7 +197,6 @@ export default function Forecast() {
           </div>
 
           <div className="glass-card chart-card reveal">
-            <MarketContextBar module="Scenario cone" lastPrice={mc.current} />
             <DataQualityGuard module="Scenario cone" meta={dataMeta} analysisMarket={analysisMarket} forecastAnchor={checkForecastAnchor({ history: extra.history, cone: mc.cone, stepSeconds: extra.stepSeconds })} />
             <div className="panel-header panel-header--wrap">
               <div>
@@ -240,7 +239,6 @@ export default function Forecast() {
 
           <div className="forecast-cols forecast-cols--single">
             <div className="glass-card reveal">
-              <MarketContextBar module="Long/Short analysis" lastPrice={mc.current} />
               <DataQualityGuard module="Long/Short analysis" meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
               <div className="panel-header">
                 <div>

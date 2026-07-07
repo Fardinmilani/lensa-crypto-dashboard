@@ -490,7 +490,7 @@ export default function DecisionCenter() {
       </div>
 
       <div className="glass-card decision-hero reveal">
-        <MarketContextBar module={t("decision.module")} lastPrice={decision?.lastPrice} />
+        <MarketContextBar lastPrice={decision?.lastPrice} />
         <DataQualityGuard module={t("decision.module")} meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
         <div className="decision-hero__main">
           <div>
@@ -1614,7 +1614,6 @@ function PaperTradePanel({ note, setNote, saveNote, scopedJournal, savePaperTrad
   const symbolTrades = paperTrades.filter((item) => item.symbol === market.pair).slice(0, 8);
   return (
     <div className="local-panel glass-card reveal">
-      <MarketContextBar module={t("decision.journal.module")} />
       <h2>{t("decision.journal.title")}</h2>
       <p className="card-hint">{t("decision.journal.hint")}</p>
 
@@ -1679,7 +1678,6 @@ function PaperTradePanel({ note, setNote, saveNote, scopedJournal, savePaperTrad
 function BrowserAlertsPanel({ alertPrice, setAlertPrice, saveAlert, alertDraft, setAlertDraft, saveDecisionAlert, scopedAlerts, market, precision, removeAlert, t }) {
   return (
     <div className="local-panel glass-card reveal">
-      <MarketContextBar module={t("decision.alerts.module")} />
       <h2>{t("decision.alerts.title")}</h2>
       <p className="card-hint"><strong>{t("decision.alerts.strong")}</strong> {t("decision.alerts.hint")}</p>
 

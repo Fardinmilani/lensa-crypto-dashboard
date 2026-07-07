@@ -396,7 +396,7 @@ export default function Backtest() {
   return (
     <div className="backtest-page" ref={reveal}>
       <div className="disclaimer-banner reveal">{t("bt.disclaimer")}</div>
-      <MarketContextBar module="Backtest" />
+      <MarketContextBar />
       <DataQualityGuard module="Backtest" meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
 
       <div className="backtest-controls glass-card reveal">
@@ -715,7 +715,6 @@ export default function Backtest() {
             )}
           </div>
           <div className="glass-card chart-card">
-            <MarketContextBar module="Backtest equity" />
             <DataQualityGuard module="Backtest equity" meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
             <div className="panel-header"><h2>{t("bt.equity")}</h2></div>
             <p className="section-note">{t("bt.equity.note")}</p>
@@ -723,7 +722,6 @@ export default function Backtest() {
           </div>
           {result.trades.length > 0 && (
             <div className="glass-card table-card">
-              <MarketContextBar module="Backtest trades" />
               <DataQualityGuard module="Backtest trades" meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
               <div className="panel-header"><h2>{t("bt.trades", { n: result.tradeCount })}</h2></div>
               <p className="section-note">{t("bt.trades.note")}</p>
@@ -790,7 +788,6 @@ function AggregateResults({ aggregate, t, lang, dataMeta, analysisMarket, market
   return (
     <div className="aggregate-results reveal">
       <div className="glass-card chart-card">
-        <MarketContextBar module="Backtest all strategies" />
         <DataQualityGuard module="Backtest all strategies" meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
         <div className="panel-header"><h2>{t("bt.agg.title")}</h2></div>
         <p className="section-note">{t("bt.agg.subtitle", { n: summary.count })}</p>

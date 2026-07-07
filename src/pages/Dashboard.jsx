@@ -55,7 +55,7 @@ export default function Dashboard() {
   return (
     <div className="dashboard" ref={reveal}>
       <TickerTape />
-      <MarketContextBar module="Watchlist" lastPrice={detail?.price} />
+      <MarketContextBar lastPrice={detail?.price} />
 
       <div className="coin-hero glass-card reveal">
         <div className="coin-hero__id">
@@ -97,7 +97,6 @@ export default function Dashboard() {
           <div className="panel-header">
             <h2>{t("chart.title", { sym: coin.symbol })}</h2>
           </div>
-          <MarketContextBar module="Chart + Drawings" lastPrice={detail?.price} />
           <div className="chart-toolbar no-print">
             <TimeframePicker value={market.timeframe} onChange={setTimeframe} intradayDisabled={market.isForex} />
             <SymbolSearch
@@ -142,7 +141,6 @@ export default function Dashboard() {
         </div>
 
         <div className="reveal">
-          <MarketContextBar module="News" lastPrice={detail?.price} />
           <NewsFeed query={`${coin.symbol} ${coin.name}`} coinSymbol={coin.symbol} />
         </div>
       </div>

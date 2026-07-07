@@ -17,7 +17,7 @@ export default function RiskTools() {
   return (
     <div className="risk-page" ref={reveal}>
       <div className="disclaimer-banner reveal">{t("risk.disclaimer")}</div>
-      <MarketContextBar module="Risk Engine" />
+      <MarketContextBar />
       <div className="risk-grid">
         <PositionSizeCalculator />
         <ATRStopCalculator />
@@ -40,7 +40,6 @@ function PositionSizeCalculator() {
       : null;
   return (
     <div className="risk-card glass-card reveal">
-      <MarketContextBar module="Position size" />
       <h3>
         {t("risk.pos.title")}
         <InfoTip term="glossary.positionSize" />
@@ -98,7 +97,6 @@ function ATRStopCalculator() {
 
   return (
     <div className="risk-card glass-card reveal">
-      <MarketContextBar module="ATR stop" />
       <DataQualityGuard module="ATR stop" meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
       <h3>
         {t("risk.atr.title")}
@@ -144,7 +142,6 @@ function RiskRewardCalculator() {
   const ratio = entryPrice && stopPrice && targetPrice ? riskRewardRatio({ entryPrice: Number(entryPrice), stopPrice: Number(stopPrice), targetPrice: Number(targetPrice) }) : null;
   return (
     <div className="risk-card glass-card reveal">
-      <MarketContextBar module="Risk reward" />
       <h3>
         {t("risk.rr.title")}
         <InfoTip term="glossary.riskRewardTool" />

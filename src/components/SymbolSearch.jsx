@@ -99,7 +99,7 @@ export default function SymbolSearch({ coin, source, pair, onSelect }) {
 
   return (
     <div className="symbol-search no-print">
-      <button type="button" className="symbol-search__trigger" onClick={() => setOpen(true)}>
+      <button type="button" className="symbol-search__trigger" onClick={() => setOpen(true)} title={t("symbol.tooltip")}>
         {coin.thumb && <img src={coin.thumb} alt="" width="16" height="16" />}
         <span>
           <strong>{selectedLabel}</strong>

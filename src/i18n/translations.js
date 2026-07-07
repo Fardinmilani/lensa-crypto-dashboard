@@ -769,6 +769,7 @@ export const translations = {
     "footer": "This tool is for analysis and education only and is not financial advice. All trading decisions and any profit/loss are your own responsibility.",
 
     "search.placeholder": "Search any crypto…  (current: {sym})",
+    "search.tooltip": "Switch the whole dashboard to a different asset (e.g. Bitcoin → Ethereum)",
     "search.popular": "Popular coins",
 
     "tf.aria": "Select timeframe",
@@ -818,6 +819,7 @@ export const translations = {
     "chart.drawLine": "Draw line",
     "chart.clearDrawings": "Clear drawings",
     "symbol.placeholder": "Search symbol, pair, or exchange",
+    "symbol.tooltip": "Change the exchange, trading pair, or market type for the current asset (does not switch assets)",
     "symbol.all": "All",
     "symbol.crypto": "Crypto",
     "symbol.forex": "Forex",
@@ -1107,6 +1109,7 @@ export const translations = {
     "footer": "این ابزار صرفاً برای تحلیل و آموزش است و توصیه‌ی مالی محسوب نمی‌شود. تمام تصمیمات معاملاتی و مسئولیت سود/ضرر بر عهده‌ی شماست.",
 
     "search.placeholder": "جستجوی هر رمزارز…  (فعلی: {sym})",
+    "search.tooltip": "کل داشبورد را به دارایی دیگری تغییر بده (مثلاً بیت‌کوین ← اتریوم)",
     "search.popular": "رمزارزهای پرطرفدار",
 
     "tf.aria": "انتخاب بازه زمانی",

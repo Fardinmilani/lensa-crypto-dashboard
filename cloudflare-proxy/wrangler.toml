@@ -1,0 +1,9 @@
+name = "lensa-market-proxy"
+main = "worker.js"
+compatibility_date = "2024-09-23"
+
+# Free plan is plenty for this: 100,000 requests/day, no billing required.
+# If you deploy a second copy on another Cloudflare account, just copy this
+# whole `cloudflare-proxy/` folder and run `wrangler deploy` while logged
+# into that other account -- give it a different `name` so the two don't
+# collide, e.g. "lensa-market-proxy-2".
