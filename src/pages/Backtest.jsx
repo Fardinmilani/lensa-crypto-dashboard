@@ -46,9 +46,14 @@ export default function Backtest() {
   // Futures-only controls. market.marketType already comes from the global
   // market bar (Spot / USD-M Futures / Coin-M Futures) — leverage and
   // direction are just additional dimensions of that same run, not a
-  // separate page/section. Spot can never short or use leverage, so these
-  // stay pinned at 1x/long whenever marketType is "Spot".
-  const isFutures = market.marketType !== "Spot";
+  // separate page/section. Crypto Spot can never short or use leverage, so
+  // these stay pinned at 1x/long whenever marketType is "Spot" -- BUT forex
+  // is the one exception: real forex trading is margin/leverage-based by
+  // default (there's no separate "futures" instrument the way crypto has
+  // perpetuals), and shorting a currency pair is completely standard. So we
+  // also unlock this section for forex pairs even though their marketType
+  // is always pinned to "Spot" (see MarketContext.jsx).
+  const isFutures = market.marketType !== "Spot" || market.isForex;
   const [leverage, setLeverage] = useLocalStorageState("lensa.backtest.leverage", 1);
   const [direction, setDirection] = useLocalStorageState("lensa.backtest.direction", "long");
   const effectiveLeverage = isFutures ? Number(leverage) || 1 : 1;
@@ -504,7 +509,7 @@ export default function Backtest() {
                     <option key={lv} value={lv}>{lv}x</option>
                   ))}
                 </select>
-                <small className="control-hint">{t("bt.leverage.hint", { market: market.marketType })}</small>
+                <small className="control-hint">{t("bt.leverage.hint", { market: market.isForex ? "Forex" : market.marketType })}</small>
               </div>
               <div className="control-group">
                 <label>{t("bt.direction")}</label>

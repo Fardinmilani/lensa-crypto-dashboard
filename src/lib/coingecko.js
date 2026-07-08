@@ -66,7 +66,7 @@ const sourceHealth = new Map(
 );
 
 const CACHE_TTL_MS = 60_000;
-const FETCH_TIMEOUT_MS = 8_000;
+const FETCH_TIMEOUT_MS = 10_000;
 
 // Optional Cloudflare Worker CORS proxies. This is a purely static (GitHub
 // Pages / Actions) site with no backend, so when an exchange geo-blocks the
@@ -85,6 +85,16 @@ const PROXY_ENDPOINTS = (import.meta.env.VITE_MARKET_PROXY_ENDPOINTS || "")
   .split(",")
   .map((s) => s.trim().replace(/\/$/, ""))
   .filter(Boolean);
+
+// Only these sources are actually geo-blocked (Binance 451, Bybit 403 for
+// some regions) -- CoinGecko/OKX/Coinbase already work fine direct from the
+// browser, so we leave them alone. Routing them through the proxy too would
+// funnel EVERY request through one Cloudflare hostname, and browsers cap
+// concurrent connections to ~6 per origin -- with 5 exchanges' worth of
+// traffic queued behind that one origin, requests were queueing long enough
+// to hit our own fetch timeout. Keeping the proxy scoped to just the
+// sources that need it avoids that self-inflicted bottleneck.
+const PROXIED_SOURCES = new Set(["binance", "binanceUsdFutures", "binanceCoinFutures", "bybit"]);
 
 let rrIndex = 0;
 /** Rotates the proxy list by one position on every call so consecutive
@@ -105,7 +115,7 @@ function rotateProxies() {
  * reset. */
 function buildCandidateUrls(source, path) {
   const direct = path.startsWith("http") ? path : `${API_BASES[source]}${path}`;
-  if (!PROXY_ENDPOINTS.length || !(source in API_BASES)) return [direct];
+  if (!PROXY_ENDPOINTS.length || !PROXIED_SOURCES.has(source)) return [direct];
   let upstreamPath = "";
   let upstreamSearch = "";
   try {
@@ -481,8 +491,19 @@ export async function getChartCandles({ id, symbol, timeframe = "4h", lookbackDa
   // with no gaps, consistent OHLCV from a single exchange feed, and candles
   // available at every interval from 1m to 1M. CoinGecko is kept as the
   // last-resort fallback only (slower, aggregated, more gap-prone).
+  //
+  // USD-M Futures previously had ONLY Binance as a candidate with no
+  // fallback at all -- if Binance was geo-blocked (which it is, for many
+  // regions, without a proxy configured), futures charts simply never
+  // rendered. Bybit's linear-perpetual and OKX's SWAP instruments use the
+  // same pair naming as spot (e.g. BTCUSDT / BTC-USDT-SWAP), so we can fall
+  // back to them here. Coin-M Futures uses Binance's own *_PERP symbol
+  // format with no clean equivalent on the other exchanges, so it stays
+  // Binance-only for now.
   const candidates =
-    marketType !== "Spot"
+    marketType === "USD-M Futures"
+      ? ["binance", "bybit", "okx"]
+      : marketType === "Coin-M Futures"
       ? ["binance"]
       : requested === "coingecko"
       ? ["binance", "coingecko"]
@@ -496,9 +517,9 @@ export async function getChartCandles({ id, symbol, timeframe = "4h", lookbackDa
         candidate === "binance"
           ? await getBinanceCandles(pair || defaultPairForSymbol(symbol), timeframe, marketType, effectiveDays)
           : candidate === "bybit"
-            ? await getBybitCandles(pair || defaultPairForSymbol(symbol), timeframe, effectiveDays)
+            ? await getBybitCandles(pair || defaultPairForSymbol(symbol), timeframe, effectiveDays, marketType)
             : candidate === "okx"
-              ? await getOkxCandles(pair || defaultPairForSymbol(symbol), timeframe, effectiveDays)
+              ? await getOkxCandles(pair || defaultPairForSymbol(symbol), timeframe, effectiveDays, marketType)
               : candidate === "coinbase"
                 ? await getCoinbaseCandles(pair || defaultPairForSymbol(symbol), timeframe, effectiveDays)
                 : await getCoinGeckoCandles(id, timeframe, effectiveDays);
@@ -625,19 +646,22 @@ async function getCoinbasePrecision(pair) {
   };
 }
 
-async function getBybitCandles(pair, timeframe, lookbackDays) {
+async function getBybitCandles(pair, timeframe, lookbackDays, marketType = "Spot") {
   const tf = resolveTimeframe(timeframe);
   const days = resolveLookbackDays(timeframe, lookbackDays);
   const needed = candlesNeeded(tf.intervalMinutes, days);
   const interval = bybitInterval(tf.id);
   const symbol = String(pair || "").replace(/[^a-z0-9]/gi, "").toUpperCase();
   if (!symbol) throw new Error("Missing Bybit symbol");
+  // Bybit uses the same USDT-pair symbol (e.g. BTCUSDT) for both spot and
+  // its linear-perpetual futures -- only the `category` differs.
+  const category = marketType === "USD-M Futures" ? "linear" : "spot";
 
   let all = [];
   let end;
   while (all.length < needed) {
     const limit = Math.min(1000, needed - all.length);
-    let query = `/v5/market/kline?category=spot&symbol=${symbol}&interval=${interval}&limit=${limit}`;
+    let query = `/v5/market/kline?category=${category}&symbol=${symbol}&interval=${interval}&limit=${limit}`;
     if (end) query += `&end=${end}`;
     const resData = await cachedJson("bybit", query, 12_000);
     if (resData.retCode !== 0 || !resData.result || !Array.isArray(resData.result.list) || !resData.result.list.length) {
@@ -682,12 +706,14 @@ function bybitInterval(id) {
   return map[id] || "D";
 }
 
-async function getOkxCandles(pair, timeframe, lookbackDays) {
+async function getOkxCandles(pair, timeframe, lookbackDays, marketType = "Spot") {
   const tf = resolveTimeframe(timeframe);
   const days = resolveLookbackDays(timeframe, lookbackDays);
   const needed = candlesNeeded(tf.intervalMinutes, days);
   const bar = okxInterval(tf.id);
-  const symbol = pairToDashSymbol(pair);
+  // OKX's USDT-margined perpetual swap instruments are named like
+  // "BTC-USDT-SWAP" -- same base pair as spot, just with a suffix.
+  const symbol = marketType === "USD-M Futures" ? `${pairToDashSymbol(pair)}-SWAP` : pairToDashSymbol(pair);
   if (!symbol) throw new Error("Missing OKX symbol");
 
   let all = [];
