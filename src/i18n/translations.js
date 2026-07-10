@@ -860,6 +860,11 @@ export const translations = {
     "ticker.loading": "Fetching prices…",
     "ticker.error": "Price fetch error: {e}",
 
+    "context.noCandle": "No candle yet",
+    "context.source": "Source",
+    "context.quality": "Quality",
+    "context.ariaLabel": "Market context",
+
     "common.activeCoin": "Active coin",
     "common.loading": "Loading…",
     "common.changeFromTop": "changeable from the top bar",
@@ -1242,6 +1247,11 @@ export const translations = {
 
     "ticker.loading": "در حال دریافت قیمت‌ها…",
     "ticker.error": "خطا در دریافت قیمت‌ها: {e}",
+
+    "context.noCandle": "هنوز کندلی نیست",
+    "context.source": "منبع",
+    "context.quality": "کیفیت",
+    "context.ariaLabel": "وضعیت بازار",
 
     "common.activeCoin": "رمزارز فعال",
     "common.loading": "در حال بارگذاری…",

@@ -391,7 +391,9 @@
 }
 .market-context-bar--sticky {
   position: sticky;
-  top: 0;
+  /* Not top:0 -- .app-header is also sticky at top:0 with a higher z-index,
+     so this used to render hidden behind it once both were stuck. */
+  top: var(--header-h, 74px);
   z-index: 5;
   margin: 0 0 16px;
   padding: 8px 4px;
@@ -2738,6 +2740,15 @@
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  position: relative;
+}
+/* Invisible hit-slop: the visible dot stays 15px, but the actual tap target
+   is ~41px (15px + 13px on each side), close to the ~40-44px touch-target
+   guideline. Doesn't affect layout since it's absolutely positioned. */
+.info-tip__trigger::after {
+  content: "";
+  position: absolute;
+  inset: -13px;
 }
 .info-tip__trigger:hover,
 .info-tip__trigger:focus-visible {

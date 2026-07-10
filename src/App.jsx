@@ -1,4 +1,4 @@
-import { Fragment, Suspense, lazy, useEffect, useState } from "react";
+import { Fragment, Suspense, lazy, useEffect, useRef, useState } from "react";
 import CoinSearch from "./components/CoinSearch";
 
 // Route-level code splitting: keeps chart-heavy pages out of the initial bundle.
@@ -34,6 +34,26 @@ export default function App() {
   const { t, toggle } = useI18n();
   const [activeTab, setActiveTab] = useState(() => tabFromHash() || "dashboard");
   const ActiveComponent = TABS.find((tab) => tab.id === activeTab).component;
+  const headerRef = useRef(null);
+
+  // The header's height changes across breakpoints (tabs wrap to a second
+  // row on narrow screens) and across languages (fa/en label widths differ),
+  // so it can't be a fixed CSS number. Any sticky element meant to sit right
+  // below the header (e.g. MarketContextBar) reads this custom property
+  // instead of also using `top: 0`, which used to make it stick *behind*
+  // the header rather than beneath it.
+  useEffect(() => {
+    const header = headerRef.current;
+    if (!header || typeof ResizeObserver === "undefined") return;
+    const root = document.documentElement;
+    const applyHeaderHeight = () => {
+      root.style.setProperty("--header-h", `${header.offsetHeight}px`);
+    };
+    applyHeaderHeight();
+    const observer = new ResizeObserver(applyHeaderHeight);
+    observer.observe(header);
+    return () => observer.disconnect();
+  }, []);
 
   // Keep the URL hash and the active tab in sync both ways: switching tabs
   // updates the hash (so the tab is bookmarkable/shareable), and using the
@@ -69,7 +89,7 @@ export default function App() {
             <span className="aurora__blob aurora__blob--violet" />
           </div>
 
-        <header className="app-header">
+        <header className="app-header" ref={headerRef}>
           <div className="brand">
             <span className="brand-mark" aria-hidden="true">
               <svg viewBox="0 0 24 24" width="20" height="20">
@@ -95,6 +115,7 @@ export default function App() {
                   <button
                     role="tab"
                     aria-selected={activeTab === tab.id}
+                    aria-label={t(tab.labelKey)}
                     className={`tab-btn ${activeTab === tab.id ? "active" : ""}`}
                     onClick={() => selectTab(tab.id)}
                   >

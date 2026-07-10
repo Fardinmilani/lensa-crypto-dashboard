@@ -12,7 +12,14 @@
 
   --text-primary: #f4f6fb;
   --text-secondary: #aeb8c8;
-  --text-tertiary: #6b7689;
+  /* Was #6b7689 (4.34:1 on --bg-base, 3.86:1 on --bg-panel-solid -- fails
+     WCAG AA's 4.5:1 for normal text). Brightened while keeping the same
+     steel-blue-gray hue; now 5.7:1 / 5.07:1. */
+  --text-tertiary: #7d8aa0;
+
+  /* Fallback for the header height, overridden at runtime by App.jsx via
+     ResizeObserver (the real height changes with breakpoint + language). */
+  --header-h: 74px;
 
   --gold: #f59e0b;
   --gold-2: #fbbf24;
