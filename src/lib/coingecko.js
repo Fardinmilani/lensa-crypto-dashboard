@@ -81,7 +81,7 @@ const FETCH_TIMEOUT_MS = 10_000;
 // Each entry can be on a *different* free Cloudflare account, since each
 // account gets its own independent 100k requests/day quota. If it's empty,
 // the app behaves exactly as before (direct browser fetch only).
-const PROXY_ENDPOINTS = (import.meta.env.VITE_MARKET_PROXY_ENDPOINTS || "")
+const PROXY_ENDPOINTS = (import.meta.env?.VITE_MARKET_PROXY_ENDPOINTS || "")
   .split(",")
   .map((s) => s.trim().replace(/\/$/, ""))
   .filter(Boolean);

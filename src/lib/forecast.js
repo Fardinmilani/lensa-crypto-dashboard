@@ -66,8 +66,9 @@ export function monteCarlo({
   closes,
   horizon = 30,
   sims = 2000,
-  method = "bootstrap", // "bootstrap" | "gbm"
+  method = "bootstrap", // "bootstrap" | "blockBootstrap" | "gbm"
   driftMode = "historical", // "historical" | "zero"
+  blockSize = 5,
   seed = 12345,
 }) {
   const safeHorizon = Math.round(Number(horizon));
@@ -86,6 +87,10 @@ export function monteCarlo({
   const mu = driftMode === "zero" ? 0 : mean(rets);
   const sigma = std(rets);
   const rng = mulberry32(seed);
+  const meanRet = mean(rets);
+  // A block length longer than the available history degenerates to
+  // ordinary single-point bootstrap (every "block" just wraps around).
+  const safeBlockSize = Math.max(1, Math.min(Math.round(Number(blockSize)) || 5, rets.length));
 
   // Per-step collection for the percentile cone.
   const stepVals = Array.from({ length: safeHorizon }, () => new Array(safeSims));
@@ -98,13 +103,31 @@ export function monteCarlo({
     let price = current;
     let hi = current;
     let lo = current;
+    // For blockBootstrap: draw a random starting index in the historical
+    // return series, then consume `safeBlockSize` consecutive returns from
+    // that point before drawing a fresh random start. Resampling
+    // contiguous runs (instead of single, independent points) preserves
+    // whatever autocorrelation/volatility-clustering existed historically
+    // — e.g. a calm stretch tends to be followed by more calm, a violent
+    // stretch by more violence — which plain single-point bootstrap
+    // destroys by construction (every step becomes independent).
+    let blockStart = 0;
+    let blockPos = 0;
     for (let h = 0; h < safeHorizon; h++) {
       let r;
       if (method === "gbm") {
         r = mu + sigma * randNormal(rng);
+      } else if (method === "blockBootstrap") {
+        if (blockPos === 0) {
+          const maxStart = Math.max(0, rets.length - safeBlockSize);
+          blockStart = Math.floor(rng() * (maxStart + 1));
+        }
+        r = rets[Math.min(rets.length - 1, blockStart + blockPos)];
+        if (driftMode === "zero") r -= meanRet;
+        blockPos = (blockPos + 1) % safeBlockSize;
       } else {
         r = rets[Math.floor(rng() * rets.length)];
-        if (driftMode === "zero") r -= mean(rets); // de-mean bootstrap when drift is off
+        if (driftMode === "zero") r -= meanRet; // de-mean bootstrap when drift is off
       }
       price *= Math.exp(r);
       if (price > hi) hi = price;
@@ -153,6 +176,7 @@ export function monteCarlo({
     horizon: safeHorizon,
     sims: safeSims,
     method,
+    blockSize: method === "blockBootstrap" ? safeBlockSize : undefined,
     sigmaPerPeriod: sigma,
     cone,
     dist,

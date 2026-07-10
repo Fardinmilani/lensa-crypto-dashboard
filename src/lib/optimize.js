@@ -119,11 +119,11 @@ function scoreResult(result) {
   return riskAdjusted - drawdownPenalty * 1.5;
 }
 
-function runOne({ strategy, candles, params, direction, leverage, feePercent, riskParams }) {
+function runOne({ strategy, candles, params, direction, leverage, feePercent, riskParams, sizing = null, fillTiming = "close" }) {
   const signals = combineDirectionalSignals(strategy, candles, params, direction);
   const result = leverage > 1 || direction !== "long"
-    ? runLeveragedBacktest({ candles, signals, feePercent, leverage, riskParams })
-    : runBacktest({ candles, signals, feePercent, riskParams });
+    ? runLeveragedBacktest({ candles, signals, feePercent, leverage, riskParams, sizing, fillTiming })
+    : runBacktest({ candles, signals, feePercent, riskParams, sizing, fillTiming });
   return result;
 }
 
@@ -138,6 +138,8 @@ export function optimizeStrategy({
   leverage = 1,
   feePercent = 0.1,
   riskParams = null,
+  sizing = null,
+  fillTiming = "close",
   maxCombos = DEFAULT_MAX_COMBOS,
 }) {
   const defaultParams = strategy.params || {};
@@ -145,14 +147,14 @@ export function optimizeStrategy({
   if (!numericKeys.length) return null;
 
   const combos = buildCombos(defaultParams, maxCombos);
-  const baselineResult = runOne({ strategy, candles, params: defaultParams, direction, leverage, feePercent, riskParams });
+  const baselineResult = runOne({ strategy, candles, params: defaultParams, direction, leverage, feePercent, riskParams, sizing, fillTiming });
   const baselineScore = scoreResult(baselineResult);
 
   let best = { params: defaultParams, result: baselineResult, score: baselineScore };
   for (const combo of combos) {
     let result;
     try {
-      result = runOne({ strategy, candles, params: combo, direction, leverage, feePercent, riskParams });
+      result = runOne({ strategy, candles, params: combo, direction, leverage, feePercent, riskParams, sizing, fillTiming });
     } catch {
       continue;
     }
@@ -182,6 +184,8 @@ export function optimizeAllStrategies({
   leverage = 1,
   feePercent = 0.1,
   riskParams = null,
+  sizing = null,
+  fillTiming = "close",
   maxCombosPerStrategy = 30,
 }) {
   const out = {};
@@ -195,6 +199,8 @@ export function optimizeAllStrategies({
         leverage,
         feePercent,
         riskParams,
+        sizing,
+        fillTiming,
         maxCombos: maxCombosPerStrategy,
       });
       if (fit) out[key] = fit;
@@ -204,4 +210,60 @@ export function optimizeAllStrategies({
     }
   }
   return out;
+}
+
+/**
+ * Out-of-sample validation for optimizeStrategy(). Fits parameters using
+ * only the first `trainRatio` share of the candle history, then evaluates
+ * that fitted set — and, for direct comparison, the strategy's shipped
+ * defaults — on the untouched remainder the search never saw.
+ *
+ * This is the standard guard against the in-sample overfitting risk
+ * documented at the top of this file: a parameter set that only looks good
+ * because the search saw the entire history, including the very data it's
+ * later "predicting", tells you nothing about how it would have performed
+ * on data it never saw. A large gap between trainScore and testScore is
+ * the textbook signature of a parameter set that was fit to noise rather
+ * than to a genuine, persistent edge.
+ *
+ * Returns null if there isn't enough history to form a meaningful train/
+ * test split (mirrors the same "not enough data" guard used elsewhere).
+ */
+export function walkForwardValidate({
+  strategy,
+  candles,
+  direction = "long",
+  leverage = 1,
+  feePercent = 0.1,
+  riskParams = null,
+  sizing = null,
+  fillTiming = "close",
+  trainRatio = 0.7,
+  maxCombos = DEFAULT_MAX_COMBOS,
+}) {
+  if (!Array.isArray(candles) || candles.length < 60) return null;
+  const ratio = Math.min(0.9, Math.max(0.1, trainRatio));
+  const splitIndex = Math.floor(candles.length * ratio);
+  const trainCandles = candles.slice(0, splitIndex);
+  const testCandles = candles.slice(splitIndex);
+  if (trainCandles.length < 30 || testCandles.length < 15) return null;
+
+  const fit = optimizeStrategy({ strategy, candles: trainCandles, direction, leverage, feePercent, riskParams, sizing, fillTiming, maxCombos });
+  if (!fit) return null;
+
+  const testFittedResult = runOne({ strategy, candles: testCandles, params: fit.bestParams, direction, leverage, feePercent, riskParams, sizing, fillTiming });
+  const testDefaultResult = runOne({ strategy, candles: testCandles, params: strategy.params, direction, leverage, feePercent, riskParams, sizing, fillTiming });
+
+  return {
+    trainRatio: ratio,
+    trainCandleCount: trainCandles.length,
+    testCandleCount: testCandles.length,
+    fittedParams: fit.bestParams,
+    defaultParams: strategy.params,
+    trainResult: fit.bestResult,
+    testFittedResult,
+    testDefaultResult,
+    trainScore: scoreResult(fit.bestResult),
+    testScore: scoreResult(testFittedResult),
+  };
 }

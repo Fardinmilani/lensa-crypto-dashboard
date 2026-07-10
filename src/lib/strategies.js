@@ -123,7 +123,7 @@ export function roc(values, period = 10) {
  * thousands (e.g. low timeframes over a long lookback).
  * out[i] is null until i >= period (matching the "last N candles before i" window).
  */
-function rollingMaxExclusive(values, period) {
+export function rollingMaxExclusive(values, period) {
   const out = new Array(values.length).fill(null);
   const deque = []; // indices < current i, values decreasing front-to-back
   for (let i = 0; i < values.length; i++) {
@@ -135,7 +135,7 @@ function rollingMaxExclusive(values, period) {
   return out;
 }
 
-function rollingMinExclusive(values, period) {
+export function rollingMinExclusive(values, period) {
   const out = new Array(values.length).fill(null);
   const deque = []; // indices < current i, values increasing front-to-back
   for (let i = 0; i < values.length; i++) {

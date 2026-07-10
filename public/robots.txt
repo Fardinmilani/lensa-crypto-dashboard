@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://lensa.fardinmilani.ir/sitemap.xml

@@ -32,6 +32,7 @@ export default function Forecast() {
   const { t } = useI18n();
   const [horizon, setHorizon] = useLocalStorageState("lensa.forecast.horizon", 30);
   const [method, setMethod] = useLocalStorageState("lensa.forecast.method", "bootstrap");
+  const [blockSize, setBlockSize] = useLocalStorageState("lensa.forecast.blockSize", 5);
   const [driftMode, setDriftMode] = useLocalStorageState("lensa.forecast.drift", "historical");
   const [sims, setSims] = useLocalStorageState("lensa.forecast.sims", 3000);
   const [bands, setBands] = useLocalStorageState("lensa.forecast.bands", "inner");
@@ -61,7 +62,7 @@ export default function Forecast() {
       setAnalysisMarket(snapshotMarket(market));
       const closes = candles.map((c) => c.close);
       const stepSeconds = Math.max(1, candles[1].time - candles[0].time);
-      const sim = monteCarlo({ closes, horizon: Number(horizon), sims, method, driftMode });
+      const sim = monteCarlo({ closes, horizon: Number(horizon), sims, method, driftMode, blockSize: Number(blockSize) });
       if (sim.error) throw new Error(sim.error);
       const periodsPerYear = (365 * 86400) / stepSeconds;
       const histTail = candles.slice(-Math.min(candles.length, Math.max(40, horizon)));
@@ -92,6 +93,7 @@ export default function Forecast() {
           marketContext: market,
           horizon,
           method,
+          blockSize: method === "blockBootstrap" ? Number(blockSize) : undefined,
           driftMode,
           sims,
           summary: {
@@ -130,13 +132,21 @@ export default function Forecast() {
         <div className="control-group">
           <label>
             {t("fc.method")}
-            <InfoTip term={method === "gbm" ? "glossary.forecastGbm" : "glossary.forecastBootstrap"} />
+            <InfoTip term={method === "gbm" ? "glossary.forecastGbm" : method === "blockBootstrap" ? "glossary.forecastBlockBootstrap" : "glossary.forecastBootstrap"} />
           </label>
           <select value={method} onChange={(e) => setMethod(e.target.value)}>
             <option value="bootstrap">{t("fc.method.bootstrap")}</option>
+            <option value="blockBootstrap">{t("fc.method.blockBootstrap")}</option>
             <option value="gbm">{t("fc.method.gbm")}</option>
           </select>
         </div>
+        {method === "blockBootstrap" && (
+          <div className="control-group">
+            <label>{t("fc.blockSize")}</label>
+            <input type="number" min="2" max="60" value={blockSize} onChange={(e) => setBlockSize(e.target.value)} />
+            <small className="control-hint">{t("fc.blockSize.hint")}</small>
+          </div>
+        )}
         <div className="control-group">
           <label>
             {t("fc.drift")}

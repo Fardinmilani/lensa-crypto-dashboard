@@ -128,6 +128,73 @@ function positiveOrNull(value) {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+// ---------------------------------------------------------------------------
+// Position sizing
+// ---------------------------------------------------------------------------
+//
+// Both engines default to committing the ENTIRE account to every trade
+// ("all-in"), which is what they've always done — passing no `sizing` (or
+// `sizing: null`) reproduces that behavior byte-for-byte. `sizing: {
+// mode: "riskPercent", riskPercent }` instead sizes the position so that a
+// stop-loss hit loses exactly `riskPercent`% of the account, the same
+// fixed-fractional-risk formula already offered standalone in lib/risk.js's
+// positionSize(). This requires a configured stop-loss distance to define
+// "how much is lost per unit of price move" — with no stop-loss percent
+// available, sizing silently falls back to all-in rather than guessing a
+// distance, since risking a fixed % of capital against an undefined stop is
+// not a well-posed question.
+//
+// Any capital not committed to the position sits out as idle cash and is
+// still added into the equity curve each bar — it just isn't multiplied by
+// the trade's outcome. This is the standard, realistic behavior of
+// fixed-fractional sizing on a single-instrument backtest: unused capital
+// doesn't vanish, it just isn't at risk.
+function resolveEntryNotional(cash, sizing, riskParams) {
+  if (!sizing || sizing.mode !== "riskPercent") return cash;
+  const riskPercent = Number(sizing.riskPercent);
+  const stopLossPercent = Number(riskParams?.stopLossPercent);
+  if (!(riskPercent > 0) || !(stopLossPercent > 0)) return cash;
+  const riskAmount = cash * (riskPercent / 100);
+  const stopFraction = stopLossPercent / 100;
+  const desiredNotional = riskAmount / stopFraction;
+  return Math.max(0, Math.min(cash, desiredNotional));
+}
+
+// Leveraged variant: a `stopLossPercent` move in the UNDERLYING is amplified
+// by `leverage` on the position's collateral (e.g. 5% underlying move at
+// 10x leverage is a 50% loss of collateral), so less collateral is needed
+// to risk the same dollar amount at higher leverage. Capped at 100% since a
+// position can't lose more than the collateral backing it (liquidation).
+function resolveEntryCollateral(cash, sizing, riskParams, lev) {
+  if (!sizing || sizing.mode !== "riskPercent") return cash;
+  const riskPercent = Number(sizing.riskPercent);
+  const stopLossPercent = Number(riskParams?.stopLossPercent);
+  if (!(riskPercent > 0) || !(stopLossPercent > 0)) return cash;
+  const riskAmount = cash * (riskPercent / 100);
+  const lossFraction = Math.min(1, (stopLossPercent / 100) * lev);
+  if (!(lossFraction > 0)) return cash;
+  const desiredCollateral = riskAmount / lossFraction;
+  return Math.max(0, Math.min(cash, desiredCollateral));
+}
+
+// ---------------------------------------------------------------------------
+// Fill timing
+// ---------------------------------------------------------------------------
+//
+// Default ("close") reproduces the engines' original assumption: a signal
+// computed from bar i's own close is filled at that exact same close, i.e.
+// zero-latency execution. `fillTiming: "nextOpen"` is the more conservative,
+// realistic alternative — a decision made from bar i's data can only
+// actually be acted on at bar i+1's open at the earliest. The final bar has
+// no "next" bar, so it falls back to that bar's own close.
+function resolveFillPrices(candles, fillTiming) {
+  if (fillTiming !== "nextOpen") return candles.map((c) => c.close);
+  return candles.map((c, i) => {
+    const next = candles[i + 1];
+    return next && Number.isFinite(next.open) ? next.open : c.close;
+  });
+}
+
 /**
  * Grid-searches a small set of stop-loss / take-profit combinations against
  * the given signals and returns the combination with the best Sharpe ratio
@@ -135,13 +202,13 @@ function positiveOrNull(value) {
  * candidate, e.g. too few trades). Used for the backtest page's "Auto-fit
  * SL/TP" option — runs entirely client-side, no extra network calls.
  */
-export function autoFitRiskExits({ candles, signals, feePercent = 0.1, initialCapital = 10000, leverage = 1 }) {
+export function autoFitRiskExits({ candles, signals, feePercent = 0.1, initialCapital = 10000, leverage = 1, sizing = null, fillTiming = "close" }) {
   const STOP_CANDIDATES = [1, 2, 3, 5, 8, 12];
   const TARGET_CANDIDATES = [2, 4, 6, 10, 15, 20, 30];
   const runOne = (riskParams) =>
     leverage > 1 || signals.some((s) => s < 0)
-      ? runLeveragedBacktest({ candles, signals, feePercent, initialCapital, leverage, riskParams })
-      : runBacktest({ candles, signals, feePercent, initialCapital, riskParams });
+      ? runLeveragedBacktest({ candles, signals, feePercent, initialCapital, leverage, riskParams, sizing, fillTiming })
+      : runBacktest({ candles, signals, feePercent, initialCapital, riskParams, sizing, fillTiming });
 
   let best = null;
   for (const stopLossPercent of STOP_CANDIDATES) {
@@ -156,13 +223,23 @@ export function autoFitRiskExits({ candles, signals, feePercent = 0.1, initialCa
   return best;
 }
 
-export function runBacktest({ candles, signals, feePercent = 0.1, initialCapital = 10000, riskParams = null }) {
+export function runBacktest({
+  candles,
+  signals,
+  feePercent = 0.1,
+  initialCapital = 10000,
+  riskParams = null,
+  sizing = null,
+  fillTiming = "close",
+}) {
   if (candles.length !== signals.length) {
     throw new Error("candles و signals باید طول یکسان داشته باشند");
   }
   const { signals: effectiveSignals, exitPrice: forcedExitPrice } = riskParams
     ? applyRiskExits(candles, signals, riskParams)
     : { signals, exitPrice: null };
+
+  const fillPrices = resolveFillPrices(candles, fillTiming);
 
   const equityCurve = [];
   const trades = [];
@@ -175,19 +252,22 @@ export function runBacktest({ candles, signals, feePercent = 0.1, initialCapital
   for (let i = 0; i < candles.length; i++) {
     const { time, close } = candles[i];
     const signal = effectiveSignals[i];
-    const fillPrice = forcedExitPrice?.[i] ?? close;
+    // A forced SL/TP exit always fills at its own configured bound; absent
+    // that, the fill uses fillTiming (see resolveFillPrices above).
+    const fillPrice = forcedExitPrice?.[i] ?? fillPrices[i];
 
     if (prevSignal === 0 && signal === 1) {
-      const fee = cash * (feePercent / 100);
-      const investable = cash - fee;
-      units = investable / close;
-      cash = 0;
-      entryPrice = close;
+      const notional = resolveEntryNotional(cash, sizing, riskParams);
+      const fee = notional * (feePercent / 100);
+      const investable = notional - fee;
+      units = investable / fillPrice;
+      cash -= notional;
+      entryPrice = fillPrice;
       entryTime = time;
     } else if (prevSignal === 1 && signal === 0) {
       const proceeds = units * fillPrice;
       const fee = proceeds * (feePercent / 100);
-      cash = proceeds - fee;
+      cash += proceeds - fee;
       const pnlPercent = ((fillPrice - entryPrice) / entryPrice) * 100;
       trades.push({ entryTime, exitTime: time, entryPrice, exitPrice: fillPrice, pnlPercent });
       units = 0;
@@ -210,7 +290,7 @@ export function runBacktest({ candles, signals, feePercent = 0.1, initialCapital
       pnlPercent,
       stillOpenAtEnd: true,
     });
-    cash = units * lastClose;
+    cash += units * lastClose;
   }
 
   const finalEquity = cash;
@@ -297,7 +377,16 @@ export function runBacktest({ candles, signals, feePercent = 0.1, initialCapital
 // at the bar where it crosses that line ("liquidated") — mirroring how a
 // real isolated-margin futures position behaves, instead of pretending the
 // account can ride out an unbounded drawdown.
-export function runLeveragedBacktest({ candles, signals, feePercent = 0.1, initialCapital = 10000, leverage = 1, riskParams = null }) {
+export function runLeveragedBacktest({
+  candles,
+  signals,
+  feePercent = 0.1,
+  initialCapital = 10000,
+  leverage = 1,
+  riskParams = null,
+  sizing = null,
+  fillTiming = "close",
+}) {
   if (candles.length !== signals.length) {
     throw new Error("candles و signals باید طول یکسان داشته باشند");
   }
@@ -306,7 +395,11 @@ export function runLeveragedBacktest({ candles, signals, feePercent = 0.1, initi
     : { signals, exitPrice: null };
   const lev = Math.max(1, Number(leverage) || 1);
   const hasShorts = effectiveSignals.some((s) => s < 0);
-  if (lev === 1 && !hasShorts) return runBacktest({ candles, signals, feePercent, initialCapital, riskParams });
+  if (lev === 1 && !hasShorts) {
+    return runBacktest({ candles, signals, feePercent, initialCapital, riskParams, sizing, fillTiming });
+  }
+
+  const fillPrices = resolveFillPrices(candles, fillTiming);
 
   const equityCurve = [];
   const trades = [];
@@ -352,19 +445,26 @@ export function runLeveragedBacktest({ candles, signals, feePercent = 0.1, initi
     positionSide = 0;
     entryPrice = null;
     entryTime = null;
-    // The account is wiped out the instant a liquidation happens — flag it
-    // here, synchronously, rather than waiting until the end of the loop
-    // iteration. Checking only at the end would let the very same bar that
-    // triggered the liquidation immediately re-open a fresh position (since
-    // entryPrice was just cleared above), effectively giving the account a
-    // free re-entry it shouldn't have.
-    if (isLiquidation) liquidated = true;
+    // The account is wiped out the instant a liquidation happens *and there
+    // is no capital left outside this trade* — flag it here, synchronously,
+    // rather than waiting until the end of the loop iteration. Checking only
+    // at the end would let the very same bar that triggered the liquidation
+    // immediately re-open a fresh position (since entryPrice was just
+    // cleared above), effectively giving the account a free re-entry it
+    // shouldn't have. With all-in sizing (the default), the whole account
+    // was the collateral, so `cash <= 0` here is always true, matching the
+    // original behavior exactly. With risk-based sizing, only the risked
+    // slice was on the line — any untouched idle cash survives, and the
+    // account correctly keeps trading with it instead of being treated as
+    // dead over a single, deliberately small loss.
+    if (isLiquidation && cash <= 0) liquidated = true;
   }
 
   function openPosition(side, atPrice, atTime) {
-    const fee = cash * (feePercent / 100);
-    positionEquity = Math.max(0, cash - fee);
-    cash -= positionEquity + fee;
+    const notional = resolveEntryCollateral(cash, sizing, riskParams, lev);
+    const fee = notional * (feePercent / 100);
+    positionEquity = Math.max(0, notional - fee);
+    cash -= notional;
     positionSide = side;
     entryPrice = atPrice;
     entryTime = atTime;
@@ -373,6 +473,7 @@ export function runLeveragedBacktest({ candles, signals, feePercent = 0.1, initi
   for (let i = 0; i < candles.length; i++) {
     const { time, close, low, high } = candles[i];
     const direction = liquidated ? 0 : Math.sign(effectiveSignals[i] ?? 0);
+    const fillPrice = forcedExitPrice?.[i] ?? fillPrices[i];
 
     if (entryPrice != null) {
       // Mark-to-market against the bar's worst excursion before checking the
@@ -386,12 +487,12 @@ export function runLeveragedBacktest({ candles, signals, feePercent = 0.1, initi
       if (worstMovePercent <= -100) {
         closePosition(worstPrice, time, { isLiquidation: true });
       } else if (direction !== prevDirection) {
-        closePosition(forcedExitPrice?.[i] ?? close, time);
+        closePosition(fillPrice, time);
       }
     }
 
     if (entryPrice == null && direction !== 0 && !liquidated) {
-      openPosition(direction, close, time);
+      openPosition(direction, fillPrice, time);
     }
 
     const markPrice = close;
@@ -487,9 +588,10 @@ export function runLeveragedBacktest({ candles, signals, feePercent = 0.1, initi
 // combineDirectionalSignals(), so the same "Run all strategies" view works
 // for Spot and for futures — the market/timeframe/leverage/direction the
 // caller is already on, not a separate sweep across other markets.
-export function runAllStrategies({ candles, strategies, feePercent = 0.1, leverage = 1, direction = "long", riskParams = null }) {
+export function runAllStrategies({ candles, strategies, feePercent = 0.1, leverage = 1, direction = "long", riskParams = null, sizing = null, fillTiming = "close" }) {
   const isFutures = leverage > 1 || direction !== "long";
   const benchmarkDef = strategies.buyAndHold;
+  // Buy & Hold is always the fully-invested baseline — sizing doesn't apply.
   const benchmark = runBacktest({
     candles,
     signals: benchmarkDef.generateSignals(candles),
@@ -503,8 +605,8 @@ export function runAllStrategies({ candles, strategies, feePercent = 0.1, levera
         ? combineDirectionalSignals(strategy, candles, strategy.params, direction)
         : strategy.generateSignals(candles, strategy.params);
       const result = isFutures
-        ? runLeveragedBacktest({ candles, signals, feePercent, leverage, riskParams })
-        : runBacktest({ candles, signals, feePercent, riskParams });
+        ? runLeveragedBacktest({ candles, signals, feePercent, leverage, riskParams, sizing, fillTiming })
+        : runBacktest({ candles, signals, feePercent, riskParams, sizing, fillTiming });
       return {
         key,
         label: strategy.label,

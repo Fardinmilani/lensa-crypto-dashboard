@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { STRATEGIES, PARAM_LABELS, DIRECTION_MODES, combineDirectionalSignals, currentSignalState } from "../lib/strategies";
 import { runBacktest, runLeveragedBacktest, runAllStrategies, autoFitRiskExits } from "../lib/backtest";
-import { optimizeStrategy, optimizeAllStrategies } from "../lib/optimize";
+import { optimizeStrategy, optimizeAllStrategies, walkForwardValidate } from "../lib/optimize";
+import { getAllStrategies } from "../lib/customStrategies";
 import { getChartCandles } from "../lib/coingecko";
 import { formatUsd } from "../lib/priceFormat";
 import { qualityMetaFromError } from "../lib/dataQuality";
@@ -11,6 +12,7 @@ import TimeframePicker from "../components/TimeframePicker";
 import MarketContextBar from "../components/MarketContextBar";
 import DataQualityGuard from "../components/DataQualityGuard";
 import StrategyDocs from "../components/StrategyDocs";
+import StrategyBuilder from "../components/StrategyBuilder";
 import { useCoin } from "../context/coinStore";
 import { useMarket, MARKET_TYPES } from "../context/MarketContext";
 import { useI18n, pick } from "../i18n/langStore";
@@ -18,7 +20,7 @@ import { useStaggerReveal, useCountUp } from "../hooks/useAnimations";
 import { useLocalStorageState } from "../hooks/useLocalStorageState";
 import InfoTip from "../components/InfoTip";
 
-const CATEGORY_ORDER = ["trend", "momentum", "reversion", "hybrid"];
+const CATEGORY_ORDER = ["trend", "momentum", "reversion", "hybrid", "custom"];
 const LOOKBACK_PRESETS = [90, 180, 365, 730];
 const LEVERAGE_PRESETS = [1, 2, 3, 5, 10, 20, 25, 50, 75, 100];
 const IMPORTED_STRATEGY_KEY = "lensa.decision.importedStrategy";
@@ -41,7 +43,17 @@ export default function Backtest() {
   const [loadingAll, setLoadingAll] = useState(false);
   const [error, setError] = useState(null);
   const reveal = useStaggerReveal([result, aggregate, error]);
-  const strategy = STRATEGIES[strategyKey];
+  // Bumped whenever a custom strategy is saved/deleted in the Strategy
+  // Builder below, so allStrategies (and therefore the dropdown/registry
+  // everywhere else on this page) picks up the change immediately.
+  const [strategiesVersion, setStrategiesVersion] = useState(0);
+  const [customCount, setCustomCount] = useState(0);
+  const allStrategies = useMemo(
+    () => getAllStrategies(STRATEGIES),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- strategiesVersion is a deliberate cache-buster: getAllStrategies() re-reads localStorage each call and has no other argument that changes when a custom strategy is saved/deleted.
+    [strategiesVersion]
+  );
+  const strategy = allStrategies[strategyKey] || STRATEGIES.trendMomentumHybrid;
 
   // Futures-only controls. market.marketType already comes from the global
   // market bar (Spot / USD-M Futures / Coin-M Futures) — leverage and
@@ -81,6 +93,23 @@ export default function Backtest() {
   const [autoFit, setAutoFit] = useLocalStorageState("lensa.backtest.risk.autofit", false);
   const [autoFitResult, setAutoFitResult] = useState(null);
 
+  // Position sizing. Default "allIn" reproduces the engine's original,
+  // always-on behavior exactly. "riskPercent" instead sizes each trade so a
+  // stop-loss hit loses a fixed share of the account (the same
+  // fixed-fractional formula the standalone Risk Tools calculator uses) —
+  // it needs a stop-loss distance to be well-defined, so it only takes
+  // effect once Stop-Loss is enabled above.
+  const [sizingMode, setSizingMode] = useLocalStorageState("lensa.backtest.sizing.mode", "allIn");
+  const [sizingRiskPercent, setSizingRiskPercent] = useLocalStorageState("lensa.backtest.sizing.riskPercent", 1);
+  // Fill timing. Default "close" reproduces the engine's original,
+  // zero-latency assumption (signal computed from bar i's close, filled at
+  // that same close). "nextOpen" is the more conservative alternative: a
+  // decision made from bar i's data is filled at bar i+1's open instead.
+  const [fillTiming, setFillTiming] = useLocalStorageState("lensa.backtest.fillTiming", "close");
+
+  const [walkForwardRunning, setWalkForwardRunning] = useState(false);
+  const [walkForwardResult, setWalkForwardResult] = useState(null);
+
   const [collapsedSections, setCollapsedSections] = useLocalStorageState("lensa.backtest.collapsed", {});
   const toggleSection = (id) => setCollapsedSections((prev) => ({ ...prev, [id]: !prev[id] }));
 
@@ -109,6 +138,14 @@ export default function Backtest() {
         }
     : null;
 
+  // Risk-based sizing needs an actual stop-loss distance to size against; if
+  // Stop-Loss isn't enabled (or has no percent set), sizing quietly stays
+  // "allIn" here at the UI layer, matching the graceful all-in fallback
+  // the engines themselves apply when sizing is passed but no
+  // stopLossPercent is available.
+  const sizingAvailable = sizingMode === "riskPercent" && riskParams?.stopLossPercent > 0;
+  const sizing = sizingAvailable ? { mode: "riskPercent", riskPercent: Number(sizingRiskPercent) || 1 } : null;
+
   // Binance is the only exchange this app wires up for futures (see
   // SymbolSearch.jsx), and each market type there uses a different pair
   // suffix (Coin-M uses `${base}USD_PERP`, not `${base}USDT`), so switching
@@ -131,10 +168,11 @@ export default function Backtest() {
 
   function handleStrategyChange(key) {
     setStrategyKey(key);
-    setParams(STRATEGIES[key].params);
+    setParams(allStrategies[key]?.params || {});
     setResult(null);
     setFitInfo(null);
     setLiveSignal(null);
+    setWalkForwardResult(null);
   }
 
   async function fetchCandles() {
@@ -155,6 +193,7 @@ export default function Backtest() {
     setAggregate(null);
     setAutoFitResult(null);
     setFitInfo(null);
+    setWalkForwardResult(null);
     try {
       const candles = await fetchCandles();
       if (candles.length < 30) throw new Error(t("bt.noData"));
@@ -179,8 +218,8 @@ export default function Backtest() {
 
       const strategyResult =
         effectiveLeverage > 1 || effectiveDirection !== "long"
-          ? runLeveragedBacktest({ candles, signals, feePercent: Number(fee), leverage: effectiveLeverage, riskParams: effectiveRiskParams })
-          : runBacktest({ candles, signals, feePercent: Number(fee), riskParams: effectiveRiskParams });
+          ? runLeveragedBacktest({ candles, signals, feePercent: Number(fee), leverage: effectiveLeverage, riskParams: effectiveRiskParams, sizing, fillTiming })
+          : runBacktest({ candles, signals, feePercent: Number(fee), riskParams: effectiveRiskParams, sizing, fillTiming });
       const benchmark = runBacktest({
         candles,
         signals: STRATEGIES.buyAndHold.generateSignals(candles),
@@ -219,6 +258,8 @@ export default function Backtest() {
         leverage: effectiveLeverage,
         feePercent: Number(fee),
         riskParams: riskEnabled && !autoFit ? riskParams : null,
+        sizing,
+        fillTiming,
       });
       if (!fit) {
         setFitInfo({ unavailable: true });
@@ -234,14 +275,14 @@ export default function Backtest() {
       const signals = combineDirectionalSignals(strategy, candles, fit.bestParams, effectiveDirection);
       let effectiveRiskParams = riskEnabled && !autoFit ? riskParams : null;
       if (riskEnabled && autoFit) {
-        const autoFitted = autoFitRiskExits({ candles, signals, feePercent: Number(fee), leverage: effectiveLeverage });
+        const autoFitted = autoFitRiskExits({ candles, signals, feePercent: Number(fee), leverage: effectiveLeverage, sizing, fillTiming });
         setAutoFitResult(autoFitted);
         effectiveRiskParams = autoFitted ? { stopLossPercent: autoFitted.stopLossPercent, takeProfitPercent: autoFitted.takeProfitPercent } : null;
       }
       const strategyResult =
         effectiveLeverage > 1 || effectiveDirection !== "long"
-          ? runLeveragedBacktest({ candles, signals, feePercent: Number(fee), leverage: effectiveLeverage, riskParams: effectiveRiskParams })
-          : runBacktest({ candles, signals, feePercent: Number(fee), riskParams: effectiveRiskParams });
+          ? runLeveragedBacktest({ candles, signals, feePercent: Number(fee), leverage: effectiveLeverage, riskParams: effectiveRiskParams, sizing, fillTiming })
+          : runBacktest({ candles, signals, feePercent: Number(fee), riskParams: effectiveRiskParams, sizing, fillTiming });
       const benchmark = runBacktest({ candles, signals: STRATEGIES.buyAndHold.generateSignals(candles), feePercent: Number(fee) });
       setResult(strategyResult);
       setBenchmarkResult(benchmark);
@@ -268,12 +309,14 @@ export default function Backtest() {
       setDataMeta(candles.meta || null);
       setAnalysisMarket(snapshotMarket(market));
       const fits = optimizeAllStrategies({
-        strategies: STRATEGIES,
+        strategies: allStrategies,
         candles,
         direction: effectiveDirection,
         leverage: effectiveLeverage,
         feePercent: Number(fee),
         riskParams: riskEnabled && !autoFit ? riskParams : null,
+        sizing,
+        fillTiming,
       });
       const paramsByKey = {};
       let improvedCount = 0;
@@ -284,7 +327,7 @@ export default function Backtest() {
       setFitAllParams(paramsByKey);
       setFitAllInfo({ strategyCount: Object.keys(fits).length, improvedCount });
       const fittedStrategies = Object.fromEntries(
-        Object.entries(STRATEGIES).map(([key, s]) => [key, paramsByKey[key] ? { ...s, params: paramsByKey[key] } : s])
+        Object.entries(allStrategies).map(([key, s]) => [key, paramsByKey[key] ? { ...s, params: paramsByKey[key] } : s])
       );
       setAggregate(
         runAllStrategies({
@@ -294,6 +337,8 @@ export default function Backtest() {
           leverage: effectiveLeverage,
           direction: effectiveDirection,
           riskParams: riskEnabled && !autoFit ? riskParams : null,
+          sizing,
+          fillTiming,
         })
       );
     } catch (err) {
@@ -354,11 +399,13 @@ export default function Backtest() {
       setAggregate(
         runAllStrategies({
           candles,
-          strategies: STRATEGIES,
+          strategies: allStrategies,
           feePercent: Number(fee),
           leverage: effectiveLeverage,
           direction: effectiveDirection,
           riskParams: riskEnabled && !autoFit ? riskParams : null,
+          sizing,
+          fillTiming,
         })
       );
     } catch (err) {
@@ -370,6 +417,40 @@ export default function Backtest() {
     }
   }
 
+  // Out-of-sample check for the currently selected strategy: fits on the
+  // first share of history, then scores both the fitted params and the
+  // shipped defaults on the untouched remainder. See walkForwardValidate()
+  // in lib/optimize.js for why this matters and what a big train/test gap
+  // means.
+  async function handleWalkForward() {
+    setWalkForwardRunning(true);
+    setError(null);
+    try {
+      const candles = await fetchCandles();
+      if (candles.length < 30) throw new Error(t("bt.noData"));
+      updateFromCandles(candles);
+      setDataMeta(candles.meta || null);
+      setAnalysisMarket(snapshotMarket(market));
+      const wf = walkForwardValidate({
+        strategy,
+        candles,
+        direction: effectiveDirection,
+        leverage: effectiveLeverage,
+        feePercent: Number(fee),
+        riskParams: riskEnabled && !autoFit ? riskParams : null,
+        sizing,
+        fillTiming,
+      });
+      setWalkForwardResult(wf || { unavailable: true });
+    } catch (err) {
+      setError(err.message);
+      setDataMeta(qualityMetaFromError(err, market.exchange));
+      setAnalysisMarket(null);
+    } finally {
+      setWalkForwardRunning(false);
+    }
+  }
+
   function handleInspectStrategy(key) {
     handleStrategyChange(key);
     if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
@@ -377,8 +458,8 @@ export default function Backtest() {
 
   const grouped = CATEGORY_ORDER.map((cat) => ({
     cat,
-    items: Object.entries(STRATEGIES).filter(([, s]) => s.category === cat),
-  }));
+    items: Object.entries(allStrategies).filter(([, s]) => s.category === cat),
+  })).filter((g) => g.items.length > 0);
   const report =
     result && benchmarkResult
       ? {
@@ -536,6 +617,25 @@ export default function Backtest() {
         </ControlsSection>
 
         <ControlsSection
+          id="customStrategy"
+          title={t("bt.section.custom")}
+          badge={customCount > 0 ? t("bt.section.custom.count", { n: customCount }) : null}
+          collapsed={collapsedSections.customStrategy !== false}
+          onToggle={() => toggleSection("customStrategy")}
+        >
+          <StrategyBuilder
+            t={t}
+            activeStrategyKey={strategyKey}
+            onSaved={(id) => {
+              setStrategiesVersion((v) => v + 1);
+              handleStrategyChange(id);
+            }}
+            onDeleted={() => setStrategiesVersion((v) => v + 1)}
+            onCountChange={setCustomCount}
+          />
+        </ControlsSection>
+
+        <ControlsSection
           id="risk"
           title={t("bt.section.risk")}
           badge={
@@ -609,6 +709,52 @@ export default function Backtest() {
           )}
         </ControlsSection>
 
+        <ControlsSection
+          id="execution"
+          title={t("bt.section.execution")}
+          badge={sizingAvailable ? t("bt.sizing.badge", { n: sizingRiskPercent }) : null}
+          collapsed={collapsedSections.execution !== false}
+          onToggle={() => toggleSection("execution")}
+        >
+          <div className="control-group control-group--wide">
+            <label>
+              {t("bt.sizing")}
+              <InfoTip term="glossary.btSizing" />
+            </label>
+            <select value={sizingMode} onChange={(e) => setSizingMode(e.target.value)}>
+              <option value="allIn">{t("bt.sizing.allIn")}</option>
+              <option value="riskPercent">{t("bt.sizing.riskPercent")}</option>
+            </select>
+            {sizingMode === "riskPercent" && !(riskEnabled && slEnabled) && (
+              <small className="control-hint control-hint--warn">{t("bt.sizing.needsSl")}</small>
+            )}
+          </div>
+          {sizingMode === "riskPercent" && (
+            <div className="control-group">
+              <label>{t("bt.sizing.riskPercent.label")}</label>
+              <input
+                type="number"
+                min="0.1"
+                max="100"
+                step="0.25"
+                value={sizingRiskPercent}
+                onChange={(e) => setSizingRiskPercent(e.target.value)}
+              />
+              <small className="control-hint">{t("bt.sizing.riskPercent.hint")}</small>
+            </div>
+          )}
+          <div className="control-group control-group--wide">
+            <label>
+              {t("bt.fillTiming")}
+              <InfoTip term="glossary.btFillTiming" />
+            </label>
+            <select value={fillTiming} onChange={(e) => setFillTiming(e.target.value)}>
+              <option value="close">{t("bt.fillTiming.close")}</option>
+              <option value="nextOpen">{t("bt.fillTiming.nextOpen")}</option>
+            </select>
+          </div>
+        </ControlsSection>
+
         <ControlsSection id="run" title={t("bt.section.run")} collapsed={false} onToggle={null}>
           <div className="run-btn-row">
             <button className="run-btn" onClick={handleRun} disabled={loading || loadingAll || optimizing || optimizingAll}>
@@ -650,6 +796,49 @@ export default function Backtest() {
             <small className="control-hint control-hint--accent">
               {t("bt.fitAll.result", { improved: fitAllInfo.improvedCount, total: fitAllInfo.strategyCount })}
             </small>
+          )}
+          <div className="run-btn-row">
+            <button
+              className="run-btn run-btn--ghost"
+              onClick={handleWalkForward}
+              disabled={loading || loadingAll || optimizing || optimizingAll || walkForwardRunning}
+              title={t("bt.walkforward.hint")}
+            >
+              {walkForwardRunning ? t("bt.walkforward.running") : t("bt.walkforward")}
+              <InfoTip term="glossary.btWalkForward" />
+            </button>
+          </div>
+          {walkForwardResult?.unavailable && <small className="control-hint">{t("bt.walkforward.unavailable")}</small>}
+          {walkForwardResult && !walkForwardResult.unavailable && (
+            <div className="walkforward-summary">
+              <small className="control-hint">
+                {t("bt.walkforward.split", {
+                  train: walkForwardResult.trainCandleCount,
+                  test: walkForwardResult.testCandleCount,
+                })}
+              </small>
+              <div className="walkforward-row">
+                <span>{t("bt.walkforward.train")}</span>
+                <strong>{walkForwardResult.trainResult.totalReturnPercent.toFixed(1)}%</strong>
+              </div>
+              <div className="walkforward-row">
+                <span>{t("bt.walkforward.testFitted")}</span>
+                <strong>{walkForwardResult.testFittedResult.totalReturnPercent.toFixed(1)}%</strong>
+              </div>
+              <div className="walkforward-row">
+                <span>{t("bt.walkforward.testDefault")}</span>
+                <strong>{walkForwardResult.testDefaultResult.totalReturnPercent.toFixed(1)}%</strong>
+              </div>
+              {Number.isFinite(walkForwardResult.trainScore) &&
+                Number.isFinite(walkForwardResult.testScore) &&
+                walkForwardResult.trainScore > 0 && (
+                  <small className="control-hint control-hint--accent">
+                    {walkForwardResult.testScore < walkForwardResult.trainScore * 0.5
+                      ? t("bt.walkforward.warn")
+                      : t("bt.walkforward.ok")}
+                  </small>
+                )}
+            </div>
           )}
         </ControlsSection>
 

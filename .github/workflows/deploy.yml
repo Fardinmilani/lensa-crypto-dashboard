@@ -31,6 +31,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Lint
+        run: npm run lint
+
+      - name: Validate models
+        run: npm run test:models
+
       - name: Build
         env:
           VITE_MARKET_PROXY_ENDPOINTS: ${{ secrets.VITE_MARKET_PROXY_ENDPOINTS }}

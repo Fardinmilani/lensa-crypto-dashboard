@@ -1,4 +1,4 @@
-import { Fragment, Suspense, lazy, useState } from "react";
+import { Fragment, Suspense, lazy, useEffect, useState } from "react";
 import CoinSearch from "./components/CoinSearch";
 
 // Route-level code splitting: keeps chart-heavy pages out of the initial bundle.
@@ -22,11 +22,43 @@ const TABS = [
   { id: "risk", labelKey: "tab.risk", component: RiskTools, icon: GaugeIcon, group: "advanced" },
   { id: "about", labelKey: "tab.about", component: About, icon: InfoIcon, group: "meta" },
 ];
+const TAB_IDS = new Set(TABS.map((tab) => tab.id));
+
+function tabFromHash() {
+  if (typeof window === "undefined") return null;
+  const id = window.location.hash.replace("#", "");
+  return TAB_IDS.has(id) ? id : null;
+}
 
 export default function App() {
   const { t, toggle } = useI18n();
-  const [activeTab, setActiveTab] = useState("dashboard");
+  const [activeTab, setActiveTab] = useState(() => tabFromHash() || "dashboard");
   const ActiveComponent = TABS.find((tab) => tab.id === activeTab).component;
+
+  // Keep the URL hash and the active tab in sync both ways: switching tabs
+  // updates the hash (so the tab is bookmarkable/shareable), and using the
+  // browser's back/forward buttons (or opening a shared link) updates the
+  // active tab. No router dependency needed for six top-level tabs.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (window.location.hash.replace("#", "") !== activeTab) {
+      window.history.replaceState(null, "", `#${activeTab}`);
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    function onHashChange() {
+      const id = tabFromHash();
+      if (id) setActiveTab(id);
+    }
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
+
+  function selectTab(id) {
+    setActiveTab(id);
+    if (typeof window !== "undefined") window.history.pushState(null, "", `#${id}`);
+  }
 
   return (
     <CoinProvider>
@@ -64,7 +96,7 @@ export default function App() {
                     role="tab"
                     aria-selected={activeTab === tab.id}
                     className={`tab-btn ${activeTab === tab.id ? "active" : ""}`}
-                    onClick={() => setActiveTab(tab.id)}
+                    onClick={() => selectTab(tab.id)}
                   >
                     <Icon />
                     <span>{t(tab.labelKey)}</span>
