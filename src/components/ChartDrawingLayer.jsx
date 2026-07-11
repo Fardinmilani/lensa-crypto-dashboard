@@ -28,6 +28,10 @@ import {
 import { useLocalStorageState } from "../hooks/useLocalStorageState";
 
 const HISTORY_LIMIT = 30;
+// Minimum pixel movement between the first click and release of a two-point
+// tool before it counts as "the user dragged to place it" rather than "the
+// user is about to click a second point separately".
+const PLACEMENT_DRAG_THRESHOLD = 4;
 
 // Curated, professional default palette for drawings — mirrors the kind of
 // fixed swatch set TradingView/Bloomberg-style tools offer instead of an
@@ -95,6 +99,18 @@ export default function ChartDrawingLayer({ chart, series, candles, context, ren
   const undoStack = useRef([]);
   const redoStack = useRef([]);
   const dragState = useRef(null); // { id, handle, startAnchor, original }
+  // dragState above is deliberately a ref (mutated on every pointermove
+  // without forcing a re-render, for drag performance). isDraggingShape is a
+  // parallel piece of *state* purely so cursorClass below can react the
+  // instant a drag ends — reading dragState.current directly there used to
+  // leave the layer stuck on the "is-dragging" cursor/pointer-events after
+  // release, since nothing forced a re-render at that exact moment.
+  const [isDraggingShape, setIsDraggingShape] = useState(false);
+  // Tracks the pixel-space start point + whether real movement has happened
+  // since the first click of a two-point tool, so a natural "press, drag,
+  // release" gesture (like TradingView's own trend-line tool) can commit the
+  // shape on release, while a plain two-click placement still works too.
+  const placingDragRef = useRef({ startPixel: null, dragged: false });
   const fileInputRef = useRef(null);
   const svgRef = useRef(null);
 
@@ -200,6 +216,7 @@ export default function ChartDrawingLayer({ chart, series, candles, context, ren
       e.stopPropagation();
       pushHistory();
       dragState.current = { id: hit.id, handle: hit.handle, startAnchor: anchor, original: drawing };
+      setIsDraggingShape(true);
     }
 
     stage.addEventListener("pointermove", onMove);
@@ -216,6 +233,7 @@ export default function ChartDrawingLayer({ chart, series, candles, context, ren
     setPendingPoint(null);
     setLivePoint(null);
     setSelectedId(null);
+    placingDragRef.current = { startPixel: null, dragged: false };
   }
 
   function readAnchor(clientX, clientY) {
@@ -252,6 +270,7 @@ export default function ChartDrawingLayer({ chart, series, candles, context, ren
         if (!pendingPoint) {
           setPendingPoint(anchor);
           setLivePoint(anchor);
+          placingDragRef.current = { startPixel: pixelPoint(e.clientX, e.clientY), dragged: false };
           return;
         }
         const drawing = makeDrawing(tool, pendingPoint, anchor, style, context);
@@ -285,14 +304,45 @@ export default function ChartDrawingLayer({ chart, series, candles, context, ren
     if (tool !== "select" && pendingPoint) {
       const anchor = readAnchor(e.clientX, e.clientY);
       if (anchor) setLivePoint(anchor);
+      // Distinguish "click, then move to a second spot, then click again" from
+      // "press, drag, release" — TradingView supports both for its two-point
+      // tools, and users instinctively try the drag gesture first. Once the
+      // cursor has moved more than a few pixels from the first click without
+      // releasing, treat this as a drag-to-place gesture so pointerup below
+      // commits the shape instead of leaving it half-placed.
+      const start = placingDragRef.current.startPixel;
+      if (start && !placingDragRef.current.dragged) {
+        const current = pixelPoint(e.clientX, e.clientY);
+        const dist = Math.hypot(current.x - start.x, current.y - start.y);
+        if (dist > PLACEMENT_DRAG_THRESHOLD) placingDragRef.current.dragged = true;
+      }
       return;
     }
     // Hover detection in select mode is handled by the stage-level native
     // listener above, not here.
   }
 
-  function handlePointerUp() {
-    if (dragState.current) dragState.current = null;
+  function handlePointerUp(e) {
+    if (dragState.current) {
+      dragState.current = null;
+      setIsDraggingShape(false);
+      return;
+    }
+    if (tool !== "select" && pendingPoint && placingDragRef.current.dragged) {
+      // The user pressed, dragged, and released — commit the shape now
+      // rather than waiting for a separate second click, matching the
+      // click-and-drag gesture TradingView's own drawing tools support.
+      const anchor = readAnchor(e.clientX, e.clientY);
+      if (anchor) {
+        e.preventDefault();
+        const drawing = makeDrawing(tool, pendingPoint, anchor, style, context);
+        commitDrawings([...drawings, drawing]);
+        setSelectedId(drawing.id);
+      }
+      setPendingPoint(null);
+      setLivePoint(null);
+      selectTool("select");
+    }
   }
 
   function handleDoubleClick() {
@@ -375,7 +425,7 @@ export default function ChartDrawingLayer({ chart, series, candles, context, ren
     reader.readAsText(file);
   }
 
-  const cursorClass = tool !== "select" ? "is-placing" : dragState.current ? "is-dragging" : hoverId ? "is-hovering" : "is-selecting";
+  const cursorClass = tool !== "select" ? "is-placing" : isDraggingShape ? "is-dragging" : hoverId ? "is-hovering" : "is-selecting";
 
   return (
     <>
