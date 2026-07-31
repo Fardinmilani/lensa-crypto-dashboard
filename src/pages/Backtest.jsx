@@ -1,8 +1,9 @@
 import { useMemo, useState } from "react";
 import { STRATEGIES, PARAM_LABELS, DIRECTION_MODES, combineDirectionalSignals, currentSignalState } from "../lib/strategies";
-import { runBacktest, runLeveragedBacktest, runAllStrategies, autoFitRiskExits } from "../lib/backtest";
+import { runBacktest, runLeveragedBacktest, runAllStrategies, autoFitRiskExits, summarizeEquityCurve } from "../lib/backtest";
 import { optimizeStrategy, optimizeAllStrategies, walkForwardValidate } from "../lib/optimize";
 import { getAllStrategies } from "../lib/customStrategies";
+import { OPTIONS_STRATEGIES, OPTION_PARAM_LABELS, runOptionsStrategy } from "../lib/options";
 import { getChartCandles } from "../lib/coingecko";
 import { formatUsd } from "../lib/priceFormat";
 import { qualityMetaFromError } from "../lib/dataQuality";
@@ -20,7 +21,7 @@ import { useStaggerReveal, useCountUp } from "../hooks/useAnimations";
 import { useLocalStorageState } from "../hooks/useLocalStorageState";
 import InfoTip from "../components/InfoTip";
 
-const CATEGORY_ORDER = ["trend", "momentum", "reversion", "hybrid", "custom"];
+const CATEGORY_ORDER = ["trend", "momentum", "reversion", "quant", "hybrid", "custom"];
 const LOOKBACK_PRESETS = [90, 180, 365, 730];
 const LEVERAGE_PRESETS = [1, 2, 3, 5, 10, 20, 25, 50, 75, 100];
 const IMPORTED_STRATEGY_KEY = "lensa.decision.importedStrategy";
@@ -112,6 +113,17 @@ export default function Backtest() {
 
   const [collapsedSections, setCollapsedSections] = useLocalStorageState("lensa.backtest.collapsed", {});
   const toggleSection = (id) => setCollapsedSections((prev) => ({ ...prev, [id]: !prev[id] }));
+
+  const [optionKind, setOptionKind] = useLocalStorageState("lensa.backtest.options.kind", "coveredCall");
+  const [optionParams, setOptionParams] = useLocalStorageState(
+    "lensa.backtest.options.params",
+    OPTIONS_STRATEGIES.coveredCall.params
+  );
+  const [optionResult, setOptionResult] = useState(null);
+  const [optionBenchmark, setOptionBenchmark] = useState(null);
+  const [optionRolls, setOptionRolls] = useState([]);
+  const [optionLoading, setOptionLoading] = useState(false);
+  const [optionError, setOptionError] = useState(null);
 
   // Best-fit parameter search (per-strategy and all-strategies) — see
   // lib/optimize.js. `optimizing`/`optimizingAll` drive button spinners;
@@ -454,6 +466,58 @@ export default function Backtest() {
   function handleInspectStrategy(key) {
     handleStrategyChange(key);
     if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function handleOptionKindChange(kind) {
+    setOptionKind(kind);
+    setOptionParams(OPTIONS_STRATEGIES[kind]?.params || {});
+    setOptionResult(null);
+    setOptionBenchmark(null);
+    setOptionRolls([]);
+    setOptionError(null);
+  }
+
+  // Options strategies don't fit the signals-array interface every other
+  // strategy on this page uses (their payoff is a periodic roll, not a
+  // per-candle position multiplier) — see lib/options.js — so this runs its
+  // own small pipeline rather than going through handleRun()/runBacktest().
+  // It still ends by feeding a plain {time, equity} curve into
+  // summarizeEquityCurve() so the KPIs and chart below are pixel-identical
+  // in shape to every other result on this page.
+  async function handleRunOptions() {
+    setOptionLoading(true);
+    setOptionError(null);
+    try {
+      const candles = await fetchCandles();
+      if (candles.length < 30) throw new Error(t("bt.noData"));
+      const sim = runOptionsStrategy({ candles, kind: optionKind, params: optionParams, initialCapital: 10000 });
+      if (sim.error) throw new Error(sim.error);
+      // Buy & Hold over the exact same sub-range the option strategy
+      // actually traded (it only starts once enough history exists for a
+      // volatility estimate), for an apples-to-apples comparison.
+      const benchCandles = candles.slice(sim.startIdx);
+      const bench = runBacktest({
+        candles: benchCandles,
+        signals: STRATEGIES.buyAndHold.generateSignals(benchCandles),
+        feePercent: 0,
+      });
+      setOptionBenchmark(bench);
+      setOptionResult(
+        summarizeEquityCurve(sim.equityCurve, {
+          initialCapital: sim.initialCapital,
+          candles,
+          benchmarkReturnPercent: bench.totalReturnPercent,
+        })
+      );
+      setOptionRolls(sim.rolls);
+    } catch (err) {
+      setOptionError(err.message);
+      setOptionResult(null);
+      setOptionBenchmark(null);
+      setOptionRolls([]);
+    } finally {
+      setOptionLoading(false);
+    }
   }
 
   const grouped = CATEGORY_ORDER.map((cat) => ({
@@ -851,6 +915,42 @@ export default function Backtest() {
         >
           <StrategyDocs activeStrategyKey={strategyKey} />
         </ControlsSection>
+
+        <ControlsSection
+          id="options"
+          title={t("bt.section.options")}
+          badge={t("bt.section.options.badge")}
+          collapsed={collapsedSections.options !== false}
+          onToggle={() => toggleSection("options")}
+        >
+          <p className="section-note control-group--full">{t("bt.options.intro")}</p>
+          <div className="control-group control-group--wide">
+            <label>{t("bt.options.strategy")}</label>
+            <select value={optionKind} onChange={(e) => handleOptionKindChange(e.target.value)}>
+              {Object.entries(OPTIONS_STRATEGIES).map(([key, s]) => (
+                <option key={key} value={key}>{pick(lang, s.label)}</option>
+              ))}
+            </select>
+          </div>
+          {Object.entries(optionParams).map(([name, value]) => (
+            <div className="control-group" key={name}>
+              <label>{pick(lang, OPTION_PARAM_LABELS[name]) || name}</label>
+              <input
+                type="number"
+                value={value}
+                onChange={(e) => setOptionParams((prev) => ({ ...prev, [name]: Number(e.target.value) }))}
+              />
+            </div>
+          ))}
+          <p className="strategy-description control-group--full">{pick(lang, OPTIONS_STRATEGIES[optionKind]?.description)}</p>
+          <small className="control-hint control-hint--accent control-group--full">{t("bt.options.disclaimer")}</small>
+          <div className="run-btn-row control-group--full">
+            <button className="run-btn" onClick={handleRunOptions} disabled={optionLoading}>
+              {optionLoading ? t("bt.running") : t("bt.options.run")}
+            </button>
+          </div>
+          {optionError && <p className="news-error control-group--full">{optionError}</p>}
+        </ControlsSection>
       </div>
 
       <div className="guide-card glass-card reveal">
@@ -969,6 +1069,56 @@ export default function Backtest() {
           onInspect={handleInspectStrategy}
           fitAllParams={fitAllParams}
         />
+      )}
+
+      {optionResult && (
+        <div className="backtest-results">
+          <div className="panel-header"><h2>{t("bt.options.results")}</h2></div>
+          <div className="stats-grid">
+            <Stat label={t("bt.stat.return")} value={optionResult.totalReturnPercent} suffix="%" tone={optionResult.totalReturnPercent >= 0 ? "up" : "down"} />
+            <Stat label={t("bt.stat.bench")} value={optionResult.benchmarkReturnPercent} suffix="%" tone={optionResult.benchmarkReturnPercent >= 0 ? "up" : "down"} tip="glossary.benchmark" />
+            <Stat label={t("bt.stat.dd")} value={optionResult.maxDrawdownPercent} suffix="%" tone="down" prefix="-" abs tip="glossary.maxDrawdown" />
+            <Stat label={t("bt.stat.sharpe")} value={optionResult.sharpe} decimals={2} tone={optionResult.sharpe >= 1 ? "up" : ""} tip="glossary.sharpe" />
+            <Stat label={t("bt.stat.sortino")} value={optionResult.sortino} decimals={2} tip="glossary.sortino" />
+          </div>
+          <div className="chart-card glass-card reveal">
+            <EquityChart
+              equityCurve={optionResult.equityCurve}
+              benchmarkCurve={optionBenchmark?.equityCurve}
+              strategyTitle={pick(lang, OPTIONS_STRATEGIES[optionKind]?.label)}
+              benchmarkTitle={t("bt.stat.bench")}
+            />
+          </div>
+          {optionRolls.length > 0 && (
+            <div className="chart-card glass-card reveal">
+              <div className="panel-header"><h3>{t("bt.options.rolls", { n: optionRolls.length })}</h3></div>
+              <div className="table-scroll">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>{t("bt.options.col.date")}</th>
+                      <th>{t("bt.options.col.action")}</th>
+                      <th className="num">{t("bt.options.col.strike")}</th>
+                      <th className="num">{t("bt.options.col.vol")}</th>
+                      <th className="num">{t("bt.options.col.premium")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {optionRolls.map((roll, i) => (
+                      <tr key={i}>
+                        <td data-label={t("bt.options.col.date")}>{new Date(roll.time * 1000).toLocaleDateString(locale)}</td>
+                        <td data-label={t("bt.options.col.action")}>{t(`bt.options.action.${roll.action}`)}</td>
+                        <td className="num" data-label={t("bt.options.col.strike")}>{formatUsd(roll.strike, market.precision, { mode: "trading" })}</td>
+                        <td className="num" data-label={t("bt.options.col.vol")}>{(roll.sigma * 100).toFixed(1)}%</td>
+                        <td className="num" data-label={t("bt.options.col.premium")}>{formatUsd(roll.premium, market.precision, { mode: "trading" })}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

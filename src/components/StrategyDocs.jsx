@@ -50,6 +50,26 @@ const STRATEGY_DOCS = {
     },
     short: false,
   },
+  smaCrossover1226: {
+    category_label: { en: "Trend following", fa: "پیرو روند" },
+    entry: {
+      en: "Identical mechanics to SMA Crossover, fixed at the 12/26 pair — MACD's own periods applied straight to price instead of to EMAs. Long while the 12-SMA is above the 26-SMA, flat otherwise.",
+      fa: "همان مکانیک SMA Crossover، این‌بار ثابت روی جفت ۱۲/۲۶ — همان دوره‌های MACD، مستقیم روی قیمت به‌جای EMA. تا وقتی SMA-۱۲ بالای SMA-۲۶ باشد لانگ، در غیر این‌صورت فلت.",
+    },
+    good: {
+      en: "The same conditions SMA Crossover likes — sustained trends — but with a specific, widely-recognized period pair some traders prefer to test alongside the EMA 12/26 (MACD) version.",
+      fa: "همان شرایطی که SMA Crossover دوست دارد — روندهای پایدار — ولی با جفت‌دوره‌ای مشخص و شناخته‌شده که برخی معامله‌گران دوست دارند کنار نسخه‌ی EMA ۱۲/۲۶ (MACD) تست کنند.",
+    },
+    bad: {
+      en: "Same weaknesses as any SMA cross: whipsaws in ranging markets, lag on reversals.",
+      fa: "همان ضعف‌های هر تقاطع SMA: سیگنال کاذب در بازار رنج، تأخیر در بازگشت‌ها.",
+    },
+    params: {
+      en: "fastPeriod (12) / slowPeriod (26): fixed to MACD's periods by default, but still tunable like any other strategy here.",
+      fa: "fastPeriod (۱۲) / slowPeriod (۲۶): پیش‌فرض همان دوره‌های MACD، ولی مثل هر استراتژی دیگر این‌جا قابل تنظیم است.",
+    },
+    short: true,
+  },
   rsiThreshold: {
     category_label: { en: "Mean reversion", fa: "بازگشت به میانگین" },
     entry: {
@@ -89,6 +109,46 @@ const STRATEGY_DOCS = {
       fa: "۱۲/۲۶/۹: سه‌گانه کلاسیک. نسخه سریع‌تر: ۵/۱۳/۱. در تایم‌فریم کوچک‌تر از مقادیر کمتر استفاده کنید.",
     },
     short: false,
+  },
+  stochasticOscillator: {
+    category_label: { en: "Momentum / oscillator", fa: "مومنتوم / نوسان‌گر" },
+    entry: {
+      en: "Long when %K crosses above %D while %K was below the oversold line (default: 20). Exit when %K crosses back below %D while %K was above the overbought line (default: 80). With Short: the mirrored crosses at the opposite extreme.",
+      fa: "لانگ وقتی %K از %D عبور کند در حالی که %K زیر خط اشباع فروش (پیش‌فرض: ۲۰) بوده. خروج با تقاطع معکوس وقتی %K بالای اشباع خرید (پیش‌فرض: ۸۰) بوده. با شورت: تقاطع‌های آینه‌ای در سمت مقابل.",
+    },
+    good: {
+      en: "Range-bound, oscillating markets — the same conditions RSI Threshold likes, but the %K/%D cross adds a timing confirmation instead of a bare threshold touch.",
+      fa: "بازارهای رنج و نوسانی — همان شرایطی که RSI Threshold دوست دارد، ولی تقاطع %K/%D یک تأیید زمانی اضافه اضافه می‌کند به‌جای صرفاً لمس آستانه.",
+    },
+    bad: {
+      en: "Strong trends — the oscillator can sit pinned near an extreme for a long stretch without producing the confirming cross.",
+      fa: "روندهای قوی — نوسان‌گر می‌تواند مدت زیادی نزدیک یک انتها بماند بدون این‌که تقاطع تأییدی رخ دهد.",
+    },
+    params: {
+      en: "kPeriod (14) / dPeriod (3): the classic \"slow stochastic\" pair. oversold/overbought (20/80): widen to 10/90 for fewer, higher-conviction signals.",
+      fa: "kPeriod (۱۴) / dPeriod (۳): جفت کلاسیک «استوکاستیک آهسته». oversold/overbought (۲۰/۸۰): تا ۱۰/۹۰ برای سیگنال‌های کمتر ولی مطمئن‌تر.",
+    },
+    short: true,
+  },
+  connorsRsi2: {
+    category_label: { en: "Mean reversion", fa: "بازگشت به میانگین" },
+    entry: {
+      en: "Long when a very fast RSI(2) drops below oversold (default: 10) while price is above a long-term trend filter (default: SMA 200) — buying a dip inside an uptrend. Exit once RSI(2) recovers past the exit level (default: 70). With Short: the mirrored condition below the trend filter.",
+      fa: "لانگ وقتی RSI(2) بسیار سریع زیر اشباع فروش (پیش‌فرض: ۱۰) برود در حالی که قیمت بالای فیلتر روند بلندمدت (پیش‌فرض: SMA ۲۰۰) باشد — خرید افت داخل روند صعودی. با بازگشت RSI(2) بالای سطح خروج (پیش‌فرض: ۷۰) خارج می‌شود. با شورت: شرط آینه‌ای زیر فیلتر روند.",
+    },
+    good: {
+      en: "Well-documented (Connors & Alvarez) short-term edge in liquid markets that trend gently upward with regular pullbacks. Designed for daily timeframes originally, though it can be tried on others.",
+      fa: "یک edge کوتاه‌مدت مستندشده (کانرز و آلوارز) در بازارهای نقدشونده که به‌آرامی صعودی هستند و پولبک منظم دارند. اصالتاً برای تایم‌فریم روزانه طراحی شده، هرچند روی بقیه هم قابل تست است.",
+    },
+    bad: {
+      en: "Bear markets or assets without a genuine long-term uptrend — the trend filter (price above SMA 200) rarely passes, so the strategy simply stays out for long stretches.",
+      fa: "بازارهای نزولی یا دارایی‌هایی بدون روند صعودی بلندمدت واقعی — فیلتر روند (قیمت بالای SMA ۲۰۰) به‌ندرت برقرار می‌شود و استراتژی مدت زیادی بیرون می‌ماند.",
+    },
+    params: {
+      en: "rsiPeriod (2): deliberately very short/reactive — this is the core of Connors' method, not a typo. oversold (10) / exitRsi (70): the entry/exit RSI levels. trendPeriod (200): the trend filter's SMA length.",
+      fa: "rsiPeriod (۲): عمداً بسیار کوتاه/واکنشی — این هسته‌ی روش کانرز است، اشتباه تایپی نیست. oversold (۱۰) / exitRsi (۷۰): سطوح ورود/خروج RSI. trendPeriod (۲۰۰): طول SMA فیلتر روند.",
+    },
+    short: true,
   },
   bollingerReversion: {
     category_label: { en: "Mean reversion", fa: "بازگشت به میانگین" },
@@ -150,6 +210,86 @@ const STRATEGY_DOCS = {
     },
     short: true,
   },
+  supertrend: {
+    category_label: { en: "Trend following (ATR)", fa: "پیرو روند (ATR)" },
+    entry: {
+      en: "Long while price closes above the Supertrend line, short while below. The line is an ATR-scaled trailing band that only ever tightens toward price during a trend, and flips the instant a close breaks through it.",
+      fa: "تا وقتی قیمت بالای خط سوپرترند بسته شود لانگ، زیر آن شورت. این خط یک باند پیرو با مقیاس ATR است که در طول روند فقط به قیمت نزدیک‌تر می‌شود، و به‌محض شکسته‌شدن با یک بسته‌شدن، طرف عوض می‌کند.",
+    },
+    good: {
+      en: "Trending markets, especially on crypto's more volatile pairs where a fixed-percentage stop would get hit constantly — the ATR scaling adapts the stop distance to current volatility automatically.",
+      fa: "بازارهای ترند، به‌خصوص جفت‌ارزهای پرنوسان‌تر کریپتو که استاپ درصدی ثابت مدام فعال می‌شود — مقیاس ATR فاصله‌ی استاپ را خودکار با نوسان فعلی وفق می‌دهد.",
+    },
+    bad: {
+      en: "Choppy, range-bound markets — frequent flips generate repeated small losses, the classic weakness of any stop-and-reverse system.",
+      fa: "بازارهای رنج و متلاطم — تغییرات مکرر ضررهای کوچک تکراری می‌سازد، ضعف کلاسیک هر سیستم توقف-و-معکوس.",
+    },
+    params: {
+      en: "atrPeriod (10): the ATR smoothing length. atrMult (3): larger = wider band, fewer whipsaws but later flips; smaller = tighter, faster flips but more noise.",
+      fa: "atrPeriod (۱۰): طول هموارسازی ATR. atrMult (۳): بزرگتر = باند عریض‌تر، سیگنال کاذب کمتر ولی تغییر دیرتر؛ کوچکتر = باند تنگ‌تر، تغییر سریع‌تر ولی نویز بیشتر.",
+    },
+    short: true,
+  },
+  keltnerBreakout: {
+    category_label: { en: "Breakout / Trend", fa: "شکست / ترند" },
+    entry: {
+      en: "Enter long when price closes above the upper Keltner band (EMA midline + atrMult×ATR). Exit when price falls back below the midline. With Short: short below the lower band, cover back at the midline.",
+      fa: "لانگ وقتی قیمت بالای باند بالایی کلتنر (خط میانی EMA + atrMult×ATR) بسته شود. خروج زیر خط میانی. با شورت: شورت زیر باند پایین، پوشش در بازگشت به خط میانی.",
+    },
+    good: {
+      en: "The same low-volatility-squeeze-then-expansion setup Bollinger Breakout likes, but ATR's true-range basis reacts faster to gap-heavy or wick-heavy candles than standard deviation does.",
+      fa: "همان فشردگیِ کم‌نوسان و سپس انبساط که Bollinger Breakout دوست دارد، ولی مبنای دامنه‌ی واقعی ATR به کندل‌های شکاف‌دار یا سایه‌دار سریع‌تر از انحراف معیار واکنش می‌دهد.",
+    },
+    bad: {
+      en: "Already-trending markets — same risk as Bollinger Breakout of buying an extended move rather than a genuine new breakout.",
+      fa: "بازارهای از قبل ترند — همان ریسک Bollinger Breakout: خرید یک حرکت کشیده‌شده به‌جای شکست واقعی جدید.",
+    },
+    params: {
+      en: "emaPeriod (20): the channel's midline. atrPeriod (10) / atrMult (2): the ATR band width — widen atrMult to 2.5–3 to cut down false breakouts.",
+      fa: "emaPeriod (۲۰): خط میانی کانال. atrPeriod (۱۰) / atrMult (۲): عرض باند ATR — تا ۲.۵–۳ افزایش دهید تا شکست‌های کاذب کم شوند.",
+    },
+    short: true,
+  },
+  ichimokuCloud: {
+    category_label: { en: "Trend following (Ichimoku)", fa: "پیرو روند (ایچیموکو)" },
+    entry: {
+      en: "Long when the Tenkan-sen (fast midpoint line) crosses above the Kijun-sen (slow midpoint line) while price trades above the Kumo (cloud). Short on the mirrored cross below the cloud. Chikou span is not used — this is the TK-cross-with-cloud-filter subset of the full system.",
+      fa: "لانگ وقتی تنکان‌سن (خط میانی سریع) از کیجون‌سن (خط میانی کند) بالاتر برود و قیمت بالای کومو (ابر) معامله شود. شورت با تقاطع آینه‌ای زیر ابر. چیکو اسپن استفاده نمی‌شود — این زیرمجموعه‌ی تقاطع تنکان/کیجون با فیلتر ابر از کل سیستم است.",
+    },
+    good: {
+      en: "Well-trending markets on 4h–daily timeframes, where the wide Kumo acts as a strong support/resistance zone rather than just a lagging average.",
+      fa: "بازارهای با روند خوب روی تایم‌فریم ۴h تا روزانه، جایی که کومو عریض به‌عنوان یک ناحیه‌ی حمایت/مقاومت قوی عمل می‌کند، نه فقط یک میانگین با تأخیر.",
+    },
+    bad: {
+      en: "Requires a long history before the first signal (52 + 26 candles minimum) and reacts slowly — three separate lookback windows means real lag by design.",
+      fa: "به تاریخچه‌ی طولانی قبل از اولین سیگنال نیاز دارد (حداقل ۵۲ + ۲۶ کندل) و کند واکنش می‌دهد — سه پنجره‌ی نگاه‌به‌گذشته‌ی جدا یعنی تأخیر واقعی از طراحی.",
+    },
+    params: {
+      en: "tenkanPeriod (9) / kijunPeriod (26) / senkouBPeriod (52): the standard Ichimoku triple. Rarely changed, since these periods were chosen to map to a 6-day trading week historically.",
+      fa: "tenkanPeriod (۹) / kijunPeriod (۲۶) / senkouBPeriod (۵۲): سه‌گانه‌ی استاندارد ایچیموکو. به‌ندرت تغییر می‌کند چون این دوره‌ها تاریخاً برای هفته‌ی معاملاتی ۶-روزه انتخاب شده‌اند.",
+    },
+    short: true,
+  },
+  parabolicSar: {
+    category_label: { en: "Trend following / reversal", fa: "پیرو روند / بازگشتی" },
+    entry: {
+      en: "Long while the SAR dot sits below price, short while above. The dot accelerates toward price as a trend ages, so a flip after a long, mature trend arrives sooner than one after a fresh trend.",
+      fa: "تا وقتی نقطه‌ی SAR زیر قیمت باشد لانگ، بالای قیمت شورت. نقطه هرچه روند مسن‌تر شود سریع‌تر به قیمت نزدیک می‌شود، پس تغییر بعد از یک روند طولانی و بالغ زودتر از یک روند تازه می‌رسد.",
+    },
+    good: {
+      en: "Strong, sustained directional moves — Wilder designed this specifically as a trailing-stop system for an existing trend, not an entry timer for a new one.",
+      fa: "حرکات جهت‌دار قوی و پایدار — وایلدر این را دقیقاً به‌عنوان یک سیستم استاپ پیرو برای روند موجود طراحی کرد، نه یک تایمر ورود برای روند جدید.",
+    },
+    bad: {
+      en: "Sideways or choppy markets — the accelerating dot flips back and forth rapidly, and each flip in this backtest is a full position reversal, so costs compound quickly.",
+      fa: "بازارهای رنج یا متلاطم — نقطه‌ی شتاب‌گیرنده مدام جلو و عقب می‌رود، و هر تغییر در این بک‌تست یک معکوس‌سازی کامل پوزیشن است، پس هزینه‌ها سریع جمع می‌شوند.",
+    },
+    params: {
+      en: "afStart (0.02) / afStep (0.02) / afMax (0.2): Wilder's original defaults. Lowering afMax slows down how aggressively the stop tightens in a long trend, giving it more room.",
+      fa: "afStart (۰.۰۲) / afStep (۰.۰۲) / afMax (۰.۲): پیش‌فرض‌های اصلی وایلدر. کاهش afMax سرعت تنگ‌شدن استاپ در یک روند طولانی را کم می‌کند و فضای بیشتری می‌دهد.",
+    },
+    short: true,
+  },
   momentum: {
     category_label: { en: "Momentum (Rate of Change)", fa: "مومنتوم (نرخ تغییر)" },
     entry: {
@@ -169,6 +309,26 @@ const STRATEGY_DOCS = {
       fa: "period (۱۴): دوره ROC. بزرگتر = هموارتر، کمتر معامله. threshold (0): تا ۲–۵ بالا ببرید تا مومنتوم ضعیف حذف شود.",
     },
     short: false,
+  },
+  atrVolatilityBreakout: {
+    category_label: { en: "Volatility breakout", fa: "شکست نوسانی" },
+    entry: {
+      en: "Long the instant one candle's close moves further than atrMult×ATR from the previous close (a genuine volatility expansion, not just a big percentage move). Flat/short on the opposite move. With Short: the mirrored downside breakout.",
+      fa: "به‌محض این‌که بسته‌شدن یک کندل بیش از atrMult×ATR از بسته‌شدن قبلی حرکت کند لانگ می‌شود (انبساط نوسانی واقعی، نه صرفاً یک حرکت درصدی بزرگ). با حرکت معکوس فلت/شورت. با شورت: شکست نزولی آینه‌ای.",
+    },
+    good: {
+      en: "Sudden regime changes — news-driven spikes, the start of a squeeze release — where a single candle's range genuinely dwarfs its recent neighbors, on any asset/timeframe (the ATR normalization makes it self-adjusting).",
+      fa: "تغییرات ناگهانی رژیم — جهش‌های خبری، شروع رهاسازی فشردگی — جایی که دامنه‌ی یک کندل واقعاً از همسایه‌های اخیرش بزرگ‌تر است، روی هر دارایی/تایم‌فریمی (نرمال‌سازی ATR آن را خودتنظیم می‌کند).",
+    },
+    bad: {
+      en: "Steadily choppy markets with no real volatility expansions — every random bar-to-bar wobble that happens to exceed the ATR multiple triggers a flip, with no underlying regime change behind it.",
+      fa: "بازارهای دائماً پرنوسان بدون انبساط واقعی — هر نوسان تصادفی کندل‌به‌کندل که تصادفاً از ضریب ATR بگذرد یک تغییر ایجاد می‌کند، بدون تغییر رژیم واقعی پشت آن.",
+    },
+    params: {
+      en: "atrPeriod (14): ATR smoothing length. atrMult (1): higher = requires a bigger, rarer expansion to trigger; lower = more sensitive, more frequent flips.",
+      fa: "atrPeriod (۱۴): طول هموارسازی ATR. atrMult (۱): بالاتر = نیاز به انبساط بزرگ‌تر و کمیاب‌تر برای فعال‌شدن؛ پایین‌تر = حساس‌تر، تغییرات مکررتر.",
+    },
+    short: true,
   },
   trendMomentumHybrid: {
     category_label: { en: "Hybrid: Trend + Momentum", fa: "ترکیبی: روند + مومنتوم" },
@@ -230,6 +390,26 @@ const STRATEGY_DOCS = {
     },
     short: false,
   },
+  monteCarloProbability: {
+    category_label: { en: "Quant / Simulation", fa: "کمّی / شبیه‌سازی" },
+    entry: {
+      en: "At every recalculation point, re-runs this app's own block-bootstrap Monte Carlo forecaster (the same engine behind the Forecast page) using only price history available up to that candle, projecting `horizon` candles ahead. Long while the simulated probability of a higher price clears longThreshold, short while it drops below shortThreshold, flat in between.",
+      fa: "در هر نقطه‌ی بازمحاسبه، همان موتور پیش‌بینیِ مونت‌کارلوی بلوک-بوت‌استرپ این ابزار (همان موتور پشت صفحه‌ی پیش‌بینی) را با فقط تاریخچه‌ی قیمت در دسترس تا همان کندل دوباره اجرا می‌کند و `horizon` کندل جلوتر را پیش‌بینی می‌کند. تا وقتی احتمال شبیه‌سازی‌شده‌ی صعود از longThreshold بگذرد لانگ، زیر shortThreshold شورت، در میانه فلت.",
+    },
+    good: {
+      en: "Assets with a persistent statistical edge in their historical return distribution (a real drift, or return clustering that block bootstrap preserves). A genuinely different kind of signal from every rule-based strategy above — worth comparing against them rather than only itself.",
+      fa: "دارایی‌هایی با یک برتری آماری پایدار در توزیع بازده تاریخی‌شان (drift واقعی، یا خوشه‌بندی بازدهی که بلوک-بوت‌استرپ حفظ می‌کند). نوع کاملاً متفاوتی از سیگنال نسبت به همه‌ی استراتژی‌های قانون‌محور بالا — ارزش دارد کنار آن‌ها مقایسه شود، نه فقط با خودش.",
+    },
+    bad: {
+      en: "Assets whose future genuinely departs from their own past return distribution (regime changes, structural breaks) — like any bootstrap method, it assumes history is a fair sample of what comes next. Also the heaviest strategy here computationally: expect a run to take noticeably longer than any rule-based strategy, especially with a long lookback and low recalcEvery.",
+      fa: "دارایی‌هایی که آینده‌شان واقعاً از توزیع بازده گذشته‌ی خودشان فاصله می‌گیرد (تغییر رژیم، شکست ساختاری) — مثل هر روش بوت‌استرپ، فرض می‌کند تاریخچه نمونه‌ی منصفانه‌ای از آینده است. همچنین سنگین‌ترین استراتژی این‌جا از نظر محاسباتی: انتظار داشته باشید اجرا محسوسا بیشتر از هر استراتژی قانون‌محور طول بکشد، به‌خصوص با پنجره‌ی تاریخچه‌ی بلند و recalcEvery پایین.",
+    },
+    params: {
+      en: "horizon (10) / sims (300) / blockSize (5): the simulation itself — more sims = smoother probability estimate but slower. lookback (150): how much history feeds each simulation window. recalcEvery (10): re-simulate every N candles instead of every single one — lower is more responsive but proportionally slower. longThreshold/shortThreshold (0.55/0.45): how confident the simulation must be before acting. seed (12345): kept fixed for reproducible results.",
+      fa: "horizon (۱۰) / sims (۳۰۰) / blockSize (۵): خود شبیه‌سازی — sims بیشتر یعنی تخمین احتمال هموارتر ولی کندتر. lookback (۱۵۰): چقدر تاریخچه هر پنجره‌ی شبیه‌سازی را تغذیه کند. recalcEvery (۱۰): هر N کندل یک‌بار بازمحاسبه به‌جای هر کندل — کمتر یعنی واکنش‌پذیرتر ولی متناسباً کندتر. longThreshold/shortThreshold (۰.۵۵/۰.۴۵): شبیه‌سازی چقدر باید مطمئن باشد تا وارد عمل شود. seed (۱۲۳۴۵): برای نتایج قابل‌بازتولید ثابت نگه داشته شده.",
+    },
+    short: true,
+  },
   buyAndHold: {
     category_label: { en: "Benchmark", fa: "معیار مقایسه" },
     entry: {
@@ -257,6 +437,7 @@ const CATEGORY_COLORS = {
   reversion: "var(--cyan, #06b6d4)",
   momentum: "#a78bfa",
   hybrid: "#34d399",
+  quant: "#f472b6",
   benchmark: "var(--text-muted)",
 };
 
