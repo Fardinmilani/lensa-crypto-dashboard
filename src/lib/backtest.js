@@ -53,24 +53,33 @@ export function applyRiskExits(candles, signals, riskParams) {
   const exitPrice = new Array(signals.length).fill(null);
   let side = 0; // 1 long, -1 short, 0 flat — sign of the signal that opened the current trade
   let entryPrice = null;
-  // After a forced SL/TP exit, re-entry is blocked until the raw strategy
-  // signal itself returns to flat (0) at least once — even if it never
-  // actually left "long"/"short" on the candle that triggered the forced
-  // exit. Without this, a strategy whose signal stays continuously 1 would
-  // get flipped right back into a fresh position on the very next bar,
-  // defeating the point of having stopped out.
-  let awaitingFlatBeforeReentry = false;
+  // After a forced SL/TP exit, re-entry on the SAME side is blocked until
+  // the raw strategy signal moves off that side — either back to flat, or
+  // (for long/short strategies that flip directly between 1 and -1 with no
+  // intermediate flat bar) straight into the opposite side. Without this,
+  // a strategy whose signal stays continuously 1 would get flipped right
+  // back into a fresh position on the very next bar, defeating the point
+  // of having stopped out.
+  //
+  // NOTE: this used to wait specifically for the signal to hit literal 0.
+  // That is wrong for direction: "both" strategies, which often never emit
+  // an explicit 0 at all — they flip straight from 1 to -1 (see the flip
+  // branch below). Waiting for a flat that never comes meant that, once a
+  // single forced exit happened, every subsequent bar for the rest of the
+  // backtest was suppressed, silently collapsing the trade count to one
+  // whenever a stop-loss/take-profit was configured on such a strategy.
+  let blockedSide = 0;
 
   for (let i = 0; i < candles.length; i++) {
     const rawSignal = Math.sign(signals[i] ?? 0);
     const { close, low, high } = candles[i];
     const hasRange = Number.isFinite(low) && Number.isFinite(high);
 
-    if (awaitingFlatBeforeReentry) {
-      if (rawSignal === 0) awaitingFlatBeforeReentry = false;
+    if (blockedSide !== 0 && rawSignal === blockedSide) {
       out[i] = 0;
       continue;
     }
+    blockedSide = 0; // signal moved off the stopped-out side; block lifted
 
     if (side !== 0) {
       // Percentage move of the open side from entry to each bound,
@@ -95,13 +104,13 @@ export function applyRiskExits(candles, signals, riskParams) {
         exitPrice[i] = stopHit
           ? entryPrice * (1 - (stopLossPercent / 100) * side)
           : entryPrice * (1 + (takeProfitPercent / 100) * side);
+        // Only hold off re-entry if the strategy's own signal is still
+        // "in position" (on the side that just got stopped out) on this
+        // very bar — if it had already moved off that side on its own,
+        // there's nothing to wait for.
+        if (rawSignal === side) blockedSide = side;
         side = 0;
         entryPrice = null;
-        // Only hold off re-entry if the strategy's own signal is still
-        // "in position" on this very bar — if it had already gone flat on
-        // its own (or flat is what triggered this loop iteration), there's
-        // nothing to wait for.
-        if (rawSignal !== 0) awaitingFlatBeforeReentry = true;
         continue; // a forced exit this bar can't also re-enter the same bar
       }
     }
