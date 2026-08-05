@@ -67,7 +67,7 @@ export default function Dashboard() {
             </h1>
             <div className="coin-hero__price">
               <span className="num price-big">
-                {market.isForex ? formatPrice(detail?.price, market.precision) : formatUsd(detail?.price, market.precision)}
+                {market.isSingleSource ? formatPrice(detail?.price, market.precision) : formatUsd(detail?.price, market.precision)}
               </span>
               {change24 != null && (
                 <span className={`num pill ${up ? "up" : "down"}`}>
@@ -79,15 +79,15 @@ export default function Dashboard() {
           </div>
         </div>
         <div className="coin-hero__stats">
-          {!market.isForex && <Mini label={t("hero.vol24")} value={fmtCompact(detail?.volume24h)} />}
-          {!market.isForex && <Mini label={t("hero.mcap")} value={fmtCompact(detail?.marketCap)} />}
+          {!market.isSingleSource && <Mini label={t("hero.vol24")} value={fmtCompact(detail?.volume24h)} />}
+          {!market.isSingleSource && <Mini label={t("hero.mcap")} value={fmtCompact(detail?.marketCap)} />}
           <Mini
             label={t("hero.high24")}
-            value={market.isForex ? formatPrice(detail?.high24h, market.precision) : formatUsd(detail?.high24h, market.precision)}
+            value={market.isSingleSource ? formatPrice(detail?.high24h, market.precision) : formatUsd(detail?.high24h, market.precision)}
           />
           <Mini
             label={t("hero.low24")}
-            value={market.isForex ? formatPrice(detail?.low24h, market.precision) : formatUsd(detail?.low24h, market.precision)}
+            value={market.isSingleSource ? formatPrice(detail?.low24h, market.precision) : formatUsd(detail?.low24h, market.precision)}
           />
         </div>
       </div>
@@ -98,7 +98,7 @@ export default function Dashboard() {
             <h2>{t("chart.title", { sym: coin.symbol })}</h2>
           </div>
           <div className="chart-toolbar no-print">
-            <TimeframePicker value={market.timeframe} onChange={setTimeframe} intradayDisabled={market.isForex} />
+            <TimeframePicker value={market.timeframe} onChange={setTimeframe} intradayDisabled={market.isSingleSource} />
             <SymbolSearch
               coin={coin}
               source={market.exchange}
@@ -109,7 +109,7 @@ export default function Dashboard() {
                 if (selectedMarketType) setMarketType(selectedMarketType);
               }}
             />
-            {!market.isForex && (
+            {!market.isSingleSource && (
               <div className="chart-toolbar__field">
                 <label>Market</label>
                 <select value={market.marketType} onChange={(e) => setMarketType(e.target.value)}>

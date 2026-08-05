@@ -2,10 +2,10 @@
 
 این پوشه یک Cloudflare Worker مستقل و سبک است که جدا از سایت اصلی دیپلوی می‌شود.
 کارش این است که بین مرورگر کاربر و صرافی‌ها (Binance/Bybit/OKX/Coinbase/CoinGecko)
-قرار بگیرد تا:
+و همچنین منابع داده‌ی بورس/ارز ایران (TSETMC/TGJU) قرار بگیرد تا:
 
-1. هدر CORS رو خودش اضافه کنه (چون Binance/Bybit این هدر رو برای درخواست مستقیم مرورگر نمی‌فرستن).
-2. درخواست رو از IP خودِ Cloudflare (نه IP کاربر) بفرسته، پس اگه صرافی IP کاربر
+1. هدر CORS رو خودش اضافه کنه (چون هیچ‌کدوم از این‌ها این هدر رو برای درخواست مستقیم مرورگر نمی‌فرستن).
+2. درخواست رو از IP خودِ Cloudflare (نه IP کاربر) بفرسته، پس اگه سرویس مقصد IP کاربر
    (مثلاً IP ایران) رو geo-block کرده باشه (Binance 451 / Bybit 403)، این مشکل دور زده می‌شه.
 
 ## گام ۱: نصب Wrangler (ابزار CLI کلادفلر)
@@ -42,6 +42,17 @@ Deployed lensa-market-proxy triggers
 curl "https://lensa-market-proxy.<your-subdomain>.workers.dev/proxy/binance/api/v3/klines?symbol=BTCUSDT&interval=4h&limit=5"
 ```
 اگه یه آرایه‌ی JSON از کندل‌ها برگشت (نه ارور 451/403)، یعنی پروکسی درست کار می‌کنه.
+
+می‌تونی همین‌طور منابع جدید بورس/ارز رو هم تست کنی:
+```bash
+curl "https://lensa-market-proxy.<your-subdomain>.workers.dev/proxy/tsetmc/api/ClosingPrice/GetMarketWatch"
+curl "https://lensa-market-proxy.<your-subdomain>.workers.dev/proxy/tgju/fa/tvdata/history?symbol=PRICE_DOLLAR_RL&resolution=D&from=1700000000&to=1710000000"
+```
+این دوتا (`src/lib/tse.js` و `src/lib/irrfx.js`) بر خلاف بقیه، از یه API رسمی و
+مستند استفاده نمی‌کنن — فیلدها/اندپوینت‌ها reverse-engineered هستن و در محیطی
+نوشته شدن که به این دو دامنه دسترسی شبکه نداشت، پس حتماً همین دو curl رو قبل
+از اعتماد به داده‌ها امتحان کن؛ اگه جواب خالی/متفاوت بود، کامنت‌های بالای همون
+دو فایل توضیح می‌دن کجا رو باید اصلاح کنی.
 
 ## گام ۵: وصل کردن به سایت (GitHub Actions)
 

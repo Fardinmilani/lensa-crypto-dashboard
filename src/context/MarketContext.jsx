@@ -2,22 +2,31 @@
 import { createContext, useCallback, useContext, useEffect, useMemo } from "react";
 import { defaultPairForSymbol, getSourceHealth, resolveTimeframe } from "../lib/coingecko";
 import { isForexCoinId } from "../lib/forex";
+import { isIrrFxCoinId } from "../lib/irrfx";
+import { isTseCoinId } from "../lib/tse";
 import { useLocalStorageState } from "../hooks/useLocalStorageState";
 import { useCoin } from "./coinStore";
 
 const MarketContext = createContext(null);
 
 export const MARKET_TYPES = ["Spot", "USD-M Futures", "Coin-M Futures"];
-// Forex has no leveraged-futures concept here (Binance/Bybit/OKX/Coinbase
-// don't list fiat-vs-fiat futures), and it only has one possible data
-// source (Frankfurter), so its market-type/exchange choices collapse to
-// a single fixed combination rather than reusing the crypto picker lists.
+// Forex, TSE (Iran stocks), and IRR-FX (rial exchange rates) each have no
+// leveraged-futures concept here and only ever have one possible data
+// source, so their market-type/exchange choices collapse to a single fixed
+// combination rather than reusing the crypto picker lists. Collectively
+// "single-source" below.
 const FOREX_EXCHANGE = "frankfurter";
-const FOREX_MARKET_TYPE = "Spot";
+const TSE_EXCHANGE = "tsetmc";
+const IRRFX_EXCHANGE = "tgju";
+const SINGLE_SOURCE_MARKET_TYPE = "Spot";
 
 export function MarketProvider({ children }) {
   const { coin } = useCoin();
   const isForex = isForexCoinId(coin.id);
+  const isTse = isTseCoinId(coin.id);
+  const isIrrFx = isIrrFxCoinId(coin.id);
+  const isSingleSource = isForex || isTse || isIrrFx;
+  const singleSourceExchange = isForex ? FOREX_EXCHANGE : isTse ? TSE_EXCHANGE : isIrrFx ? IRRFX_EXCHANGE : null;
   const [exchange, setExchange] = useLocalStorageState("lensa.market.exchange", "binance");
   const [pair, setPair] = useLocalStorageState("lensa.market.pair", defaultPairForSymbol(coin.symbol));
   const [marketType, setMarketType] = useLocalStorageState("lensa.market.type", "Spot");
@@ -47,27 +56,31 @@ export function MarketProvider({ children }) {
     setPrecision({});
   }, [coin.id, setPrecision]);
 
-  // Forex has exactly one valid (exchange, marketType) combination and only
-  // ever produces daily candles (see lib/forex.js), so switching to a forex
-  // pair snaps these into place automatically rather than leaving whatever
-  // crypto exchange/futures/intraday-timeframe selection was previously
-  // active, which would otherwise silently produce the broken
-  // CoinGecko/Binance-futures requests this fix addresses.
+  // Forex/TSE/IRR-FX each have exactly one valid (exchange, marketType)
+  // combination and only ever produce daily candles (see lib/forex.js,
+  // lib/tse.js, lib/irrfx.js), so switching to one of these pairs snaps
+  // these into place automatically rather than leaving whatever crypto
+  // exchange/futures/intraday-timeframe selection was previously active,
+  // which would otherwise silently produce broken requests against a
+  // source that doesn't apply to the new coin.
   useEffect(() => {
-    if (!isForex) return;
-    if (exchange !== FOREX_EXCHANGE) setExchange(FOREX_EXCHANGE);
-    if (marketType !== FOREX_MARKET_TYPE) setMarketType(FOREX_MARKET_TYPE);
+    if (!isSingleSource) return;
+    if (exchange !== singleSourceExchange) setExchange(singleSourceExchange);
+    if (marketType !== SINGLE_SOURCE_MARKET_TYPE) setMarketType(SINGLE_SOURCE_MARKET_TYPE);
     if (resolveTimeframe(timeframe).intraday) {
       setStoredTimeframe("1d");
       setHistoricalRange("1d");
     }
-  }, [isForex, exchange, marketType, timeframe, setExchange, setMarketType, setStoredTimeframe, setHistoricalRange]);
+  }, [isSingleSource, singleSourceExchange, exchange, marketType, timeframe, setExchange, setMarketType, setStoredTimeframe, setHistoricalRange]);
 
   const context = useMemo(() => {
     const tf = resolveTimeframe(timeframe);
     return {
       coin,
       isForex,
+      isTse,
+      isIrrFx,
+      isSingleSource,
       exchange,
       symbol: coin.symbol,
       pair,
@@ -81,7 +94,7 @@ export function MarketProvider({ children }) {
       sourceHealth: getSourceHealth(),
       precision,
     };
-  }, [coin, isForex, exchange, pair, marketType, timeframe, historicalRange, lastValidCandleTime, dataSourceStatus, dataQualityStatus, precision]);
+  }, [coin, isForex, isTse, isIrrFx, isSingleSource, exchange, pair, marketType, timeframe, historicalRange, lastValidCandleTime, dataSourceStatus, dataQualityStatus, precision]);
 
   const updateFromCandles = useCallback((candles) => {
     const last = candles?.at?.(-1);

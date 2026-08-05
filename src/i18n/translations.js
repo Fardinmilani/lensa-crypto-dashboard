@@ -831,6 +831,8 @@ export const translations = {
     "symbol.all": "All",
     "symbol.crypto": "Crypto",
     "symbol.forex": "Forex",
+    "symbol.tse": "Iran Stocks",
+    "symbol.irrfx": "USD/IRR",
     "symbol.spot": "Spot",
     "symbol.futures": "Futures",
     "symbol.composite": "Composite",

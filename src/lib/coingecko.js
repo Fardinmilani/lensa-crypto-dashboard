@@ -10,6 +10,23 @@ import {
   parseForexCoinId,
   searchForexPairs,
 } from "./forex.js";
+import {
+  IRRFX_SOURCE_ID,
+  IRRFX_SOURCE_LABEL,
+  getIrrFxDailyCandles,
+  irrFxCoinId,
+  irrFxPairLabel,
+  parseIrrFxCoinId,
+  searchIrrFxPairs,
+} from "./irrfx.js";
+import {
+  TSE_SOURCE_ID,
+  TSE_SOURCE_LABEL,
+  getTseDailyCandles,
+  parseTseCoinId,
+  searchTseSymbols,
+  tseCoinId,
+} from "./tse.js";
 
 const API_BASES = {
   coingecko: "https://api.coingecko.com/api/v3",
@@ -38,6 +55,8 @@ const SOURCE_LABELS = {
   binanceUsdFutures: "Binance USD-M futures",
   binanceCoinFutures: "Binance Coin-M futures",
   [FOREX_SOURCE_ID]: FOREX_SOURCE_LABEL,
+  [TSE_SOURCE_ID]: TSE_SOURCE_LABEL,
+  [IRRFX_SOURCE_ID]: IRRFX_SOURCE_LABEL,
 };
 
 export const CHART_SOURCES = [
@@ -53,7 +72,7 @@ export const CHART_SOURCES = [
 const cache = new Map();
 const inflight = new Map();
 const sourceHealth = new Map(
-  [...Object.keys(API_BASES), FOREX_SOURCE_ID].map((id) => [
+  [...Object.keys(API_BASES), FOREX_SOURCE_ID, TSE_SOURCE_ID, IRRFX_SOURCE_ID].map((id) => [
     id,
     {
       id,
@@ -295,9 +314,11 @@ export async function searchCoins(query, options = {}) {
   if (!q) return [];
   const cryptoQuery = (options.cryptoQuery ?? q).trim();
 
-  const [cryptoResult, forexResult] = await Promise.allSettled([
+  const [cryptoResult, forexResult, tseResult, irrFxResult] = await Promise.allSettled([
     cryptoQuery ? cachedJson("coingecko", `/search?query=${encodeURIComponent(cryptoQuery)}`, 120_000) : Promise.resolve({ coins: [] }),
     searchForexPairs(q),
+    searchTseSymbols(q),
+    searchIrrFxPairs(q),
   ]);
 
   const crypto =
@@ -312,11 +333,13 @@ export async function searchCoins(query, options = {}) {
         }))
       : [];
   const forex = forexResult.status === "fulfilled" ? forexResult.value : [];
+  const tse = tseResult.status === "fulfilled" ? tseResult.value : [];
+  const irrFx = irrFxResult.status === "fulfilled" ? irrFxResult.value : [];
 
-  // Forex pairs are a deliberate, exact match on intent (the user typed a
-  // currency code or pair), so they lead; crypto market-cap-ranked results
-  // follow.
-  return [...forex, ...crypto];
+  // Forex/TSE/IRR-FX matches are a deliberate, exact match on intent (the
+  // user typed a currency code, pair, or a TSE ticker/company name), so
+  // they lead; crypto market-cap-ranked results follow.
+  return [...forex, ...irrFx, ...tse, ...crypto];
 }
 
 /** Rich metadata for a single coin (price, image, links). Branches to
@@ -325,6 +348,12 @@ export async function searchCoins(query, options = {}) {
 export async function getCoinDetail(id, ttl = 15_000) {
   const forexPair = parseForexCoinId(id);
   if (forexPair) return getForexDetail(forexPair.base, forexPair.quote);
+
+  const tsePair = parseTseCoinId(id);
+  if (tsePair) return getTseDetail(tsePair.insCode, tsePair.symbol);
+
+  const irrFxPair = parseIrrFxCoinId(id);
+  if (irrFxPair) return getIrrFxDetail(irrFxPair.currency, irrFxPair.rateType);
 
   const data = await cachedJson(
     "coingecko",
@@ -375,6 +404,66 @@ async function getForexDetail(base, quote) {
   } catch (err) {
     const status = classifyFetchError(err);
     setSourceHealth(FOREX_SOURCE_ID, status, friendlyMessage(FOREX_SOURCE_ID, status, err));
+    throw err;
+  }
+}
+
+async function getTseDetail(insCode, symbol) {
+  setSourceHealth(TSE_SOURCE_ID, SOURCE_STATUS.LIMITED, "Checking TSETMC…");
+  try {
+    const candles = await getTseDailyCandles(insCode, 14);
+    const last = candles.at(-1);
+    const prev = candles.at(-2) ?? last;
+    setSourceHealth(TSE_SOURCE_ID, SOURCE_STATUS.HEALTHY, "Proxied fetch succeeded.");
+    return {
+      id: tseCoinId(insCode, symbol),
+      symbol,
+      name: symbol,
+      image: null,
+      price: last?.close ?? null,
+      change24h: prev?.close ? ((last.close - prev.close) / prev.close) * 100 : null,
+      change7d: candles[0]?.close ? ((last.close - candles[0].close) / candles[0].close) * 100 : null,
+      marketCap: null,
+      volume24h: null,
+      high24h: last?.high ?? null,
+      low24h: last?.low ?? null,
+      ath: null,
+      atl: null,
+      rank: null,
+    };
+  } catch (err) {
+    const status = classifyFetchError(err);
+    setSourceHealth(TSE_SOURCE_ID, status, friendlyMessage(TSE_SOURCE_ID, status, err));
+    throw err;
+  }
+}
+
+async function getIrrFxDetail(currency, rateType) {
+  setSourceHealth(IRRFX_SOURCE_ID, SOURCE_STATUS.LIMITED, "Checking TGJU…");
+  try {
+    const candles = await getIrrFxDailyCandles(currency, rateType, 14);
+    const last = candles.at(-1);
+    const prev = candles.at(-2) ?? last;
+    setSourceHealth(IRRFX_SOURCE_ID, SOURCE_STATUS.HEALTHY, "Proxied fetch succeeded.");
+    return {
+      id: irrFxCoinId(currency, rateType),
+      symbol: `${currency}IRR`,
+      name: irrFxPairLabel(currency, rateType),
+      image: null,
+      price: last?.close ?? null,
+      change24h: prev?.close ? ((last.close - prev.close) / prev.close) * 100 : null,
+      change7d: candles[0]?.close ? ((last.close - candles[0].close) / candles[0].close) * 100 : null,
+      marketCap: null,
+      volume24h: null,
+      high24h: last?.high ?? null,
+      low24h: last?.low ?? null,
+      ath: null,
+      atl: null,
+      rank: null,
+    };
+  } catch (err) {
+    const status = classifyFetchError(err);
+    setSourceHealth(IRRFX_SOURCE_ID, status, friendlyMessage(IRRFX_SOURCE_ID, status, err));
     throw err;
   }
 }
@@ -483,6 +572,12 @@ export async function getChartCandles({ id, symbol, timeframe = "4h", lookbackDa
   const forexPair = parseForexCoinId(id);
   if (forexPair) return getForexChartCandles(forexPair, { timeframe, lookbackDays });
 
+  const tsePair = parseTseCoinId(id);
+  if (tsePair) return getTseChartCandles(tsePair, { timeframe, lookbackDays });
+
+  const irrFxPair = parseIrrFxCoinId(id);
+  if (irrFxPair) return getIrrFxChartCandles(irrFxPair, { timeframe, lookbackDays });
+
   const requested = source || "binance";
   const warnings = [];
   const tf = resolveTimeframe(timeframe);
@@ -587,6 +682,70 @@ async function getForexChartCandles({ base, quote }, { timeframe, lookbackDays }
       intervalSeconds: 24 * 60 * 60,
       sourceMeta: baseMeta,
     });
+    return withMeta(candles, { ...baseMeta, quality, confidence: quality.confidenceFactor });
+  } catch (err) {
+    const status = classifyFetchError(err);
+    setSourceHealth(healthSource, status, friendlyMessage(healthSource, status, err));
+    throw new Error(`No browser-accessible market source is available. ${SOURCE_LABELS[healthSource]}: ${status}`, { cause: err });
+  }
+}
+
+/**
+ * TSE candle path. Always daily -- see the honesty note at the top of
+ * lib/tse.js for why (no verified intraday source).
+ */
+async function getTseChartCandles({ insCode }, { timeframe, lookbackDays }) {
+  const tf = resolveTimeframe(timeframe);
+  const days = Math.max(lookbackDays || 0, tf.days || 0, 90);
+  const healthSource = TSE_SOURCE_ID;
+  try {
+    const rawCandles = await getTseDailyCandles(insCode, days);
+    const filled = fillCandleGaps(rawCandles, 24 * 60 * 60);
+    const candles = filled.candles;
+    const baseMeta = {
+      source: healthSource,
+      sourceLabel: SOURCE_LABELS[healthSource],
+      requestedSource: healthSource,
+      status: SOURCE_STATUS.HEALTHY,
+      warnings: [],
+      precision: inferPrecisionFromCandles(candles),
+      syntheticCandles: filled.syntheticCount,
+      isForexDaily: true,
+    };
+    setSourceHealth(healthSource, SOURCE_STATUS.HEALTHY, "Proxied fetch succeeded.");
+    const quality = analyzeCandleQuality({ candles, intervalSeconds: 24 * 60 * 60, sourceMeta: baseMeta });
+    return withMeta(candles, { ...baseMeta, quality, confidence: quality.confidenceFactor });
+  } catch (err) {
+    const status = classifyFetchError(err);
+    setSourceHealth(healthSource, status, friendlyMessage(healthSource, status, err));
+    throw new Error(`No browser-accessible market source is available. ${SOURCE_LABELS[healthSource]}: ${status}`, { cause: err });
+  }
+}
+
+/**
+ * IRR-FX candle path. Always daily -- see the honesty note at the top of
+ * lib/irrfx.js for why (TGJU's widget itself is daily-resolution here).
+ */
+async function getIrrFxChartCandles({ currency, rateType }, { timeframe, lookbackDays }) {
+  const tf = resolveTimeframe(timeframe);
+  const days = Math.max(lookbackDays || 0, tf.days || 0, 90);
+  const healthSource = IRRFX_SOURCE_ID;
+  try {
+    const rawCandles = await getIrrFxDailyCandles(currency, rateType, days);
+    const filled = fillCandleGaps(rawCandles, 24 * 60 * 60);
+    const candles = filled.candles;
+    const baseMeta = {
+      source: healthSource,
+      sourceLabel: SOURCE_LABELS[healthSource],
+      requestedSource: healthSource,
+      status: SOURCE_STATUS.HEALTHY,
+      warnings: [],
+      precision: inferPrecisionFromCandles(candles),
+      syntheticCandles: filled.syntheticCount,
+      isForexDaily: true,
+    };
+    setSourceHealth(healthSource, SOURCE_STATUS.HEALTHY, "Proxied fetch succeeded.");
+    const quality = analyzeCandleQuality({ candles, intervalSeconds: 24 * 60 * 60, sourceMeta: baseMeta });
     return withMeta(candles, { ...baseMeta, quality, confidence: quality.confidenceFactor });
   } catch (err) {
     const status = classifyFetchError(err);

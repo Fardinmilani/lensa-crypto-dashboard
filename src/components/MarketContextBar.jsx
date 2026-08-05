@@ -23,7 +23,7 @@ export default function MarketContextBar({ lastPrice }) {
       <span>{lastTime}</span>
       {lastPrice != null && (
         <span className="num">
-          {formatPrice(lastPrice, market.precision, { currency: !market.isForex, mode: "trading" })}
+          {formatPrice(lastPrice, market.precision, { currency: !market.isSingleSource, mode: "trading" })}
         </span>
       )}
     </div>

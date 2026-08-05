@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { defaultPairForSymbol, searchCoins } from "../lib/coingecko";
 import { isForexCoinId, parseForexCoinId, forexPairLabel } from "../lib/forex";
+import { isIrrFxCoinId, parseIrrFxCoinId, irrFxPairLabel } from "../lib/irrfx";
+import { isTseCoinId, parseTseCoinId } from "../lib/tse";
 import { useCoin } from "../context/coinStore";
 import { useI18n } from "../i18n/langStore";
 
-const TABS = ["all", "crypto", "forex", "spot", "futures", "composite"];
+const TABS = ["all", "crypto", "forex", "tse", "irrfx", "spot", "futures", "composite"];
 
 export default function SymbolSearch({ coin, source, pair, onSelect }) {
   const { selectCoin } = useCoin();
@@ -60,9 +62,13 @@ export default function SymbolSearch({ coin, source, pair, onSelect }) {
       if (!tabOk) return false;
       if (terms.length === 0) return true;
 
-      const symNorm = row.symbol.toLowerCase().replace(/[^a-z0-9]/g, "");
-      const nameNorm = row.name.toLowerCase().replace(/[^a-z0-9]/g, "");
-      const exNorm = row.exchange.toLowerCase().replace(/[^a-z0-9]/g, "");
+      // `\p{L}\p{N}` (Unicode letter/number) rather than the ASCII-only
+      // `a-z0-9` this used to be: TSE rows carry Persian symbols/company
+      // names (e.g. "فملی"), and stripping everything outside a-z0-9 would
+      // reduce those to empty strings, silently failing every TSE search.
+      const symNorm = row.symbol.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+      const nameNorm = row.name.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+      const exNorm = row.exchange.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
 
       return terms.every(
         (term) =>
@@ -74,7 +80,9 @@ export default function SymbolSearch({ coin, source, pair, onSelect }) {
   }, [rows, query, tab]);
 
   const isForex = isForexCoinId(coin.id);
-  const selectedLabel = isForex
+  const isTse = isTseCoinId(coin.id);
+  const isIrrFx = isIrrFxCoinId(coin.id);
+  const selectedLabel = isForex || isTse || isIrrFx
     ? pair || defaultPairForSymbol(coin.symbol)
     : source === "coingecko"
       ? `${coin.symbol}/USD`
@@ -82,11 +90,15 @@ export default function SymbolSearch({ coin, source, pair, onSelect }) {
 
   const selectedVenue = isForex
     ? "Frankfurter (daily)"
-    : source === "binance" ? "Binance spot" :
-    source === "bybit" ? "Bybit spot" :
-    source === "okx" ? "OKX spot" :
-    source === "coinbase" ? "Coinbase spot" :
-    "CoinGecko";
+    : isTse
+      ? "TSETMC (daily)"
+      : isIrrFx
+        ? "TGJU (daily)"
+        : source === "binance" ? "Binance spot" :
+        source === "bybit" ? "Bybit spot" :
+        source === "okx" ? "OKX spot" :
+        source === "coinbase" ? "Coinbase spot" :
+        "CoinGecko";
 
   function pick(row) {
     if (row.coin && row.coin.id !== coin.id) {
@@ -188,6 +200,40 @@ function makeSymbolRowsForCoin(c) {
         name: c.name || forexPairLabel(forex.base, forex.quote),
         exchange: "Frankfurter",
         tags: ["forex", "spot"],
+        coin: c,
+      },
+    ];
+  }
+
+  const tse = parseTseCoinId(c.id);
+  if (tse) {
+    return [
+      {
+        id: `tsetmc-${c.id}`,
+        source: "tsetmc",
+        pair: tse.symbol,
+        base: tse.symbol,
+        symbol: tse.symbol,
+        name: c.name || tse.symbol,
+        exchange: "TSETMC",
+        tags: ["tse", "spot"],
+        coin: c,
+      },
+    ];
+  }
+
+  const irrFx = parseIrrFxCoinId(c.id);
+  if (irrFx) {
+    return [
+      {
+        id: `tgju-${c.id}`,
+        source: "tgju",
+        pair: irrFxPairLabel(irrFx.currency, irrFx.rateType),
+        base: irrFx.currency,
+        symbol: `${irrFx.currency}IRR`,
+        name: c.name || irrFxPairLabel(irrFx.currency, irrFx.rateType),
+        exchange: "TGJU",
+        tags: ["irrfx", "spot"],
         coin: c,
       },
     ];

@@ -23,7 +23,10 @@
  *   -> forwarded to https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=4h&limit=180
  */
 
-// Must match the `source` keys used in src/lib/coingecko.js (API_BASES).
+// Must match the `source` keys used in src/lib/coingecko.js (API_BASES),
+// plus tsetmc/tgju, which are called directly by src/lib/tse.js and
+// src/lib/irrfx.js through src/lib/corsProxy.js (see that file's header
+// comment for why those two don't go through coingecko.js's own proxy path).
 const UPSTREAMS = {
   coingecko: "https://api.coingecko.com",
   binance: "https://api.binance.com",
@@ -32,6 +35,8 @@ const UPSTREAMS = {
   bybit: "https://api.bybit.com",
   okx: "https://www.okx.com",
   coinbase: "https://api.exchange.coinbase.com",
+  tsetmc: "https://cdn.tsetmc.com",
+  tgju: "https://platform.tgju.org",
 };
 
 // Restrict who can use your proxy quota. Add every origin the site is

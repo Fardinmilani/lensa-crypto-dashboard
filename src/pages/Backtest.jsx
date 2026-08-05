@@ -672,7 +672,7 @@ export default function Backtest() {
               <span>{coin.name}</span>
             </div>
           </div>
-          {!market.isForex && (
+          {!market.isSingleSource && (
             <div className="control-group control-group--full">
               <label>
                 {t("bt.marketType")}
@@ -750,7 +750,7 @@ export default function Backtest() {
           )}
           <div className="control-group control-group--full">
             <label>{t("bt.candleInterval")}</label>
-            <TimeframePicker value={market.timeframe} onChange={setTimeframe} intradayDisabled={market.isForex} />
+            <TimeframePicker value={market.timeframe} onChange={setTimeframe} intradayDisabled={market.isSingleSource} />
           </div>
           <div className="control-group control-group--wide">
             <label>{t("bt.lookback")}</label>
