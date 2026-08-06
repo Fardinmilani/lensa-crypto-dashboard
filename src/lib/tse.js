@@ -116,7 +116,12 @@ export async function searchTseSymbols(query) {
   let instruments;
   try {
     instruments = await getInstrumentList();
-  } catch {
+  } catch (err) {
+    // Swallowed on purpose for the caller (an empty search result, not a
+    // thrown error, is the right UX for "start typing" search-as-you-go) --
+    // but NOT silently: log it so a real outage is visible in devtools
+    // instead of just looking like "no matches".
+    console.warn("[tse] instrument search unavailable:", err);
     return [];
   }
   const matches = instruments.filter((i) => i.symbol.includes(q) || i.name.includes(q));

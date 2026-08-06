@@ -1,46 +1,61 @@
 // Small, dependency-free fetch helper for third-party JSON APIs that don't
-// (or might not) set permissive CORS headers, routed through the same
-// Cloudflare Worker proxy fleet already used for the geo-blocked crypto
-// exchanges (see cloudflare-proxy/worker.js and the proxy logic inside
-// lib/coingecko.js).
+// (or might not) set permissive CORS headers.
 //
-// This is intentionally its OWN leaf module rather than something exported
-// from lib/coingecko.js: coingecko.js already imports search/candle
-// functions FROM lib/forex.js (and now lib/tse.js and lib/irrfx.js), so
-// having those modules import back from coingecko.js would create an
-// import cycle. Duplicating this ~40-line helper is a smaller risk than a
-// circular dependency between the core data modules.
+// Unlike lib/coingecko.js's own proxy logic -- which ONLY uses a private
+// Cloudflare Worker (VITE_MARKET_PROXY_ENDPOINTS), because Binance/Bybit
+// specifically need a *non-Iranian* IP to dodge geo-blocking, which only a
+// self-hosted worker gives you -- this helper works with **zero
+// deployment** by default. TSE/IRR-FX don't need to dodge geo-blocking,
+// just CORS, so it reaches for a couple of free public CORS-proxy services
+// first and only tries a private worker if one happens to be configured.
 //
-// IMPORTANT HONESTY NOTE: whether tsetmc.com and tgju.org actually reject
-// direct browser fetches has NOT been verified against the live services —
-// this project's build/dev sandbox has no network route to either host, so
-// this could only be written against publicly documented/reverse-engineered
-// endpoint shapes, not exercised end-to-end. Both sources are proxied by
-// default below, since that's the safer assumption for a random third-party
-// origin (most Iranian financial-data sites serve their own site's
-// TradingView widgets only, with no Access-Control-Allow-Origin for other
-// pages). Please verify against the live sources after deploying; if a
-// proxied call comes back 404, double check the source key below matches
-// an UPSTREAMS entry in cloudflare-proxy/worker.js.
+// IMPORTANT HONESTY NOTE #1: the public proxies below (allorigins.win,
+// codetabs.com) are free, keyless, third-party services with real limits --
+// published rates are roughly 20 req/min and 5 req/sec respectively, no
+// uptime guarantee, and every request to *any* source (not just
+// tsetmc/tgju) visibly passes through their servers. That's a reasonable
+// trade for public, non-sensitive daily stock/FX quotes on a personal
+// dashboard; it would NOT be a reasonable trade for anything private or
+// high-volume. If these free proxies turn out to be too flaky in practice,
+// add "tsetmc"/"tgju" to a deployed Worker's UPSTREAMS
+// (cloudflare-proxy/worker.js already has both) and list that worker's URL
+// in VITE_MARKET_PROXY_ENDPOINTS -- it's tried FIRST automatically the
+// moment it's configured, no other code change needed.
+//
+// IMPORTANT HONESTY NOTE #2: whether tsetmc.com and tgju.org actually reject
+// direct browser fetches -- and whether they, in turn, block requests
+// coming from *these* public proxies' server IPs -- has NOT been verified
+// against the live services (no outbound network route to any of these
+// hosts from the sandbox this was written in). If every candidate below
+// ends up failing, open the browser's Network tab: a 403/429 from
+// allorigins/codetabs means their proxy itself got rate-limited or blocked
+// by the upstream, which public proxies can't fully guarantee against.
 
-const PROXY_ENDPOINTS = String(import.meta.env?.VITE_MARKET_PROXY_ENDPOINTS || "")
+const PRIVATE_PROXY_ENDPOINTS = String(import.meta.env?.VITE_MARKET_PROXY_ENDPOINTS || "")
   .split(",")
   .map((s) => s.trim().replace(/\/+$/, ""))
   .filter(Boolean);
 
 let rrIndex = 0;
-function rotatedProxies() {
-  if (PROXY_ENDPOINTS.length < 2) return PROXY_ENDPOINTS;
-  const i = rrIndex % PROXY_ENDPOINTS.length;
+function rotatedPrivateProxies() {
+  if (PRIVATE_PROXY_ENDPOINTS.length < 2) return PRIVATE_PROXY_ENDPOINTS;
+  const i = rrIndex % PRIVATE_PROXY_ENDPOINTS.length;
   rrIndex += 1;
-  return [...PROXY_ENDPOINTS.slice(i), ...PROXY_ENDPOINTS.slice(0, i)];
+  return [...PRIVATE_PROXY_ENDPOINTS.slice(i), ...PRIVATE_PROXY_ENDPOINTS.slice(0, i)];
 }
 
+// Free, keyless, zero-deployment CORS proxies, tried (in this order) after
+// any private worker and before a final direct-fetch attempt.
+const PUBLIC_PROXY_BUILDERS = [
+  (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+  (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
+];
+
 /**
- * Fetch JSON from `directUrl`, trying each configured Cloudflare Worker
- * proxy (as `${proxyBase}/proxy/${source}${path}${search}`) before falling
- * back to a direct request. `source` must match an UPSTREAMS key in
- * cloudflare-proxy/worker.js.
+ * Fetch JSON from `directUrl` through, in order: any configured private
+ * Cloudflare Worker proxy (as `${proxyBase}/proxy/${source}${path}${search}`
+ * -- `source` must match an UPSTREAMS key in cloudflare-proxy/worker.js),
+ * then the public proxies above, then a final direct request.
  */
 export async function fetchJsonViaProxy(source, directUrl, { timeoutMs = 10_000 } = {}) {
   let path = "";
@@ -53,9 +68,9 @@ export async function fetchJsonViaProxy(source, directUrl, { timeoutMs = 10_000 
     // Not an absolute URL — nothing to rewrite for a proxy, just try it as-is.
   }
 
-  const candidates = path
-    ? [...rotatedProxies().map((base) => `${base}/proxy/${source}${path}${search}`), directUrl]
-    : [directUrl];
+  const privateCandidates = path ? rotatedPrivateProxies().map((base) => `${base}/proxy/${source}${path}${search}`) : [];
+  const publicCandidates = PUBLIC_PROXY_BUILDERS.map((build) => build(directUrl));
+  const candidates = [...privateCandidates, ...publicCandidates, directUrl];
 
   let lastError;
   for (const url of candidates) {
@@ -69,7 +84,7 @@ export async function fetchJsonViaProxy(source, directUrl, { timeoutMs = 10_000 
       });
       clearTimeout(timer);
       if (!res.ok) {
-        lastError = Object.assign(new Error(`HTTP ${res.status} from ${source}`), { status: res.status });
+        lastError = Object.assign(new Error(`HTTP ${res.status} fetching ${source} via ${new URL(url).host}`), { status: res.status });
         continue;
       }
       return await res.json();
