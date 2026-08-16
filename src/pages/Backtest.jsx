@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { STRATEGIES, PARAM_LABELS, DIRECTION_MODES, combineDirectionalSignals, currentSignalState } from "../lib/strategies";
 import { runBacktest, runLeveragedBacktest, runAllStrategies, autoFitRiskExits, summarizeEquityCurve } from "../lib/backtest";
 import { optimizeStrategy, optimizeAllStrategies, walkForwardValidate, optimizeOptionsStrategy, optimizeAllOptionsStrategies } from "../lib/optimize";
-import { getAllStrategies } from "../lib/customStrategies";
+import { getAllStrategies, loadCustomDefs } from "../lib/customStrategies";
 import { OPTIONS_STRATEGIES, OPTION_PARAM_LABELS, runOptionsStrategy, runAllOptionsStrategies } from "../lib/options";
 import { getChartCandles } from "../lib/coingecko";
 import { formatUsd } from "../lib/priceFormat";
@@ -464,7 +464,12 @@ export default function Backtest() {
   // Decision Center so it can be weighed alongside the built-in analysis
   // instead of only living in this page's historical view.
   function buildStrategyPayload() {
+    const customDefinition = strategy.isCustom
+      ? loadCustomDefs().find((definition) => definition.id === strategyKey) || null
+      : null;
+
     return {
+      schemaVersion: 2,
       strategyKey,
       params,
       direction: effectiveDirection,
@@ -472,8 +477,30 @@ export default function Backtest() {
       marketType: market.marketType,
       pair: market.pair,
       exchange: market.exchange,
+      timeframe: market.timeframe,
+      historicalRange: market.historicalRange,
+      coin: {
+        id: coin.id,
+        symbol: coin.symbol,
+        name: coin.name,
+        thumb: coin.thumb || null,
+      },
+      lookbackDays: Number(lookbackDays),
       fee: Number(fee),
       riskParams,
+      riskSettings: {
+        enabled: Boolean(riskEnabled),
+        stopLossEnabled: Boolean(slEnabled),
+        takeProfitEnabled: Boolean(tpEnabled),
+        autoFit: Boolean(autoFit),
+        stopLossPercent: riskParams?.stopLossPercent ?? null,
+        takeProfitPercent: riskParams?.takeProfitPercent ?? null,
+      },
+      sizing,
+      sizingMode: sizingAvailable ? "riskPercent" : "allIn",
+      sizingRiskPercent: Number(sizingRiskPercent) || 1,
+      fillTiming,
+      customDefinition,
       label: pick(lang, strategy.label),
       savedAt: Date.now(),
     };

@@ -9,10 +9,12 @@ import { calculateATR } from "../lib/risk";
 import { formatPrice, formatUsd } from "../lib/priceFormat";
 import { qualityMetaFromError } from "../lib/dataQuality";
 import { useMarket } from "../context/MarketContext";
+import { useCoin } from "../context/coinStore";
 import { useI18n } from "../i18n/langStore";
 import { translations } from "../i18n/translations";
 import { useLocalStorageState } from "../hooks/useLocalStorageState";
 import { useStaggerReveal } from "../hooks/useAnimations";
+import { buildCustomStrategy, getAllStrategies } from "../lib/customStrategies";
 import InfoTip from "../components/InfoTip";
 
 const DEFAULT_RISK = {
@@ -27,6 +29,44 @@ const IMPORTED_STRATEGY_KEY = "lensa.decision.importedStrategy";
 const JOURNAL_STORE = "paperTrades";
 const DB_NAME = "lensa-decision-center";
 const DB_VERSION = 1;
+
+function positiveNumber(value, fallback = 1) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : fallback;
+}
+
+function nonNegativeNumber(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? number : fallback;
+}
+
+function resolveImportedStrategy(importedStrategy) {
+  if (!importedStrategy?.strategyKey) return null;
+  if (importedStrategy.customDefinition) {
+    try {
+      return buildCustomStrategy(importedStrategy.customDefinition);
+    } catch {
+      return null;
+    }
+  }
+  return getAllStrategies(STRATEGIES)[importedStrategy.strategyKey] || null;
+}
+
+function marketForImportedStrategy(market, importedStrategy) {
+  if (!importedStrategy?.strategyKey) return market;
+  const savedCoin = importedStrategy.coin;
+  const coin = savedCoin?.id && savedCoin?.symbol ? { ...market.coin, ...savedCoin } : market.coin;
+  return {
+    ...market,
+    coin,
+    symbol: savedCoin?.symbol || market.symbol,
+    exchange: importedStrategy.exchange || market.exchange,
+    pair: importedStrategy.pair || market.pair,
+    marketType: importedStrategy.marketType || market.marketType,
+    timeframe: importedStrategy.timeframe || market.timeframe,
+    historicalRange: importedStrategy.historicalRange || importedStrategy.timeframe || market.historicalRange,
+  };
+}
 
 function tr(t, key, vars, fallback) {
   if (typeof t !== "function") return fallback;
@@ -191,7 +231,8 @@ function evaluateBrowserAlert(alert, decision, market) {
 }
 
 export default function DecisionCenter() {
-  const { market, updateFromCandles } = useMarket();
+  const { coin, selectCoin } = useCoin();
+  const { market, setExchange, setPair, setMarketType, setTimeframe, updateFromCandles } = useMarket();
   const { t, lang } = useI18n();
   const [decision, setDecision] = useState(null);
   const [dataMeta, setDataMeta] = useState(null);
@@ -213,6 +254,7 @@ export default function DecisionCenter() {
   const [importedStrategy, setImportedStrategy] = useLocalStorageState(IMPORTED_STRATEGY_KEY, null);
   const [importNotice, setImportNotice] = useState(null); // { ok: bool, msg }
   const importFileRef = useRef(null);
+  const appliedImportRef = useRef(null);
   const watchCache = useRef(new Map());
   const lastLang = useRef(lang);
   const reveal = useStaggerReveal([decision, error]);
@@ -220,6 +262,44 @@ export default function DecisionCenter() {
   useEffect(() => {
     loadPaperTrades().then(setPaperTrades);
   }, []);
+
+  // A strategy hand-off is an execution snapshot, not just an indicator
+  // name. Restore its market/timeframe and risk-engine inputs so a futures
+  // strategy cannot silently be analysed or sized as Spot with the Decision
+  // Center's old, unrelated leverage value.
+  useEffect(() => {
+    if (!importedStrategy?.strategyKey) {
+      appliedImportRef.current = null;
+      return;
+    }
+
+    const importToken = importedStrategy.savedAt || `${importedStrategy.strategyKey}|${importedStrategy.pair}|${importedStrategy.leverage}`;
+    if (appliedImportRef.current === importToken) return;
+    appliedImportRef.current = importToken;
+
+    const savedCoin = importedStrategy.coin;
+    if (savedCoin?.id && savedCoin?.symbol && (savedCoin.id !== coin.id || savedCoin.symbol !== coin.symbol)) {
+      selectCoin(savedCoin);
+    }
+    if (importedStrategy.exchange) setExchange(importedStrategy.exchange);
+    if (importedStrategy.pair) setPair(importedStrategy.pair);
+    if (importedStrategy.marketType) setMarketType(importedStrategy.marketType);
+    if (importedStrategy.timeframe) setTimeframe(importedStrategy.timeframe);
+
+    setRiskInputs((previous) => ({
+      ...previous,
+      leverage: positiveNumber(importedStrategy.leverage, 1),
+      feePercent: nonNegativeNumber(importedStrategy.fee, previous.feePercent),
+      riskPercent:
+        importedStrategy.sizing?.mode === "riskPercent"
+          ? positiveNumber(importedStrategy.sizing.riskPercent, previous.riskPercent)
+          : importedStrategy.sizingMode === "riskPercent"
+          ? positiveNumber(importedStrategy.sizingRiskPercent, previous.riskPercent)
+          : previous.riskPercent,
+    }));
+    setDecision(null);
+    setError(null);
+  }, [importedStrategy, coin.id, coin.symbol, selectCoin, setExchange, setMarketType, setPair, setRiskInputs, setTimeframe]);
 
   useEffect(() => {
     if (lastLang.current === lang) return undefined;
@@ -256,24 +336,33 @@ export default function DecisionCenter() {
   async function runDecision() {
     setLoading(true);
     setError(null);
+    const runMarket = marketForImportedStrategy(market, importedStrategy);
     try {
       const candles = await getChartCandles({
-        id: market.coin.id,
-        symbol: market.symbol,
-        timeframe: market.timeframe,
-        source: market.exchange,
-        pair: market.pair,
-        marketType: market.marketType,
+        id: runMarket.coin.id,
+        symbol: runMarket.symbol,
+        timeframe: runMarket.timeframe,
+        lookbackDays: importedStrategy?.lookbackDays,
+        source: runMarket.exchange,
+        pair: runMarket.pair,
+        marketType: runMarket.marketType,
       });
       if (candles.length < 60) throw new Error(t("decision.error.notEnoughCandles"));
       updateFromCandles(candles);
       setDataMeta(candles.meta || null);
-      setAnalysisMarket(snapshotContext(market));
-      setDecision(analyzeDecision(candles, candles.meta, market, t, importedStrategy));
+      const resolvedRunMarket = {
+        ...runMarket,
+        precision: candles.meta?.precision || runMarket.precision,
+      };
+      setAnalysisMarket(snapshotContext(resolvedRunMarket));
+      setDecision({
+        ...analyzeDecision(candles, candles.meta, resolvedRunMarket, t, importedStrategy),
+        analysisMarket: resolvedRunMarket,
+      });
     } catch (err) {
       setError(err.message);
       setDecision(null);
-      setDataMeta(qualityMetaFromError(err, market.exchange));
+      setDataMeta(qualityMetaFromError(err, runMarket.exchange));
       setAnalysisMarket(null);
     } finally {
       setLoading(false);
@@ -287,9 +376,11 @@ export default function DecisionCenter() {
     return decision.longSetup.score >= decision.shortSetup.score ? decision.longSetup : decision.shortSetup;
   }, [decision]);
 
+  const decisionMarket = decision?.analysisMarket || marketForImportedStrategy(market, importedStrategy);
+
   const risk = useMemo(
-    () => (activeSetup ? calculateRiskEngine(activeSetup, riskInputs, market, t) : null),
-    [activeSetup, riskInputs, market, t]
+    () => (activeSetup ? calculateRiskEngine(activeSetup, riskInputs, decisionMarket, t) : null),
+    [activeSetup, riskInputs, decisionMarket, t]
   );
 
   const scopedJournal = useMemo(
@@ -317,7 +408,7 @@ export default function DecisionCenter() {
     try {
       const text = await file.text();
       const parsed = JSON.parse(text);
-      if (!parsed?.strategyKey || !STRATEGIES[parsed.strategyKey]) throw new Error("invalid");
+      if (!parsed?.strategyKey || !resolveImportedStrategy(parsed)) throw new Error("invalid");
       setImportedStrategy({ ...parsed, savedAt: Date.now() });
       setImportNotice({ ok: true, msg: t("decision.imported.importSuccess") });
     } catch {
@@ -419,10 +510,10 @@ export default function DecisionCenter() {
     const trade = {
       id: crypto.randomUUID?.() || `${Date.now()}`,
       createdAt: new Date().toISOString(),
-      context: snapshotContext(market),
-      symbol: market.pair,
-      marketType: market.marketType,
-      timeframe: market.timeframe,
+      context: snapshotContext(decisionMarket),
+      symbol: decisionMarket.pair,
+      marketType: decisionMarket.marketType,
+      timeframe: decisionMarket.timeframe,
       direction: setup.side,
       entry: setup.entryMid,
       stop: setup.stop,
@@ -495,7 +586,7 @@ export default function DecisionCenter() {
         <div className="decision-hero__main">
           <div>
             <span className="panel-subtitle">{t("decision.activeContext")}</span>
-            <h1>{market.pair} · {market.marketType}</h1>
+            <h1>{decisionMarket.pair} · {decisionMarket.marketType}</h1>
           </div>
           <button className="run-btn" onClick={runDecision} disabled={loading}>
             {loading ? t("decision.analyzing") : t("decision.analyze")}
@@ -503,12 +594,12 @@ export default function DecisionCenter() {
         </div>
       </div>
 
-      {market.marketType === "Spot" && (
+      {decisionMarket.marketType === "Spot" && (
         <div className="source-warning reveal">
           {t("decision.warning.spot")}
         </div>
       )}
-      {market.marketType !== "Spot" && (
+      {decisionMarket.marketType !== "Spot" && (
         <div className="source-warning reveal">
           {t("decision.warning.futures")}
         </div>
@@ -520,13 +611,16 @@ export default function DecisionCenter() {
             <span className="config-chip config-chip--strategy">
               {t("decision.imported.title")}: {importedStrategy.label || importedStrategy.strategyKey}
             </span>
+            <span className="config-chip">
+              {importedStrategy.marketType || decisionMarket.marketType} · {decisionTerm(t, importedStrategy.direction || "long")} · {positiveNumber(importedStrategy.leverage, 1)}x
+            </span>
             {decision?.imported?.marketMismatch && (
               <span className="config-chip config-chip--risk">
                 {t("decision.imported.marketMismatch", { pair: decision.imported.savedPair, exchange: decision.imported.savedExchange })}
               </span>
             )}
             <button className="strip-btn" onClick={exportImportedStrategy} title={t("decision.imported.export")}>{t("decision.imported.export")}</button>
-            <button className="strip-btn strip-btn--danger" onClick={() => setImportedStrategy(null)}>{t("decision.imported.clear")}</button>
+            <button className="strip-btn strip-btn--danger" onClick={() => { setImportedStrategy(null); setDecision(null); }}>{t("decision.imported.clear")}</button>
           </>
         ) : (
           <span className="control-hint">{t("decision.imported.none")}</span>
@@ -548,14 +642,14 @@ export default function DecisionCenter() {
 
       {decision && (
         <>
-          <TradeDecisionPanel decision={decision} precision={decision.precision} market={market} meta={dataMeta} t={t} />
+          <TradeDecisionPanel decision={decision} precision={decision.precision} market={decisionMarket} meta={dataMeta} t={t} />
           <DecisionTestsPanel decision={decision} t={t} />
           <SimulationCards cards={decision.simulationCards} />
           <BacktestSummary backtest={decision.backtest} precision={decision.precision} t={t} />
 
           <div className="decision-grid decision-grid--setups">
-            <SetupCard setup={decision.longSetup} precision={decision.precision} market={market} meta={dataMeta} t={t} />
-            <SetupCard setup={decision.shortSetup} precision={decision.precision} market={market} meta={dataMeta} t={t} />
+            <SetupCard setup={decision.longSetup} precision={decision.precision} market={decisionMarket} meta={dataMeta} t={t} />
+            <SetupCard setup={decision.shortSetup} precision={decision.precision} market={decisionMarket} meta={dataMeta} t={t} />
           </div>
 
           <RiskEnginePanel
@@ -564,12 +658,12 @@ export default function DecisionCenter() {
             risk={risk}
             setup={activeSetup}
             precision={decision.precision}
-            market={market}
+            market={decisionMarket}
             meta={dataMeta}
             t={t}
           />
 
-          <SetupComparison decision={decision} precision={decision.precision} market={market} meta={dataMeta} t={t} />
+          <SetupComparison decision={decision} precision={decision.precision} market={decisionMarket} meta={dataMeta} t={t} />
 
           <WatchlistScreener
             watchlist={watchlist}
@@ -630,18 +724,30 @@ export default function DecisionCenter() {
 // living only in the Backtest page's separate, past-only view.
 function evaluateImportedStrategy(candles, market, importedStrategy) {
   if (!importedStrategy?.strategyKey) return null;
-  const strategy = STRATEGIES[importedStrategy.strategyKey];
+  const strategy = resolveImportedStrategy(importedStrategy);
   if (!strategy) return null;
   const direction = importedStrategy.direction || "long";
-  const leverage = importedStrategy.leverage || 1;
+  const leverage = positiveNumber(importedStrategy.leverage, 1);
   const params = importedStrategy.params || strategy.params;
-  const feePercent = importedStrategy.fee ?? 0.1;
+  const feePercent = nonNegativeNumber(importedStrategy.fee, 0.1);
   const riskParams = importedStrategy.riskParams || null;
+  const sizing = importedStrategy.sizing?.mode === "riskPercent"
+    ? {
+        mode: "riskPercent",
+        riskPercent: positiveNumber(importedStrategy.sizing.riskPercent, 1),
+      }
+    : importedStrategy.sizingMode === "riskPercent"
+    ? {
+        mode: "riskPercent",
+        riskPercent: positiveNumber(importedStrategy.sizingRiskPercent, 1),
+      }
+    : null;
+  const fillTiming = importedStrategy.fillTiming === "nextOpen" ? "nextOpen" : "close";
   try {
     const signals = combineDirectionalSignals(strategy, candles, params, direction);
     const result = leverage > 1 || direction !== "long"
-      ? runLeveragedBacktest({ candles, signals, feePercent, leverage, riskParams })
-      : runBacktest({ candles, signals, feePercent, riskParams });
+      ? runLeveragedBacktest({ candles, signals, feePercent, leverage, riskParams, sizing, fillTiming })
+      : runBacktest({ candles, signals, feePercent, riskParams, sizing, fillTiming });
     const live = currentSignalState(strategy, candles, params, direction);
     const marketMismatch = Boolean(
       importedStrategy.pair && importedStrategy.exchange &&
@@ -655,6 +761,9 @@ function evaluateImportedStrategy(candles, market, importedStrategy) {
       leverage,
       feePercent,
       riskParams,
+      sizing,
+      fillTiming,
+      lookbackDays: importedStrategy.lookbackDays,
       result,
       live,
       marketMismatch,
