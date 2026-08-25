@@ -21,7 +21,7 @@
 // combineDirectionalSignals() below merges the two into a single -1/0/1
 // position series according to the user's chosen direction mode.
 
-import { monteCarlo } from "./forecast.js";
+import { monteCarlo, probabilityAboveAcrossWindows, SCENARIO_CONSENSUS_STEPS } from "./forecast.js";
 
 /* ------------------------------------------------------------------ */
 /* Indicators                                                          */
@@ -381,6 +381,11 @@ function parabolicSarDirection(candles, p) {
 // is attempted — anything shorter doesn't give the bootstrap a meaningful
 // return distribution to draw from.
 const MC_MIN_HISTORY = 30;
+// The strategy intentionally combines broad short/medium/long scenario
+// windows. A single user-selected horizon creates a false timing promise:
+// "bearish over 10 candles" is easily misread as "the drop will happen in
+// exactly 10 candles." One longest-path simulation supplies all three views,
+// and their average drives direction without exposing a candle countdown.
 
 // Caches the per-bar Monte Carlo probability-of-higher-price series, keyed
 // by the candles array's own identity (a WeakMap, so entries are freed once
@@ -394,7 +399,6 @@ const mcProbCache = new WeakMap();
 
 function monteCarloProbSeries(candles, p) {
   const sig = JSON.stringify({
-    horizon: p.horizon,
     sims: p.sims,
     blockSize: p.blockSize,
     lookback: p.lookback,
@@ -421,14 +425,14 @@ function monteCarloProbSeries(candles, p) {
       const windowCloses = c.slice(start, i + 1);
       const mc = monteCarlo({
         closes: windowCloses,
-        horizon: p.horizon,
+        horizon: SCENARIO_CONSENSUS_STEPS.at(-1),
         sims: p.sims,
         method: "blockBootstrap",
         blockSize: p.blockSize,
         seed: p.seed,
       });
       if (!mc.error) {
-        lastProb = mc.probAboveCurrent;
+        lastProb = probabilityAboveAcrossWindows(mc);
         lastComputedAt = i;
       }
     }
@@ -1059,11 +1063,10 @@ export const STRATEGIES = {
     label: { en: "Monte Carlo Probability", fa: "استراتژی احتمال مونت‌کارلو" },
     category: "quant",
     description: {
-      en: "Turns this app's own Monte Carlo forecaster (the exact monteCarlo() engine behind the Forecast page — block-bootstrapped historical returns) into a trading rule instead of just a projection. At each recalculation point it re-simulates forward using only price data available up to that candle, then goes long while the simulated probability of a higher price clears a threshold, flat/short otherwise.",
-      fa: "موتور مونت‌کارلوی همین ابزار (دقیقاً همان monteCarlo() که پشت صفحه‌ی پیش‌بینی است — بازده‌های تاریخی با بلوک-بوت‌استرپ) را به‌جای صرفاً یک نمودار پیش‌بینی، به یک قانون معاملاتی تبدیل می‌کند. در هر نقطه‌ی بازمحاسبه فقط با داده‌ی قیمتِ در دسترس تا همان کندل به جلو شبیه‌سازی می‌کند، سپس تا وقتی احتمال شبیه‌سازی‌شده‌ی صعود از آستانه بگذرد لانگ می‌ماند، در غیر این‌صورت فلت/شورت.",
+      en: "Turns this app's Monte Carlo engine into a trading rule using a consensus across broad short-, medium-, and long-term scenario windows. At each recalculation point it uses only data available at that time, then goes long when the combined probability of a higher price clears a threshold, flat/short otherwise. The signal does not claim when a move will occur.",
+      fa: "موتور مونت‌کارلوی همین ابزار را با اجماع بازه‌های کلی کوتاه‌مدت، میان‌مدت و بلندمدت به یک قانون معاملاتی تبدیل می‌کند. در هر نقطه‌ی بازمحاسبه فقط از داده‌های موجود در همان زمان استفاده می‌شود؛ اگر احتمال ترکیبیِ قیمت بالاتر از آستانه بگذرد لانگ و در غیر این صورت فلت/شورت می‌شود. این سیگنال زمان وقوع حرکت را پیش‌بینی نمی‌کند.",
     },
     params: {
-      horizon: 10,
       sims: 300,
       blockSize: 5,
       lookback: 150,
@@ -1191,7 +1194,6 @@ export const PARAM_LABELS = {
   afStart: { en: "SAR starting step", fa: "گام شروع SAR" },
   afStep: { en: "SAR step increment", fa: "افزایش گام SAR" },
   afMax: { en: "SAR max step", fa: "حداکثر گام SAR" },
-  horizon: { en: "Forecast horizon (candles)", fa: "افق پیش‌بینی (کندل)" },
   sims: { en: "Simulation paths", fa: "تعداد مسیرهای شبیه‌سازی" },
   blockSize: { en: "Bootstrap block size", fa: "اندازه بلوک بوت‌استرپ" },
   lookback: { en: "History window (candles)", fa: "پنجره تاریخچه (کندل)" },

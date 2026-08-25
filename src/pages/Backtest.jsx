@@ -55,6 +55,16 @@ export default function Backtest() {
     [strategiesVersion]
   );
   const strategy = allStrategies[strategyKey] || STRATEGIES.trendMomentumHybrid;
+  // Keep only parameters the current strategy still supports. Besides
+  // preventing stale values from another strategy leaking across reloads,
+  // this migrates saved Monte Carlo configs away from the removed exact
+  // candle-horizon setting.
+  const activeParams = useMemo(
+    () => Object.fromEntries(
+      Object.entries(strategy.params || {}).map(([name, fallback]) => [name, params?.[name] ?? fallback])
+    ),
+    [params, strategy]
+  );
 
   // Futures-only controls. market.marketType already comes from the global
   // market bar (Spot / USD-M Futures / Coin-M Futures) — leverage and
@@ -246,7 +256,7 @@ export default function Backtest() {
         return;
       }
 
-      const signals = combineDirectionalSignals(strategy, candles, params, effectiveDirection);
+      const signals = combineDirectionalSignals(strategy, candles, activeParams, effectiveDirection);
 
       let effectiveRiskParams = riskParams;
       if (riskEnabled && autoFit) {
@@ -273,7 +283,7 @@ export default function Backtest() {
       });
       setResult(strategyResult);
       setBenchmarkResult(benchmark);
-      setLiveSignal(currentSignalState(strategy, candles, params, effectiveDirection));
+      setLiveSignal(currentSignalState(strategy, candles, activeParams, effectiveDirection));
     } catch (err) {
       setError(err.message);
       setDataMeta(qualityMetaFromError(err, market.exchange));
@@ -471,7 +481,7 @@ export default function Backtest() {
     return {
       schemaVersion: 2,
       strategyKey,
-      params,
+      params: activeParams,
       direction: effectiveDirection,
       leverage: effectiveLeverage,
       marketType: market.marketType,
@@ -667,7 +677,7 @@ export default function Backtest() {
             marketContext: market,
             strategy: strategyKey,
             strategyLabel: pick(lang, strategy.label),
-            params,
+            params: activeParams,
             fee,
             leverage: effectiveLeverage,
             direction: effectiveDirection,
@@ -767,7 +777,7 @@ export default function Backtest() {
                 <label>{t("bt.fee")}</label>
                 <input type="number" step="0.05" value={fee} onChange={(e) => setFee(e.target.value)} />
               </div>
-              {Object.entries(params).map(([name, value]) => (
+              {Object.entries(activeParams).map(([name, value]) => (
                 <div className="control-group" key={name}>
                   <label>{pick(lang, PARAM_LABELS[name]) || name}</label>
                   <input type="number" value={value} onChange={(e) => setParams((prev) => ({ ...prev, [name]: Number(e.target.value) }))} />
@@ -1490,7 +1500,7 @@ function BacktestConfigSummary({ report, t, lang }) {
 }
 
 function LiveSignalCard({ liveSignal, direction, t, locale }) {
-  const { state, barsInState, changedAtTime, lastCandleTime } = liveSignal;
+  const { state, changedAtTime, lastCandleTime } = liveSignal;
   const changedDate = changedAtTime ? new Date(changedAtTime * 1000).toLocaleString(locale) : null;
   const asOfDate = lastCandleTime ? new Date(lastCandleTime * 1000).toLocaleString(locale) : null;
   return (
@@ -1502,7 +1512,7 @@ function LiveSignalCard({ liveSignal, direction, t, locale }) {
           {t(`bt.live.state.${state}`)}
         </span>
         {state !== "flat" && (
-          <span className="control-hint">{t("bt.live.since", { n: barsInState, date: changedDate || "-" })}</span>
+          <span className="control-hint">{t("bt.live.since", { date: changedDate || "-" })}</span>
         )}
       </div>
       <small className="control-hint">{t("bt.live.asOf", { date: asOfDate || "-" })}</small>
