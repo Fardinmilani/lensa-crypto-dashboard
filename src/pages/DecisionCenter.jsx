@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import MarketContextBar from "../components/MarketContextBar";
 import DataQualityGuard from "../components/DataQualityGuard";
 import { getChartCandles } from "../lib/coingecko";
-import { firstTouchProbabilities, monteCarlo, touchProbability } from "../lib/forecast";
+import { firstTouchProbabilities, monteCarlo, probabilityAboveAcrossWindows, SCENARIO_CONSENSUS_STEPS, touchProbability } from "../lib/forecast";
 import { ema, macd, rsi, STRATEGIES, combineDirectionalSignals, currentSignalState } from "../lib/strategies";
 import { runBacktest, runLeveragedBacktest } from "../lib/backtest";
 import { calculateATR } from "../lib/risk";
@@ -789,7 +789,17 @@ function analyzeDecision(candles, meta, market, t, importedStrategy) {
   const atr = calculateATR(candles, 14) || last.close * 0.015;
   const precision = meta?.precision || market.precision;
   const qualityFactor = meta?.quality?.confidenceFactor ?? meta?.confidence ?? 1;
-  const mc = monteCarlo({ closes, horizon: 48, sims: 2500, method: "bootstrap", driftMode: "zero" });
+  const rawMc = monteCarlo({
+    closes,
+    horizon: SCENARIO_CONSENSUS_STEPS.at(-1),
+    sims: 2500,
+    method: "bootstrap",
+    driftMode: "zero",
+  });
+  const consensusProbability = probabilityAboveAcrossWindows(rawMc);
+  const mc = rawMc.error || consensusProbability == null
+    ? rawMc
+    : { ...rawMc, probProfit: consensusProbability, probAboveCurrent: consensusProbability };
   const backtest = lightweightBacktest(candles, { feePercent: 0.08, slippagePercent: 0.05 });
   const avgVolume = mean(volumes.slice(-30));
   const currentVolume = volumes.at(-1) || 0;
@@ -1056,7 +1066,7 @@ function buildImportedSetup({ side, imported, atr, mc, qualityFactor, t }) {
   const reasonsFor = [];
   const reasonsAgainst = [];
   if (isActive) {
-    reasonsFor.push(tr(t, "decision.imported.reason.active", { label, side: sideLabel, n: imported.live.barsInState }, `${label} currently signals ${side} (for ${imported.live.barsInState} candles).`));
+    reasonsFor.push(tr(t, "decision.imported.reason.active", { label, side: sideLabel }, `${label} currently signals ${side}.`));
     reasonsFor.push(tr(t, "decision.imported.reason.stats", { trades: result.tradeCount, winRate, pf }, `Backtest: ${result.tradeCount} trades, ${winRate}% win rate, profit factor ${pf}.`));
     if (result.profitFactor < 1) reasonsAgainst.push(tr(t, "decision.imported.reason.weakPf", undefined, "This strategy's historical profit factor is below 1 over the tested window."));
     if (result.tradeCount < 8) reasonsAgainst.push(tr(t, "decision.imported.reason.smallSample", undefined, "Few historical trades — treat the win rate/profit factor with caution."));
@@ -1120,7 +1130,7 @@ function buildImportedTestSuite({ imported, qualityFactor, meta, t }) {
     signal: {
       score: live?.state === "flat" ? 45 : 65,
       summary: tr(t, "decision.imported.test.signal.summary", { label: label || imported.strategyKey, state: decisionTerm(t, stateWord) }, `${label || imported.strategyKey} signals ${stateWord}`),
-      impact: tr(t, "decision.imported.test.signal.impact", { n: live?.barsInState ?? 0 }, `Active for ${live?.barsInState ?? 0} candles since the last flip.`),
+      impact: tr(t, "decision.imported.test.signal.impact", undefined, "The signal remains active only while the strategy's rules continue to hold."),
     },
     performance: {
       score: result.tradeCount < 8 ? 40 : result.profitFactor > 1.5 ? 78 : result.profitFactor > 1 ? 58 : 30,
@@ -1172,7 +1182,7 @@ function buildTestSuite({ trendLong, trendShort, momentumLong, momentumShort, r,
     },
     monteCarlo: {
       score: mc?.error ? 35 : Math.round((mc.probProfit || 0.5) * 100),
-      summary: mc?.error ? tr(t, "decision.sim.unavailable", undefined, "Simulation unavailable") : tr(t, "decision.test.mc.summary", { p: Math.round(mc.probProfit * 100) }, `Positive close probability ${Math.round(mc.probProfit * 100)}%`),
+      summary: mc?.error ? tr(t, "decision.sim.unavailable", undefined, "Simulation unavailable") : tr(t, "decision.test.mc.summary", { p: Math.round(mc.probProfit * 100) }, `Multi-window positive consensus ${Math.round(mc.probProfit * 100)}%`),
       impact: mc?.error ? tr(t, "decision.test.mc.reduced", undefined, "Confidence is reduced.") : mc.probProfit > 0.58 ? tr(t, "decision.test.mc.upside", undefined, "Simulation supports upside.") : mc.probProfit < 0.42 ? tr(t, "decision.test.mc.downside", undefined, "Simulation warns about downside.") : tr(t, "decision.test.mc.neutral", undefined, "Simulation is not strong enough by itself."),
     },
     backtest: {
@@ -1206,9 +1216,9 @@ function buildSimulationCards(mc, precision, t) {
   const profitPct = Math.round(mc.probProfit * 100);
   return [
     {
-      label: tr(t, "decision.sim.prob.label", undefined, "Positive close probability"),
+      label: tr(t, "decision.sim.prob.label", undefined, "Multi-window positive consensus"),
       number: `${profitPct}%`,
-      explanation: tr(t, "decision.sim.prob.explanation", { p: profitPct }, `Around ${profitPct} out of 100 simulated paths ended positive over the selected horizon.`),
+      explanation: tr(t, "decision.sim.prob.explanation", { p: profitPct }, `Across broad scenario windows, the average share of positive simulated paths was about ${profitPct} out of 100. This does not predict timing.`),
       impact: profitPct >= 58 ? tr(t, "decision.sim.prob.long", undefined, "This supports a Long bias, but still needs trend and risk confirmation.") : profitPct <= 42 ? tr(t, "decision.sim.prob.caution", undefined, "This weakens Long entries and favors caution or Short analysis.") : tr(t, "decision.sim.prob.neutral", undefined, "This is not strong enough by itself to justify entry."),
     },
     {

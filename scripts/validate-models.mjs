@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { runBacktest, runLeveragedBacktest } from "../src/lib/backtest.js";
 import { STRATEGIES, sma } from "../src/lib/strategies.js";
 import { positionSize, riskRewardRatio, calculateATR, atrStopSuggestion } from "../src/lib/risk.js";
-import { monteCarlo, outcomeZones, tradeSetups, probabilityPriceMap } from "../src/lib/forecast.js";
+import { monteCarlo, outcomeZones, tradeSetups, probabilityAboveAcrossWindows, probabilityPriceMap, SCENARIO_CONSENSUS_STEPS } from "../src/lib/forecast.js";
 import { resolveTimeframe, TIMEFRAMES } from "../src/lib/coingecko.js";
 import { optimizeStrategy, walkForwardValidate } from "../src/lib/optimize.js";
 import { buildCustomStrategy, getAllStrategies } from "../src/lib/customStrategies.js";
@@ -36,6 +36,14 @@ for (const [key, strategy] of Object.entries(STRATEGIES)) {
   assert.ok(signals.every((s) => s === 0 || s === 1), `${key}: binary signals`);
 }
 
+const mcStrategy = STRATEGIES.monteCarloProbability;
+assert.equal("horizon" in mcStrategy.params, false, "Monte Carlo strategy does not expose an exact candle horizon");
+assert.deepEqual(
+  mcStrategy.generateSignals(candles, { ...mcStrategy.params, horizon: 1 }),
+  mcStrategy.generateSignals(candles, mcStrategy.params),
+  "legacy candle-horizon values do not change the multi-window Monte Carlo signal",
+);
+
 const buyHold = runBacktest({
   candles,
   signals: STRATEGIES.buyAndHold.generateSignals(candles),
@@ -68,6 +76,17 @@ assert.ok(
   Math.abs(mc.probAboveCurrent - mc.finals.filter((p) => p > mc.current).length / mc.finals.length) < 1e-12,
   "probAboveCurrent uses simulated path count as denominator",
 );
+const consensusMc = monteCarlo({
+  closes,
+  horizon: SCENARIO_CONSENSUS_STEPS.at(-1),
+  sims: 1000,
+  method: "bootstrap",
+  driftMode: "zero",
+  seed: 42,
+});
+const consensusProbability = probabilityAboveAcrossWindows(consensusMc);
+assert.ok(consensusProbability >= 0 && consensusProbability <= 1, "multi-window probability is bounded");
+assert.equal(probabilityAboveAcrossWindows(null), null, "multi-window probability handles unavailable simulations");
 const expectedMedianPct = (mc.dist.p50 / mc.current - 1) * 100;
 assert.ok(Math.abs(mc.medianReturnPct - expectedMedianPct) < 1e-9, "median return derives from p50");
 

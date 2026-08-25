@@ -1,13 +1,13 @@
 import { useState } from "react";
 import { getChartCandles } from "../lib/coingecko";
-import { monteCarlo, tradeSetups, annualizedVol, probabilityPriceMap } from "../lib/forecast";
+import { monteCarlo, tradeSetups, annualizedVol, probabilityPriceMap, SCENARIO_CONSENSUS_STEPS } from "../lib/forecast";
 import { formatUsd } from "../lib/priceFormat";
 import ConeChart from "../components/ConeChart";
 import ReportActions from "../components/ReportActions";
 import TimeframePicker from "../components/TimeframePicker";
 import MarketContextBar from "../components/MarketContextBar";
 import DataQualityGuard from "../components/DataQualityGuard";
-import { checkForecastAnchor, qualityMetaFromError, readableDuration } from "../lib/dataQuality";
+import { checkForecastAnchor, qualityMetaFromError } from "../lib/dataQuality";
 import { useCoin } from "../context/coinStore";
 import { useMarket } from "../context/MarketContext";
 import { useI18n } from "../i18n/langStore";
@@ -26,11 +26,21 @@ const PRECISION = [
   { key: "precise", sims: 8000 },
 ];
 
+// A probabilistic path simulation still needs a finite sampling window, but
+// exposing it as an exact candle countdown implies timing precision the model
+// does not have. Broad scenario windows preserve the required math without
+// presenting "the move should happen in N candles" as a signal.
+const SCENARIO_WINDOWS = [
+  { key: "short", periods: SCENARIO_CONSENSUS_STEPS[0] },
+  { key: "medium", periods: SCENARIO_CONSENSUS_STEPS[1] },
+  { key: "long", periods: SCENARIO_CONSENSUS_STEPS[2] },
+];
+
 export default function Forecast() {
   const { coin } = useCoin();
   const { market, setTimeframe, updateFromCandles } = useMarket();
   const { t } = useI18n();
-  const [horizon, setHorizon] = useLocalStorageState("lensa.forecast.horizon", 30);
+  const [scenarioWindow, setScenarioWindow] = useLocalStorageState("lensa.forecast.window", "medium");
   const [method, setMethod] = useLocalStorageState("lensa.forecast.method", "bootstrap");
   const [blockSize, setBlockSize] = useLocalStorageState("lensa.forecast.blockSize", 5);
   const [driftMode, setDriftMode] = useLocalStorageState("lensa.forecast.drift", "historical");
@@ -43,6 +53,8 @@ export default function Forecast() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const reveal = useStaggerReveal([mc, error]);
+  const windowConfig = SCENARIO_WINDOWS.find((item) => item.key === scenarioWindow) || SCENARIO_WINDOWS[1];
+  const horizon = windowConfig.periods;
 
   async function handleRun() {
     setLoading(true);
@@ -62,7 +74,7 @@ export default function Forecast() {
       setAnalysisMarket(snapshotMarket(market));
       const closes = candles.map((c) => c.close);
       const stepSeconds = Math.max(1, candles[1].time - candles[0].time);
-      const sim = monteCarlo({ closes, horizon: Number(horizon), sims, method, driftMode, blockSize: Number(blockSize) });
+      const sim = monteCarlo({ closes, horizon, sims, method, driftMode, blockSize: Number(blockSize) });
       if (sim.error) throw new Error(sim.error);
       const periodsPerYear = (365 * 86400) / stepSeconds;
       const histTail = candles.slice(-Math.min(candles.length, Math.max(40, horizon)));
@@ -73,7 +85,6 @@ export default function Forecast() {
         annVol: annualizedVol(closes, periodsPerYear),
         stepSeconds,
         history: histTail.map((c) => ({ time: c.time, value: c.close })),
-        horizonLabel: readableDuration(Number(horizon) * stepSeconds),
       });
     } catch (err) {
       setError(err.message);
@@ -91,7 +102,7 @@ export default function Forecast() {
           type: "forecast",
           generatedAt: new Date().toISOString(),
           marketContext: market,
-          horizon,
+          scenarioWindow: windowConfig.key,
           method,
           blockSize: method === "blockBootstrap" ? Number(blockSize) : undefined,
           driftMode,
@@ -126,8 +137,13 @@ export default function Forecast() {
           </div>
         </div>
         <div className="control-group">
-          <label>{t("fc.horizon")}</label>
-          <input type="number" min="5" max="365" value={horizon} onChange={(e) => setHorizon(e.target.value)} />
+          <label>{t("fc.window")}</label>
+          <select value={windowConfig.key} onChange={(e) => setScenarioWindow(e.target.value)}>
+            {SCENARIO_WINDOWS.map((item) => (
+              <option key={item.key} value={item.key}>{t(`fc.window.${item.key}`)}</option>
+            ))}
+          </select>
+          <small className="control-hint">{t("fc.window.hint")}</small>
         </div>
         <div className="control-group">
           <label>
@@ -188,7 +204,7 @@ export default function Forecast() {
           <ReportActions report={report} type="forecast" symbol={coin.symbol} allowSave={false} />
           <div className="forecast-hl">
             <HlCard label={t("fc.hl.median")} value={mc.medianReturnPct} suffix="%" decimals={0} tone={mc.medianReturnPct >= 0 ? "up" : "down"} hint={formatUsd(mc.dist.p50, market.precision, { mode: "futures" })} tip="glossary.medianScenario" />
-            <HlCard label={t("fc.hl.prob")} value={mc.probAboveCurrent * 100} suffix="%" decimals={0} tone={mc.probAboveCurrent >= 0.5 ? "up" : "down"} hint={t("fc.hl.probHint", { n: extra.horizonLabel })} tip="glossary.probAbove" />
+            <HlCard label={t("fc.hl.prob")} value={mc.probAboveCurrent * 100} suffix="%" decimals={0} tone={mc.probAboveCurrent >= 0.5 ? "up" : "down"} hint={t("fc.hl.probHint")} tip="glossary.probAbove" />
             <HlCard label={t("fc.hl.upside")} value={mc.upside95Pct} suffix="%" decimals={0} tone="up" hint={formatUsd(mc.dist.p95, market.precision, { mode: "futures" })} tip="glossary.p95" />
             <HlCard label={t("fc.hl.downside")} value={mc.var5Pct} suffix="%" decimals={0} tone="down" hint={formatUsd(mc.dist.p5, market.precision, { mode: "futures" })} tip="glossary.p5" />
             <HlCard label={t("fc.hl.vol")} value={extra.annVol} suffix="%" decimals={0} hint={t("fc.hl.volHint")} tip="glossary.annualizedVol" />
@@ -236,7 +252,6 @@ export default function Forecast() {
             <div className="scenario-summary">
               <p className="scenario-summary__lead">{t("fc.summary.lead", {
                 median: formatUsd(mc.dist.p50, market.precision, { mode: "futures" }),
-                n: extra.horizonLabel,
               })}</p>
               <ul className="scenario-summary__list">
                 <li><span>{t("fc.summary.down")}</span><strong className="num down">{formatUsd(mc.dist.p5, market.precision, { mode: "futures" })}</strong></li>

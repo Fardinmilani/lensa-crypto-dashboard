@@ -13,6 +13,10 @@
 // All of this is for education/analysis. It is not financial advice and the
 // future can always fall outside any simulated range.
 
+// Broad internal windows used when a directional decision needs one
+// probability without pretending a move has an exact candle deadline.
+export const SCENARIO_CONSENSUS_STEPS = Object.freeze([8, 21, 55]);
+
 // Deterministic RNG so the same inputs yield the same simulation (reproducible).
 function mulberry32(seed) {
   let a = seed >>> 0;
@@ -191,6 +195,23 @@ export function monteCarlo({
     var5Pct,
     upside95Pct,
   };
+}
+
+/**
+ * Average P(price above current) across broad short/medium/long windows from
+ * one simulated path set. This is suitable for directional bias because no
+ * single endpoint controls the result; it deliberately does not estimate
+ * when a move will happen.
+ */
+export function probabilityAboveAcrossWindows(mc, steps = SCENARIO_CONSENSUS_STEPS) {
+  if (!mc || mc.error || !Array.isArray(mc.paths) || !mc.paths.length) return null;
+  const validSteps = steps.filter((step) => Number.isInteger(step) && step > 0 && step <= mc.paths[0].length);
+  if (!validSteps.length) return null;
+  const probabilities = validSteps.map((step) => {
+    const above = mc.paths.reduce((count, path) => count + (path[step - 1] > mc.current ? 1 : 0), 0);
+    return above / mc.paths.length;
+  });
+  return probabilities.reduce((sum, probability) => sum + probability, 0) / probabilities.length;
 }
 
 export function probabilityPriceMap(mc) {
