@@ -221,8 +221,8 @@ function resolveFillPrices(candles, fillTiming) {
  * SL/TP" option — runs entirely client-side, no extra network calls.
  */
 export function autoFitRiskExits({ candles, signals, feePercent = 0.1, initialCapital = 10000, leverage = 1, sizing = null, fillTiming = "close" }) {
-  const STOP_CANDIDATES = [1, 2, 3, 5, 8, 12];
-  const TARGET_CANDIDATES = [2, 4, 6, 10, 15, 20, 30];
+  const STOP_CANDIDATES = [3, 5, 8, 12, 20, 25, 40];
+  const TARGET_CANDIDATES = [8, 15, 25, 40, 60, 80, 100];
   const runOne = (riskParams) =>
     leverage > 1 || signals.some((s) => s < 0)
       ? runLeveragedBacktest({ candles, signals, feePercent, initialCapital, leverage, riskParams, sizing, fillTiming })
