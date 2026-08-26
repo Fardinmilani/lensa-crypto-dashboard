@@ -82,6 +82,22 @@ export default function App() {
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
 
+  useEffect(() => {
+    function onKey(e) {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
+      const num = Number(e.key);
+      if (num >= 1 && num <= TABS.length) {
+        selectTab(TABS[num - 1].id);
+        return;
+      }
+      if ((e.key === "r" || e.key === "R") && activeTab === "backtest") {
+        window.dispatchEvent(new CustomEvent("lensa:run-backtest"));
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [activeTab]);
+
   function selectTab(id) {
     setActiveTab(id);
     if (typeof window !== "undefined") window.history.pushState(null, "", `#${id}`);

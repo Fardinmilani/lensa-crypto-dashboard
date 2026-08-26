@@ -16,6 +16,10 @@ import { applyStressScenario, monteCarloPortfolioStress } from "../src/lib/stres
 import { underwaterEquity } from "../src/lib/underwater.js";
 import { encodeStrategyPayload, decodeStrategyPayload } from "../src/lib/strategyShare.js";
 import { evaluateMultiTfConfluence } from "../src/lib/multitf.js";
+import { rollingMetrics } from "../src/lib/rolling.js";
+import { buildParamHeatmap } from "../src/lib/heatmap.js";
+import { exportWorkspace, importWorkspaceBackup } from "../src/lib/workspaceBackup.js";
+import { filterTrades, normalizeCandles, sliceTradeWindow } from "../src/lib/tradeReplay.js";
 
 function makeCandles(length = 180) {
   const start = Date.UTC(2025, 0, 1) / 1000;
@@ -589,8 +593,37 @@ assert.ok(TIMEFRAMES.some((tf) => tf.id === "1M"), "TradingView-style monthly ti
   });
   assert.ok(mtf.rows.length === 1);
   assert.ok(estimateVolatility(candles.map((c) => c.close)) > 0);
+
+  const rolling = rollingMetrics(buyHold.equityCurve, 10);
+  assert.ok(rolling.length > 0);
+  assert.ok(Number.isFinite(rolling.at(-1).rollingMaxDd));
+  const heat = buildParamHeatmap({
+    strategy: STRATEGIES.smaCrossover,
+    candles,
+    paramX: "fastPeriod",
+    paramY: "slowPeriod",
+    xValues: [5, 10],
+    yValues: [20, 30],
+  });
+  assert.equal(heat.matrix.length, 2);
+  assert.equal(heat.matrix[0].length, 2);
+  const limitFill = runBacktest({
+    candles,
+    signals: STRATEGIES.smaCrossover.generateSignals(candles, { fastPeriod: 5, slowPeriod: 20 }),
+    feePercent: 0,
+    fillTiming: "limitTouch",
+  });
+  assert.ok(Number.isFinite(limitFill.totalReturnPercent));
+  const backup = exportWorkspace();
+  assert.equal(typeof backup.entries, "object");
+  const norm = normalizeCandles(candles);
+  assert.ok(norm.length === candles.length);
+  const wins = filterTrades(buyHold.trades, "wins");
+  assert.ok(Array.isArray(wins));
+  const win = sliceTradeWindow(norm, buyHold.trades[0] || { entryTime: norm[0].time, exitTime: norm.at(-1).time });
+  assert.ok(win.window.length > 0);
 }
 
 console.log(
-  "Model validation passed: strategies, backtest, position sizing, fill timing, risk tools, Monte Carlo (incl. block bootstrap), walk-forward validation, custom strategies, timeframes, regime, Kelly, MAE/MFE, trade-sequence Monte Carlo, deflated Sharpe, portfolio, correlation, seasonality, stress, underwater, strategy share, and multi-TF."
+  "Model validation passed: strategies, backtest, position sizing, fill timing, risk tools, Monte Carlo (incl. block bootstrap), walk-forward validation, custom strategies, timeframes, regime, Kelly, MAE/MFE, trade-sequence Monte Carlo, deflated Sharpe, portfolio, correlation, seasonality, stress, underwater, strategy share, multi-TF, rolling metrics, heatmap, and limit-touch fills."
 );

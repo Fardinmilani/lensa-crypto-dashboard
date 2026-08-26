@@ -56,28 +56,21 @@ export function applyRiskExits(candles, signals, riskParams, leverage = 1, fillP
   // is the liquidation price, not a request to lose more than collateral.
   const stopLossPercent = positionToUnderlying(riskParams?.stopLossPercent, lev);
   const takeProfitPercent = positionToUnderlying(riskParams?.takeProfitPercent, lev);
-  if (stopLossPercent == null && takeProfitPercent == null) return { signals, exitPrice: new Array(signals.length).fill(null) };
+  const trailingStopPercent = positionToUnderlying(riskParams?.trailingStopPercent, lev);
+  if (stopLossPercent == null && takeProfitPercent == null && trailingStopPercent == null) {
+    return { signals, exitPrice: new Array(signals.length).fill(null), scaleOutFraction: new Array(signals.length).fill(null) };
+  }
 
   const out = signals.slice();
   const exitPrice = new Array(signals.length).fill(null);
-  let side = 0; // 1 long, -1 short, 0 flat — sign of the signal that opened the current trade
+  const scaleOutFraction = new Array(signals.length).fill(null);
+  let side = 0;
   let entryPrice = null;
-  // After a forced SL/TP exit, re-entry on the SAME side is blocked until
-  // the raw strategy signal moves off that side — either back to flat, or
-  // (for long/short strategies that flip directly between 1 and -1 with no
-  // intermediate flat bar) straight into the opposite side. Without this,
-  // a strategy whose signal stays continuously 1 would get flipped right
-  // back into a fresh position on the very next bar, defeating the point
-  // of having stopped out.
-  //
-  // NOTE: this used to wait specifically for the signal to hit literal 0.
-  // That is wrong for direction: "both" strategies, which often never emit
-  // an explicit 0 at all — they flip straight from 1 to -1 (see the flip
-  // branch below). Waiting for a flat that never comes meant that, once a
-  // single forced exit happened, every subsequent bar for the rest of the
-  // backtest was suppressed, silently collapsing the trade count to one
-  // whenever a stop-loss/take-profit was configured on such a strategy.
+  let peakPrice = null;
+  let troughPrice = null;
   let blockedSide = 0;
+  let partialTpTaken = false;
+  const partialFrac = positiveOrNull(riskParams?.partialTakeProfitFraction);
 
   for (let i = 0; i < candles.length; i++) {
     const rawSignal = Math.sign(signals[i] ?? 0);
@@ -91,33 +84,50 @@ export function applyRiskExits(candles, signals, riskParams, leverage = 1, fillP
     blockedSide = 0; // signal moved off the stopped-out side; block lifted
 
     if (side !== 0) {
-      // Underlying-price % from entry to each bound. Leverage was already
-      // divided out above, so a 25% position stop at 5x is a 5% coin move.
+      if (side === 1) {
+        peakPrice = peakPrice == null ? high : Math.max(peakPrice, high);
+      } else {
+        troughPrice = troughPrice == null ? low : Math.min(troughPrice, low);
+      }
+
       const worstPrice = hasRange ? (side === 1 ? low : high) : close;
       const bestPrice = hasRange ? (side === 1 ? high : low) : close;
-      const worstMove = ((worstPrice - entryPrice) / entryPrice) * 100 * side; // negative = loss
-      const bestMove = ((bestPrice - entryPrice) / entryPrice) * 100 * side; // positive = gain
+      const worstMove = ((worstPrice - entryPrice) / entryPrice) * 100 * side;
+      const bestMove = ((bestPrice - entryPrice) / entryPrice) * 100 * side;
+
+      let trailHit = false;
+      if (trailingStopPercent != null && peakPrice != null && troughPrice != null) {
+        const trailPrice =
+          side === 1
+            ? peakPrice * (1 - trailingStopPercent / 100)
+            : troughPrice * (1 + trailingStopPercent / 100);
+        trailHit = side === 1 ? worstPrice <= trailPrice : worstPrice >= trailPrice;
+        if (trailHit) exitPrice[i] = trailPrice;
+      }
 
       const stopHit = stopLossPercent != null && worstMove <= -stopLossPercent;
-      const profitHit = takeProfitPercent != null && bestMove >= takeProfitPercent;
+      const profitHit = takeProfitPercent != null && bestMove >= takeProfitPercent && !partialTpTaken;
 
-      if (stopHit || profitHit) {
-        // Force flat on this bar. If both bounds are somehow crossed on the
-        // same bar, the stop-loss takes priority (the more conservative,
-        // capital-preserving assumption when intrabar order isn't known).
-        // Fill at the exact configured bound rather than the bar's close.
+      if (trailHit || stopHit || profitHit) {
+        if (profitHit && partialFrac != null && partialFrac > 0 && partialFrac < 1) {
+          scaleOutFraction[i] = partialFrac;
+          exitPrice[i] = entryPrice * (1 + (takeProfitPercent / 100) * side);
+          partialTpTaken = true;
+          continue;
+        }
         out[i] = 0;
-        exitPrice[i] = stopHit
-          ? entryPrice * (1 - (stopLossPercent / 100) * side)
-          : entryPrice * (1 + (takeProfitPercent / 100) * side);
-        // Only hold off re-entry if the strategy's own signal is still
-        // "in position" (on the side that just got stopped out) on this
-        // very bar — if it had already moved off that side on its own,
-        // there's nothing to wait for.
+        if (!exitPrice[i]) {
+          exitPrice[i] = stopHit || trailHit
+            ? entryPrice * (1 - (stopLossPercent ?? trailingStopPercent) / 100 * side)
+            : entryPrice * (1 + (takeProfitPercent / 100) * side);
+        }
         if (rawSignal === side) blockedSide = side;
         side = 0;
         entryPrice = null;
-        continue; // a forced exit this bar can't also re-enter the same bar
+        peakPrice = null;
+        troughPrice = null;
+        partialTpTaken = false;
+        continue;
       }
     }
 
@@ -130,18 +140,25 @@ export function applyRiskExits(candles, signals, riskParams, leverage = 1, fillP
     if (side === 0 && rawSignal !== 0) {
       side = rawSignal;
       entryPrice = engineEntryPrice;
+      peakPrice = hasRange ? high : close;
+      troughPrice = hasRange ? low : close;
+      partialTpTaken = false;
     } else if (side !== 0 && rawSignal === 0) {
       side = 0;
       entryPrice = null;
+      peakPrice = null;
+      troughPrice = null;
+      partialTpTaken = false;
     } else if (side !== 0 && rawSignal !== side) {
-      // direction flip (long -> short or vice versa) without an
-      // intermediate flat bar
       side = rawSignal;
       entryPrice = engineEntryPrice;
+      peakPrice = hasRange ? high : close;
+      troughPrice = hasRange ? low : close;
+      partialTpTaken = false;
     }
   }
 
-  return { signals: out, exitPrice };
+  return { signals: out, exitPrice, scaleOutFraction };
 }
 
 function positiveOrNull(value) {
@@ -222,6 +239,15 @@ function resolveFillPrices(candles, fillTiming) {
   });
 }
 
+// Limit order at `limitPrice` fills only if the bar's range touches it.
+function limitTouchFill(candle, side, limitPrice) {
+  const { low, high } = candle;
+  if (!Number.isFinite(low) || !Number.isFinite(high) || !Number.isFinite(limitPrice)) return limitPrice;
+  if (side === 1) return low <= limitPrice ? limitPrice : null;
+  if (side === -1) return high >= limitPrice ? limitPrice : null;
+  return limitPrice;
+}
+
 // Whether bar i's fill actually executes at the NEXT bar's open (true for
 // every nextOpen bar except the last one, which falls back to its own
 // close). Used to mark equity correctly on trade bars: a fill that hasn't
@@ -275,9 +301,9 @@ export function runBacktest({
     throw new Error("candles و signals باید طول یکسان داشته باشند");
   }
   const fillPrices = resolveFillPrices(candles, fillTiming);
-  const { signals: effectiveSignals, exitPrice: forcedExitPrice } = riskParams
+  const { signals: effectiveSignals, exitPrice: forcedExitPrice, scaleOutFraction } = riskParams
     ? applyRiskExits(candles, signals, riskParams, 1, fillPrices)
-    : { signals, exitPrice: null };
+    : { signals, exitPrice: null, scaleOutFraction: null };
 
   const equityCurve = [];
   const trades = [];
@@ -300,14 +326,40 @@ export function runBacktest({
     const cashBefore = cash;
     const unitsBefore = units;
 
+    if (scaleOutFraction?.[i] != null && units > 0 && entryPrice != null) {
+      const frac = scaleOutFraction[i];
+      const partialPrice = forcedExitPrice[i] ?? fillPrices[i];
+      const partialUnits = units * frac;
+      const proceeds = partialUnits * partialPrice;
+      const feeAmt = proceeds * (feePercent / 100);
+      cash += proceeds - feeAmt;
+      units -= partialUnits;
+      trades.push({
+        entryTime,
+        exitTime: time,
+        entryPrice,
+        exitPrice: partialPrice,
+        pnlPercent: ((partialPrice - entryPrice) / entryPrice) * 100,
+        partial: true,
+      });
+    }
+
     if (prevSignal === 0 && signal === 1) {
-      const notional = resolveEntryNotional(cash, sizing, riskParams);
-      const fee = notional * (feePercent / 100);
-      const investable = notional - fee;
-      units = investable / fillPrice;
-      cash -= notional;
-      entryPrice = fillPrice;
-      entryTime = time;
+      let entryFill = fillPrice;
+      if (fillTiming === "limitTouch") {
+        const touched = limitTouchFill(candles[i], 1, candles[i].close);
+        if (touched != null) entryFill = touched;
+      }
+      const canEnter = fillTiming !== "limitTouch" || limitTouchFill(candles[i], 1, candles[i].close) != null;
+      if (canEnter) {
+        const notional = resolveEntryNotional(cash, sizing, riskParams);
+        const fee = notional * (feePercent / 100);
+        const investable = notional - fee;
+        units = investable / entryFill;
+        cash -= notional;
+        entryPrice = entryFill;
+        entryTime = time;
+      }
     } else if (prevSignal === 1 && signal === 0) {
       const proceeds = units * fillPrice;
       const fee = proceeds * (feePercent / 100);
@@ -443,9 +495,9 @@ export function runLeveragedBacktest({
   }
   const lev = Math.max(1, Number(leverage) || 1);
   const fillPrices = resolveFillPrices(candles, fillTiming);
-  const { signals: effectiveSignals, exitPrice: forcedExitPrice } = riskParams
+  const { signals: effectiveSignals, exitPrice: forcedExitPrice, scaleOutFraction } = riskParams
     ? applyRiskExits(candles, signals, riskParams, lev, fillPrices)
-    : { signals, exitPrice: null };
+    : { signals, exitPrice: null, scaleOutFraction: null };
   const hasShorts = effectiveSignals.some((s) => s < 0);
   if (lev === 1 && !hasShorts) {
     return runBacktest({ candles, signals, feePercent, initialCapital, riskParams, sizing, fillTiming });
@@ -537,6 +589,27 @@ export function runLeveragedBacktest({
     };
     let signalTradeThisBar = false;
 
+    if (scaleOutFraction?.[i] != null && entryPrice != null && positionEquity > 0) {
+      const frac = scaleOutFraction[i];
+      const partialPrice = forcedExitPrice[i] ?? fillPrices[i];
+      const rawPnl = movePercent(partialPrice);
+      const pnlOnEquity = Math.max(-100, rawPnl);
+      const grossProceeds = positionEquity * frac * (1 + pnlOnEquity / 100);
+      const feeAmt = grossProceeds * (feePercent / 100);
+      cash += Math.max(0, grossProceeds - feeAmt);
+      positionEquity *= 1 - frac;
+      trades.push({
+        entryTime,
+        exitTime: time,
+        entryPrice,
+        exitPrice: partialPrice,
+        pnlPercent: pnlOnEquity,
+        leverage: lev,
+        side: positionSide,
+        partial: true,
+      });
+    }
+
     if (entryPrice != null) {
       // Isolated-margin reality: a stop that is closer than liquidation
       // must fill at the stop, unless this bar *opened* already through
@@ -571,8 +644,14 @@ export function runLeveragedBacktest({
     }
 
     if (entryPrice == null && direction !== 0 && !liquidated) {
-      openPosition(direction, fillPrice, time);
-      signalTradeThisBar = true;
+      const canEnter =
+        fillTiming !== "limitTouch" || limitTouchFill(candles[i], direction, candles[i].close) != null;
+      if (canEnter) {
+        const openPrice =
+          fillTiming === "limitTouch" ? limitTouchFill(candles[i], direction, candles[i].close) : fillPrice;
+        openPosition(direction, openPrice, time);
+        signalTradeThisBar = true;
+      }
     }
 
     // Same phantom-gap guard as the spot engine: a signal fill deferred to

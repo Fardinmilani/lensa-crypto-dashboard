@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AreaSeries, BarSeries, createChart, CandlestickSeries, HistogramSeries, LineSeries } from "lightweight-charts";
+import { AreaSeries, BarSeries, createChart, CandlestickSeries, createSeriesMarkers, HistogramSeries, LineSeries } from "lightweight-charts";
 import { getChartCandles, resolveTimeframe } from "../lib/coingecko";
 import { formatPrice } from "../lib/priceFormat";
 import { useMarket } from "../context/MarketContext";
@@ -45,6 +45,7 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
   // soft pagination refresh (see below) can remove and re-add just these,
   // without touching the main chart/series instance.
   const auxSeriesRef = useRef([]);
+  const tradeMarkersRef = useRef(null);
   // Identity (symbol/timeframe/exchange/etc.) the chart currently mounted in
   // chartApiRef was built for. Used to tell a genuine identity change apart
   // from a scroll-back pagination reload of the *same* chart.
@@ -223,6 +224,18 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
         chartIdentityRef.current = chartIdentity;
 
         auxSeriesRef.current = [...addVolumeSeries(chart, candles), ...addIndicatorSeries(chart, candles, normalizedIndicators)];
+
+        tradeMarkersRef.current?.detach?.();
+        tradeMarkersRef.current = null;
+        try {
+          const raw = localStorage.getItem("lensa.chart.tradeMarkers");
+          const markers = raw ? JSON.parse(raw) : [];
+          if (Array.isArray(markers) && markers.length && mainSeries) {
+            tradeMarkersRef.current = createSeriesMarkers(mainSeries, markers);
+          }
+        } catch {
+          /* ignore bad marker payload */
+        }
 
         const savedRange = visibleRangeRef.current;
         if (savedRange && isLoadingMore) {

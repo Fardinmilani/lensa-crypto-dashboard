@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { getChartCandles } from "../lib/coingecko";
 import { monteCarlo, tradeSetups, annualizedVol, probabilityPriceMap, SCENARIO_CONSENSUS_STEPS } from "../lib/forecast";
+import { monteCarloPortfolioStress } from "../lib/stress";
+import { estimateVolatility } from "../lib/portfolio";
+import { coinIdFromPair, getChartCandles } from "../lib/coingecko";
 import { formatUsd } from "../lib/priceFormat";
 import ConeChart from "../components/ConeChart";
 import ReportActions from "../components/ReportActions";
@@ -46,8 +48,11 @@ export default function Forecast() {
   const [driftMode, setDriftMode] = useLocalStorageState("lensa.forecast.drift", "historical");
   const [sims, setSims] = useLocalStorageState("lensa.forecast.sims", 3000);
   const [bands, setBands] = useLocalStorageState("lensa.forecast.bands", "inner");
+  const [watchlist] = useLocalStorageState("lensa.decision.watchlist", ["BTCUSDT", "ETHUSDT", "XRPUSDT"]);
   const [mc, setMc] = useState(null);
   const [extra, setExtra] = useState(null);
+  const [portfolioMc, setPortfolioMc] = useState(null);
+  const [portfolioMcLoading, setPortfolioMcLoading] = useState(false);
   const [dataMeta, setDataMeta] = useState(null);
   const [analysisMarket, setAnalysisMarket] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -109,6 +114,36 @@ export default function Forecast() {
       setAnalysisMarket(null);
     } finally {
       if (isCurrent()) setLoading(false);
+    }
+  }
+
+  async function handlePortfolioMc() {
+    setPortfolioMcLoading(true);
+    try {
+      const symbols = [market.pair, ...watchlist.filter((s) => s !== market.pair)].slice(0, 6);
+      const weights = {};
+      const vols = {};
+      const means = {};
+      const share = symbols.length ? 100 / symbols.length : 0;
+      for (const sym of symbols) {
+        weights[sym] = share;
+        const candles = await getChartCandles({
+          id: coinIdFromPair(sym, coin.id),
+          symbol: sym.replace(/USDT$/i, ""),
+          timeframe: market.timeframe,
+          source: market.exchange,
+          pair: sym,
+          marketType: market.marketType,
+        });
+        vols[sym] = estimateVolatility(candles.map((c) => c.close), 30) * 100;
+        const closes = candles.map((c) => c.close);
+        means[sym] = closes.length > 2 ? ((closes.at(-1) / closes[0]) - 1) * 100 : 0;
+      }
+      setPortfolioMc(monteCarloPortfolioStress({ weights, meanReturns: means, vols, sims: 500, horizon: 30 }));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setPortfolioMcLoading(false);
     }
   }
 
@@ -314,6 +349,26 @@ export default function Forecast() {
                 </table>
               </div>
               <p className="card-hint">{t("fc.evNote")}</p>
+            </div>
+
+            <div className="glass-card reveal">
+              <div className="panel-header panel-header--wrap">
+                <div>
+                  <h2>{t("fc.portfolioMc.title")}</h2>
+                  <span className="panel-subtitle">{t("fc.portfolioMc.hint")}</span>
+                </div>
+                <button type="button" className="run-btn run-btn--ghost" disabled={portfolioMcLoading} onClick={handlePortfolioMc}>
+                  {portfolioMcLoading ? t("analytics.loading") : t("fc.portfolioMc.run")}
+                </button>
+              </div>
+              {portfolioMc && (
+                <ul className="scenario-summary__list">
+                  <li><span>{t("fc.portfolioMc.probLoss")}</span><strong className="num">{Math.round(portfolioMc.probLoss * 100)}%</strong></li>
+                  <li><span>{t("fc.portfolioMc.p5")}</span><strong className="num down">{portfolioMc.p5.toFixed(1)}%</strong></li>
+                  <li><span>{t("fc.portfolioMc.p50")}</span><strong className="num">{portfolioMc.p50.toFixed(1)}%</strong></li>
+                  <li><span>{t("fc.portfolioMc.p95")}</span><strong className="num up">{portfolioMc.p95.toFixed(1)}%</strong></li>
+                </ul>
+              )}
             </div>
           </div>
         </>

@@ -1,0 +1,27 @@
+{
+  "name": "Trend momentum preset",
+  "sustain": "immediate",
+  "combine": "AND",
+  "conditions": [
+    {
+      "left": { "type": "ema", "params": { "period": 21 } },
+      "op": ">",
+      "right": { "type": "ema", "params": { "period": 55 } }
+    },
+    {
+      "left": { "type": "rsi", "params": { "period": 14 } },
+      "op": ">",
+      "right": { "type": "close", "params": {} },
+      "rightConst": 50
+    }
+  ],
+  "exitCombine": "OR",
+  "exitConditions": [
+    {
+      "left": { "type": "ema", "params": { "period": 21 } },
+      "op": "<",
+      "right": { "type": "ema", "params": { "period": 55 } }
+    }
+  ],
+  "mirrorShort": false
+}
