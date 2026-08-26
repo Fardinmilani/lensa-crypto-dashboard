@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { positionSize, riskRewardRatio, calculateATR, atrStopSuggestion } from "../lib/risk";
+import { kellyFraction, volatilityTargetNotional } from "../lib/edge";
 import { getChartCandles } from "../lib/coingecko";
 import { formatPrice, formatUsd } from "../lib/priceFormat";
 import { qualityMetaFromError } from "../lib/dataQuality";
@@ -22,6 +23,8 @@ export default function RiskTools() {
         <PositionSizeCalculator />
         <ATRStopCalculator />
         <RiskRewardCalculator />
+        <KellyCalculator />
+        <VolTargetCalculator />
       </div>
     </div>
   );
@@ -157,6 +160,90 @@ function RiskRewardCalculator() {
           <Row label="Stop" value={formatUsd(stopPrice, market.precision, { mode: "futures" })} />
           <Row label="Target" value={formatUsd(targetPrice, market.precision, { mode: "futures" })} />
           <p className="card-hint">{ratio >= 2 ? t("risk.rr.good") : t("risk.rr.bad")}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function KellyCalculator() {
+  const { t } = useI18n();
+  const [winRate, setWinRate] = useState(55);
+  const [avgWin, setAvgWin] = useState(2);
+  const [avgLoss, setAvgLoss] = useState(1);
+  const kelly = kellyFraction({
+    winRatePercent: Number(winRate),
+    avgWin: Number(avgWin),
+    avgLoss: Number(avgLoss),
+  });
+  return (
+    <div className="risk-card glass-card reveal">
+      <h3>
+        {t("risk.kelly.title")}
+        <InfoTip term="glossary.kelly" />
+      </h3>
+      <p className="card-hint">{t("risk.kelly.hint")}</p>
+      <Field label={t("risk.kelly.win")} value={winRate} onChange={setWinRate} type="number" step="0.1" />
+      <Field label={t("risk.kelly.avgWin")} value={avgWin} onChange={setAvgWin} type="number" step="0.1" />
+      <Field label={t("risk.kelly.avgLoss")} value={avgLoss} onChange={setAvgLoss} type="number" step="0.1" />
+      {kelly.usable != null && (
+        <div className="result-box">
+          <Row label={t("risk.kelly.full")} value={`${(kelly.full * 100).toFixed(1)}%`} />
+          <Row label={t("risk.kelly.half")} value={`${(kelly.half * 100).toFixed(1)}%`} />
+          <Row label={t("risk.kelly.quarter")} value={`${(kelly.quarter * 100).toFixed(1)}%`} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function VolTargetCalculator() {
+  const { coin } = useCoin();
+  const { market, updateFromCandles } = useMarket();
+  const { t } = useI18n();
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  async function measure() {
+    setLoading(true);
+    setError(null);
+    try {
+      const candles = await getChartCandles({
+        id: coin.id,
+        symbol: coin.symbol,
+        timeframe: market.timeframe,
+        source: market.exchange,
+        pair: market.pair,
+        marketType: market.marketType,
+      });
+      updateFromCandles(candles);
+      const dt = candles.length > 1 ? candles[1].time - candles[0].time : 86400;
+      const periodsPerYear = (365.25 * 24 * 3600) / Math.max(1, dt);
+      setResult(volatilityTargetNotional({ candles, accountSize: 10000, periodsPerYear }));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="risk-card glass-card reveal">
+      <h3>
+        {t("risk.vol.title")}
+        <InfoTip term="glossary.volRank" />
+      </h3>
+      <p className="card-hint">{t("risk.vol.hint")}</p>
+      <button type="button" className="run-btn" onClick={measure} disabled={loading}>
+        {loading ? t("common.loading") : t("risk.vol.get", { sym: coin.symbol })}
+      </button>
+      {error && <p className="news-error">{error}</p>}
+      {result && !result.error && (
+        <div className="result-box">
+          <Row label={t("risk.vol.realized")} value={`${(result.realizedVol * 100).toFixed(0)}%`} />
+          <Row label={t("risk.vol.target")} value="15%" />
+          <Row label={t("risk.vol.size")} value={`${result.notionalPercent.toFixed(0)}%`} />
         </div>
       )}
     </div>

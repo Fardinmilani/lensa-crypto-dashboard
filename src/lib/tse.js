@@ -24,7 +24,7 @@
 
 import { fetchJsonViaProxy } from "./corsProxy.js";
 
-export const TSE_SOURCE_ID = "tsetmc"; // must match cloudflare-proxy/worker.js UPSTREAMS key
+export const TSE_SOURCE_ID = "tsetmc";
 export const TSE_SOURCE_LABEL = "Tehran Stock Exchange (TSETMC)";
 
 const TSETMC_BASE = "https://cdn.tsetmc.com/api";

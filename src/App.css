@@ -3891,3 +3891,105 @@
 }
 .strategy-doc-card__short--yes { background: rgba(34,197,94,.12); color: #4ade80; }
 .strategy-doc-card__short--no  { background: rgba(255,255,255,.05); color: var(--text-muted); }
+
+/* ---- Edge Lab ---- */
+.edge-page {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.edge-hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  align-items: flex-start;
+  padding: 22px 24px;
+  flex-wrap: wrap;
+}
+.edge-hero__copy h1 {
+  margin: 6px 0 10px;
+  font-size: clamp(1.4rem, 2.4vw, 2rem);
+}
+.edge-hero__copy p {
+  margin: 0;
+  max-width: 62ch;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+.edge-hero__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: stretch;
+  min-width: 220px;
+}
+.edge-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+.edge-physics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+.edge-phys {
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.edge-phys .stat-value {
+  font-size: 1.35rem;
+}
+.edge-phys--up { border-color: rgba(74, 222, 128, 0.35); }
+.edge-phys--down { border-color: rgba(248, 113, 113, 0.4); }
+.edge-verdict {
+  padding: 20px 24px;
+}
+.edge-verdict--trade { border-color: rgba(74, 222, 128, 0.45); }
+.edge-verdict--stand_down { border-color: rgba(248, 113, 113, 0.5); }
+.edge-verdict--reduce { border-color: rgba(245, 158, 11, 0.45); }
+.edge-crowd { padding: 18px 22px; }
+.edge-bars { display: flex; flex-direction: column; gap: 12px; margin: 12px 0 18px; }
+.edge-bar__meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.82rem;
+  margin-bottom: 6px;
+}
+.edge-bar__track {
+  height: 8px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+.edge-bar__fill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #c9a66b, #f59e0b);
+}
+.edge-bar__fill.is-warn {
+  background: linear-gradient(90deg, #f59e0b, #ef4444);
+}
+.trades-table tr.is-active-regime td {
+  background: rgba(245, 158, 11, 0.08);
+}
+.error-boundary {
+  margin: 24px;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 560px;
+}
+
+@media (max-width: 960px) {
+  .edge-physics { grid-template-columns: 1fr 1fr; }
+  .edge-hero { flex-direction: column; }
+}
+@media (max-width: 560px) {
+  .edge-physics { grid-template-columns: 1fr; }
+}
