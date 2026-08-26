@@ -26,6 +26,7 @@ import { useStaggerReveal, useCountUp } from "../hooks/useAnimations";
 import { useLocalStorageState } from "../hooks/useLocalStorageState";
 import InfoTip from "../components/InfoTip";
 import { underwaterEquity } from "../lib/underwater";
+import { maeMfeAnalysis } from "../lib/edge";
 import { expiryPayoff, legsFromOptionStrategy } from "../lib/optionsPayoff";
 import { strategyShareUrl, parseStrategyFromHash } from "../lib/strategyShare";
 import { saveCustomDef } from "../lib/customStrategies";
@@ -86,6 +87,12 @@ export default function Backtest() {
     () => (result?.equityCurve?.length > 31 ? rollingMetrics(result.equityCurve, 30) : null),
     [result]
   );
+
+  const replayTrades = useMemo(() => {
+    if (!result?.trades?.length || !lastCandles.length) return [];
+    const analysis = maeMfeAnalysis(result.trades, lastCandles);
+    return analysis.rows?.length ? analysis.rows : result.trades;
+  }, [result, lastCandles]);
 
   const strategy = allStrategies[strategyKey] || STRATEGIES.trendMomentumHybrid;
 
@@ -168,6 +175,7 @@ export default function Backtest() {
   const [benchmarkSymbol, setBenchmarkSymbol] = useLocalStorageState("lensa.backtest.benchmark", "");
   const [heatmap, setHeatmap] = useState(null);
   const [heatmapLoading, setHeatmapLoading] = useState(false);
+  const [replayIdx, setReplayIdx] = useState(0);
 
   const [walkForwardRunning, setWalkForwardRunning] = useState(false);
   const [walkForwardResult, setWalkForwardResult] = useState(null);
@@ -289,6 +297,7 @@ export default function Backtest() {
   async function handleRun() {
     setLoading(true);
     setError(null);
+    setReplayIdx(0);
     setAggregate(null);
     setFitAllParams(null);
     setFitAllInfo(null);
@@ -390,6 +399,7 @@ export default function Backtest() {
   async function handleFitBest() {
     setOptimizing(true);
     setError(null);
+    setReplayIdx(0);
     // Mirror of the aggregate-side fix: clear any previous "all strategies"
     // table so it doesn't linger next to this fresh single-strategy fit.
     setAggregate(null);
@@ -1461,12 +1471,16 @@ export default function Backtest() {
           )}
           {rolling?.length > 0 && <RollingMetricsChart points={rolling} />}
           {heatmap && <ParamHeatmap heatmap={heatmap} paramLabels={PARAM_LABELS[strategyKey] || {}} />}
-          {!result.isOptions && result.trades?.length > 0 && lastCandles.length > 0 && (
+          {!result.isOptions && replayTrades.length > 0 && lastCandles.length > 0 && (
             <TradeReplay
-              key={`${result.tradeCount}-${result.trades[0]?.entryTime}`}
-              trades={result.trades}
+              trades={replayTrades}
               candles={lastCandles}
               precision={market.precision}
+              riskParams={result.riskParams}
+              leverage={effectiveLeverage}
+              isFutures={isFutures}
+              selectedIndex={replayIdx}
+              onSelectedIndexChange={setReplayIdx}
             />
           )}
           {result.isOptions && payoffPoints.length > 0 && (
@@ -1508,8 +1522,17 @@ export default function Backtest() {
                     </tr>
                   </thead>
                   <tbody>
-                    {result.trades.slice().reverse().map((tr, i) => (
-                      <tr key={i}>
+                    {result.trades.slice().reverse().map((tr, i) => {
+                      const origIdx = result.trades.length - 1 - i;
+                      return (
+                      <tr
+                        key={i}
+                        className={origIdx === replayIdx ? "is-selected" : ""}
+                        onClick={() => setReplayIdx(origIdx)}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => { if (e.key === "Enter") setReplayIdx(origIdx); }}
+                      >
                         <td className="num" data-label={t("bt.col.entry")}>{new Date(tr.entryTime * 1000).toLocaleDateString(locale)}</td>
                         <td className="num" data-label={t("bt.col.exit")}>{new Date(tr.exitTime * 1000).toLocaleDateString(locale)}</td>
                         <td className="num" data-label={t("bt.col.entryPrice")}>{formatUsd(tr.entryPrice, market.precision, { mode: "trading" })}</td>
@@ -1524,7 +1547,8 @@ export default function Backtest() {
                         )}
                         <td className={`num ${tr.pnlPercent >= 0 ? "up" : "down"}`} data-label={t("bt.col.pnl")}>{tr.pnlPercent >= 0 ? "+" : ""}{tr.pnlPercent.toFixed(2)}%</td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

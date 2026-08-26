@@ -19,6 +19,7 @@ import { evaluateMultiTfConfluence } from "../src/lib/multitf.js";
 import { rollingMetrics } from "../src/lib/rolling.js";
 import { buildParamHeatmap } from "../src/lib/heatmap.js";
 import { exportWorkspace, importWorkspaceBackup } from "../src/lib/workspaceBackup.js";
+import { filterTrades, normalizeCandles, sliceTradeWindow } from "../src/lib/tradeReplay.js";
 
 function makeCandles(length = 180) {
   const start = Date.UTC(2025, 0, 1) / 1000;
@@ -615,6 +616,12 @@ assert.ok(TIMEFRAMES.some((tf) => tf.id === "1M"), "TradingView-style monthly ti
   assert.ok(Number.isFinite(limitFill.totalReturnPercent));
   const backup = exportWorkspace();
   assert.equal(typeof backup.entries, "object");
+  const norm = normalizeCandles(candles);
+  assert.ok(norm.length === candles.length);
+  const wins = filterTrades(buyHold.trades, "wins");
+  assert.ok(Array.isArray(wins));
+  const win = sliceTradeWindow(norm, buyHold.trades[0] || { entryTime: norm[0].time, exitTime: norm.at(-1).time });
+  assert.ok(win.window.length > 0);
 }
 
 console.log(
