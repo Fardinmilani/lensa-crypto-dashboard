@@ -183,9 +183,14 @@
   cursor: pointer;
   transition: background 0.15s ease;
 }
-.coin-search__option.is-active,
 .coin-search__option:hover {
   background: var(--bg-raised);
+}
+/* Keyboard-focused row needs a clearly visible highlight: --bg-raised alone is
+   near-invisible on the solid dropdown background. */
+.coin-search__option.is-active {
+  background: rgba(245, 158, 11, 0.12);
+  box-shadow: inset 0 0 0 1px var(--border-glow);
 }
 .coin-search__option img {
   border-radius: 50%;
