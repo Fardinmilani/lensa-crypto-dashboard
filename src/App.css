@@ -1036,6 +1036,14 @@
   overflow: hidden;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-subtle);
+  /* The chart itself is an inherently LTR artifact (time flows left to
+     right and lightweight-charts reports pixel coordinates in physical
+     space), and the drawing layer's SVG geometry is computed from those
+     same physical coordinates. Pinning the whole chart body to LTR keeps
+     the toolbar / flyouts / panels and the SVG overlay aligned with the
+     canvas under dir="rtl" instead of half-mirroring and drifting apart.
+     This matches how major trading UIs handle RTL locales. */
+  direction: ltr;
 }
 
 /* ── canvas + stage ── */
@@ -1122,7 +1130,11 @@
   display: flex;
   justify-content: center;
 }
-.dtool-group:hover .dtool-flyout {
+/* :focus-within alongside :hover keeps the flyout reachable without a
+   hover-capable pointer: tapping (touch) or tabbing to the group button
+   focuses it, which opens the variant list too. */
+.dtool-group:hover .dtool-flyout,
+.dtool-group:focus-within .dtool-flyout {
   opacity: 1;
   visibility: visible;
   transform: translateX(0);
@@ -1735,7 +1747,7 @@
 }
 .data-quality ul {
   margin: 8px 0 0;
-  padding-left: 18px;
+  padding-inline-start: 18px;
   color: var(--gold-2);
   line-height: 1.55;
 }
@@ -1745,7 +1757,7 @@
   height: 3px;
   border-radius: 2px;
   vertical-align: middle;
-  margin-left: 5px;
+  margin-inline-start: 5px;
 }
 .dot--gold {
   background: var(--gold);
@@ -1872,7 +1884,7 @@
   padding: 0;
   color: inherit;
   font-family: inherit;
-  text-align: left;
+  text-align: start;
   width: 100%;
 }
 .controls-section__title {
@@ -1983,7 +1995,7 @@
 .active-coin-chip__hint {
   font-size: 0.68rem;
   color: var(--text-tertiary) !important;
-  margin-right: auto;
+  margin-inline-end: auto;
 }
 .run-btn {
   background: linear-gradient(135deg, var(--gold-2), var(--gold));
@@ -2234,13 +2246,13 @@
   margin-bottom: 8px;
 }
 .live-signal-card {
-  border-left: 3px solid var(--border-strong);
+  border-inline-start: 3px solid var(--border-strong);
 }
 .live-signal-card--long {
-  border-left-color: #4ade80;
+  border-inline-start-color: #4ade80;
 }
 .live-signal-card--short {
-  border-left-color: #f87171;
+  border-inline-start-color: #f87171;
 }
 .live-signal-state {
   display: flex;
@@ -3063,7 +3075,7 @@
 .reason-list ul,
 .risk-warning-list {
   margin: 0;
-  padding-left: 18px;
+  padding-inline-start: 18px;
   color: var(--text-secondary);
   font-size: 0.8rem;
   line-height: 1.65;

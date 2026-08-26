@@ -134,6 +134,22 @@ export default function ChartDrawingLayer({ chart, series, candles, context, ren
     prevSelectedId.current = selectedId;
   }, [selectedId]);
 
+  // Undo/redo history belongs to ONE chart identity. When the storage key
+  // changes (new symbol/timeframe), stale snapshots from the previous chart
+  // must not be replayable onto this one — Ctrl+Z would otherwise overwrite
+  // this chart's drawings with another chart's history. Reset during render
+  // (React's recommended reset-on-prop-change pattern, same idiom as
+  // useLocalStorageState) rather than in an effect.
+  const [prevStorageKey, setPrevStorageKey] = useState(storageKey);
+  if (prevStorageKey !== storageKey) {
+    setPrevStorageKey(storageKey);
+    undoStack.current = [];
+    redoStack.current = [];
+    setSelectedId(null);
+    setPendingPoint(null);
+    setLivePoint(null);
+  }
+
   const pushHistory = useCallback(() => {
     undoStack.current = [...undoStack.current.slice(-HISTORY_LIMIT + 1), drawings];
     redoStack.current = [];
@@ -142,9 +158,13 @@ export default function ChartDrawingLayer({ chart, series, candles, context, ren
   const commitDrawings = useCallback(
     (next, { history = true } = {}) => {
       if (history) pushHistory();
-      setDrawings(typeof next === "function" ? next(drawings) : next);
+      // Pass functional updaters through to setState untouched so they run
+      // against React's LATEST state — evaluating them here against the
+      // closed-over `drawings` would silently drop any update queued in
+      // the same tick (classic stale-closure lost-update).
+      setDrawings(next);
     },
-    [drawings, pushHistory, setDrawings]
+    [pushHistory, setDrawings]
   );
 
   function undo() {
@@ -352,6 +372,26 @@ export default function ChartDrawingLayer({ chart, series, candles, context, ren
       setLivePoint(null);
     }
   }
+
+  // Safety net: a drag released OUTSIDE the SVG (cursor left the stage
+  // mid-drag) never delivers pointerup to the overlay, which used to leave
+  // the layer stuck in its "is-dragging" state — grabbing cursor, chart
+  // pan/zoom blocked — until the next successful drag. End the drag on any
+  // window-level release/cancel instead.
+  useEffect(() => {
+    function endDrag() {
+      if (dragState.current) {
+        dragState.current = null;
+        setIsDraggingShape(false);
+      }
+    }
+    window.addEventListener("pointerup", endDrag);
+    window.addEventListener("pointercancel", endDrag);
+    return () => {
+      window.removeEventListener("pointerup", endDrag);
+      window.removeEventListener("pointercancel", endDrag);
+    };
+  }, []);
 
   useEffect(() => {
     function onKeyDown(e) {
