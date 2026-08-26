@@ -263,6 +263,8 @@ export default function DecisionCenter() {
   const appliedImportRef = useRef(null);
   const watchCache = useRef(new Map());
   const lastLang = useRef(lang);
+  const importNoticeTimerRef = useRef(null);
+  useEffect(() => () => clearTimeout(importNoticeTimerRef.current), []);
   const reveal = useStaggerReveal([decision, error]);
 
   useEffect(() => {
@@ -318,6 +320,10 @@ export default function DecisionCenter() {
     return () => window.clearTimeout(timer);
   }, [lang]);
 
+  // Re-evaluated when the analysis price changes AND when the alert list
+  // itself changes (alerts.length): an alert added right after an analysis
+  // used to sit unevaluated until the NEXT analysis run, so it could "miss"
+  // a level the last snapshot had already crossed.
   useEffect(() => {
     if (!decision || !alerts.length) return;
     const hits = new Map();
@@ -325,11 +331,13 @@ export default function DecisionCenter() {
       const hit = evaluateBrowserAlert(item, decision, market);
       if (hit) hits.set(hit.id, hit);
     }
-    setAlerts((prev) =>
-      prev.map((item) => {
+    setAlerts((prev) => {
+      let changed = false;
+      const next = prev.map((item) => {
         if (item.contextKey && item.contextKey !== contextKey(market)) return item;
         const hit = hits.get(item.id);
         if (hit) {
+          changed = true;
           if (typeof Notification !== "undefined" && Notification.permission === "granted") {
             try {
               new Notification("Lensa alert", { body: hit.reason, tag: item.id });
@@ -340,11 +348,14 @@ export default function DecisionCenter() {
           return { ...item, status: "Triggered while app was open", triggerReason: hit.reason, triggeredAt: new Date().toISOString() };
         }
         if (item.status === "Triggered while app was open") return item;
+        if (item.lastSeenPrice === decision.lastPrice) return item;
+        changed = true;
         return { ...item, lastSeenPrice: decision.lastPrice };
-      })
-    );
+      });
+      return changed ? next : prev;
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [decision?.lastPrice]);
+  }, [decision?.lastPrice, alerts.length]);
 
   async function runDecision() {
     setLoading(true);
@@ -455,7 +466,8 @@ export default function DecisionCenter() {
     } catch {
       setImportNotice({ ok: false, msg: t("decision.imported.importError") });
     }
-    setTimeout(() => setImportNotice(null), 4000);
+    clearTimeout(importNoticeTimerRef.current);
+    importNoticeTimerRef.current = setTimeout(() => setImportNotice(null), 4000);
   }
 
   function updateRisk(key, value) {
@@ -684,7 +696,7 @@ export default function DecisionCenter() {
         <small className={`control-hint ${importNotice.ok ? "control-hint--accent" : ""}`}>{importNotice.msg}</small>
       )}
 
-      {error && <p className="news-error reveal">{error}</p>}
+      {error && <p className="news-error reveal">{t(error)}</p>}
 
       {decision && (
         <>
@@ -1275,7 +1287,7 @@ function buildTestSuite({ trendLong, trendShort, momentumLong, momentumShort, r,
 
 function buildSimulationCards(mc, precision, t) {
   if (!mc || mc.error) {
-    return [{ label: tr(t, "decision.sim.unavailable", undefined, "Simulation unavailable"), number: "N/A", explanation: mc?.error || tr(t, "decision.sim.error", undefined, "Monte Carlo could not run."), impact: tr(t, "decision.sim.unavailableImpact", undefined, "The Decision Center lowers confidence and avoids a strong recommendation.") }];
+    return [{ label: tr(t, "decision.sim.unavailable", undefined, "Simulation unavailable"), number: "N/A", explanation: mc?.error ? t(mc.error) : tr(t, "decision.sim.error", undefined, "Monte Carlo could not run."), impact: tr(t, "decision.sim.unavailableImpact", undefined, "The Decision Center lowers confidence and avoids a strong recommendation.") }];
   }
   const profitPct = Math.round(mc.probProfit * 100);
   return [

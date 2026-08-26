@@ -9,8 +9,13 @@
  * on this trade, given my stop-loss distance?"
  */
 export function positionSize({ accountSize, riskPercent, entryPrice, stopPrice }) {
+  // Errors are returned as i18n keys (translated by the caller with t()),
+  // never as prose in one hardcoded language.
+  if (!(accountSize > 0)) {
+    return { error: "err.risk.account" };
+  }
   if (entryPrice <= 0 || stopPrice <= 0 || entryPrice === stopPrice) {
-    return { error: "قیمت ورود و حد ضرر باید معتبر و متفاوت باشند." };
+    return { error: "err.risk.prices" };
   }
   const riskAmount = accountSize * (riskPercent / 100);
   const perUnitRisk = Math.abs(entryPrice - stopPrice);

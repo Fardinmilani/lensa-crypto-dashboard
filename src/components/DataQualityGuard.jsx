@@ -69,7 +69,7 @@ export default function DataQualityGuard({ module, meta, analysisMarket, expecte
       {issues.length > 0 && (
         <ul>
           {issues.map((issue, index) => (
-            <li key={`${issue.type}-${index}`}>{issue.message}</li>
+            <li key={`${issue.type}-${index}`}>{t(issue.message)}</li>
           ))}
         </ul>
       )}

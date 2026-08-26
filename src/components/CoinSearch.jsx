@@ -55,17 +55,23 @@ export default function CoinSearch() {
     setOpen(false);
   }
 
+  // The visible option list: search results when there's a query, the
+  // "popular" defaults otherwise. Keyboard handling MUST use the same list
+  // the dropdown renders — keying off `results` alone left arrow/Enter dead
+  // on the default (empty-query) dropdown.
+  const options = query.trim() ? results : DEFAULT_COINS;
+
   function onKeyDown(e) {
-    if (!open || !results.length) return;
+    if (!open || !options.length) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setActive((a) => Math.min(a + 1, results.length - 1));
+      setActive((a) => Math.min(a + 1, options.length - 1));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       setActive((a) => Math.max(a - 1, 0));
     } else if (e.key === "Enter") {
       e.preventDefault();
-      choose(results[active]);
+      if (options[active]) choose(options[active]);
     } else if (e.key === "Escape") {
       setOpen(false);
     }
@@ -84,24 +90,31 @@ export default function CoinSearch() {
           placeholder={t("search.placeholder", { sym: coin.symbol })}
           onChange={(e) => {
             setQuery(e.target.value);
+            setActive(0);
             setOpen(true);
           }}
           onFocus={() => setOpen(true)}
           onKeyDown={onKeyDown}
+          role="combobox"
+          aria-expanded={open}
+          aria-controls="coin-search-listbox"
+          aria-activedescendant={open && options[active] ? `coin-option-${options[active].id}` : undefined}
+          aria-autocomplete="list"
           aria-label={t("search.placeholder", { sym: coin.symbol })}
           title={t("search.tooltip")}
         />
         {loading && <span className="coin-search__spinner" aria-hidden="true" />}
       </div>
 
-      {open && (query.trim() ? results.length > 0 : true) && (
-        <ul className="coin-search__dropdown" role="listbox">
+      {open && options.length > 0 && (
+        <ul className="coin-search__dropdown" role="listbox" id="coin-search-listbox">
           {!query.trim() && (
-            <li className="coin-search__hint">{t("search.popular")}</li>
+            <li className="coin-search__hint" role="presentation">{t("search.popular")}</li>
           )}
-          {(query.trim() ? results : DEFAULT_COINS).map((c, i) => (
+          {options.map((c, i) => (
             <li
               key={c.id}
+              id={`coin-option-${c.id}`}
               role="option"
               aria-selected={i === active}
               className={`coin-search__option ${i === active ? "is-active" : ""}`}

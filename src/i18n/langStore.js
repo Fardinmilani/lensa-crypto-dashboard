@@ -11,6 +11,12 @@ export function useI18n() {
 
 // Resolve a dotted key for a language, with {var} interpolation and EN fallback.
 export function translate(lang, key, vars) {
+  // Data-layer errors arrive as "i18nKey::technical detail" so the sentence is
+  // localized while the diagnostic detail (source names, HTTP statuses) stays raw.
+  if (typeof key === "string" && key.includes("::")) {
+    const sep = key.indexOf("::");
+    return `${translate(lang, key.slice(0, sep), vars)} ${key.slice(sep + 2)}`.trim();
+  }
   const dict = translations[lang] || translations.en;
   let str = dict[key];
   if (str == null) str = translations.en[key];

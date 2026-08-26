@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getChartCandles } from "../lib/coingecko";
 import { monteCarlo, tradeSetups, annualizedVol, probabilityPriceMap, SCENARIO_CONSENSUS_STEPS } from "../lib/forecast";
 import { formatUsd } from "../lib/priceFormat";
@@ -56,7 +56,16 @@ export default function Forecast() {
   const windowConfig = SCENARIO_WINDOWS.find((item) => item.key === scenarioWindow) || SCENARIO_WINDOWS[1];
   const horizon = windowConfig.periods;
 
+  // Monotonically increasing run id: only the LATEST run may commit state.
+  // Without this, a slow candle fetch kicked off before a re-run (or before
+  // switching coin/timeframe) could resolve late and overwrite the newer
+  // result with stale data. Bumped on unmount so nothing commits after it.
+  const runIdRef = useRef(0);
+  useEffect(() => () => { runIdRef.current += 1; }, []);
+
   async function handleRun() {
+    const runId = ++runIdRef.current;
+    const isCurrent = () => runIdRef.current === runId;
     setLoading(true);
     setError(null);
     try {
@@ -68,6 +77,7 @@ export default function Forecast() {
         pair: market.pair,
         marketType: market.marketType,
       });
+      if (!isCurrent()) return;
       if (candles.length < 20) throw new Error(t("fc.noData"));
       updateFromCandles(candles);
       setDataMeta(candles.meta || null);
@@ -78,7 +88,12 @@ export default function Forecast() {
       if (sim.error) throw new Error(sim.error);
       const periodsPerYear = (365 * 86400) / stepSeconds;
       const histTail = candles.slice(-Math.min(candles.length, Math.max(40, horizon)));
-      setMc(sim);
+      // Everything path-derived (setups, probability map) is computed here,
+      // so the raw per-path matrix (sims × horizon numbers — several MB at
+      // the "precise" setting) doesn't need to live in React state.
+      const simSummary = { ...sim };
+      delete simSummary.paths;
+      setMc(simSummary);
       setExtra({
         setups: tradeSetups(sim),
         probabilityMap: probabilityPriceMap(sim),
@@ -87,12 +102,13 @@ export default function Forecast() {
         history: histTail.map((c) => ({ time: c.time, value: c.close })),
       });
     } catch (err) {
+      if (!isCurrent()) return;
       setError(err.message);
       setMc(null);
       setDataMeta(qualityMetaFromError(err, market.exchange));
       setAnalysisMarket(null);
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }
 
@@ -125,7 +141,7 @@ export default function Forecast() {
     <div className="forecast-page" ref={reveal}>
       <div className="disclaimer-banner reveal">{t("fc.disclaimer")}</div>
       <MarketContextBar lastPrice={mc?.current} />
-      <DataQualityGuard module="Scenario analysis" meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
+      <DataQualityGuard module={t("dq.module.scenario")} meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
 
       <div className="backtest-controls glass-card reveal">
         <div className="control-group control-group--wide">
@@ -192,7 +208,7 @@ export default function Forecast() {
         </button>
       </div>
 
-      {error && <p className="news-error reveal">{error}</p>}
+      {error && <p className="news-error reveal">{t(error)}</p>}
 
       <div className="guide-card glass-card reveal">
         <h2>{t("fc.guide.title")}</h2>
@@ -223,7 +239,7 @@ export default function Forecast() {
           </div>
 
           <div className="glass-card chart-card reveal">
-            <DataQualityGuard module="Scenario cone" meta={dataMeta} analysisMarket={analysisMarket} forecastAnchor={checkForecastAnchor({ history: extra.history, cone: mc.cone, stepSeconds: extra.stepSeconds })} />
+            <DataQualityGuard module={t("dq.module.cone")} meta={dataMeta} analysisMarket={analysisMarket} forecastAnchor={checkForecastAnchor({ history: extra.history, cone: mc.cone, stepSeconds: extra.stepSeconds })} />
             <div className="panel-header panel-header--wrap">
               <div>
                 <h2>{t("fc.cone")}</h2>
@@ -264,7 +280,7 @@ export default function Forecast() {
 
           <div className="forecast-cols forecast-cols--single">
             <div className="glass-card reveal">
-              <DataQualityGuard module="Long/Short analysis" meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
+              <DataQualityGuard module={t("dq.module.longShort")} meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
               <div className="panel-header">
                 <div>
                   <h2>{t("fc.setups")}</h2>

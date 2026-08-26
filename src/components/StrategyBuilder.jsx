@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useI18n } from "../i18n/langStore";
 import {
   INDICATOR_DEFS,
   INDICATOR_KEYS,
@@ -173,7 +174,11 @@ function ConditionGroup({ lang, t, conditions, combine, onChange, onCombineChang
  * built-in one, and safe to export/import as plain data.
  */
 export default function StrategyBuilder({ t, activeStrategyKey, onSaved, onDeleted, onCountChange }) {
-  const lang = typeof document !== "undefined" && document.documentElement.lang === "en" ? "en" : "fa";
+  // Subscribe to the language context (not document.documentElement.lang):
+  // reading the DOM attribute is a render-time snapshot that never
+  // re-renders on toggle, leaving this builder in the previous language
+  // until something else forces an update.
+  const { lang } = useI18n();
   const [defs, setDefs] = useState(() => loadCustomDefs());
   const [draft, setDraft] = useState(null);
 

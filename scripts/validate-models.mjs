@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { runBacktest, runLeveragedBacktest } from "../src/lib/backtest.js";
-import { STRATEGIES, sma } from "../src/lib/strategies.js";
+import { STRATEGIES, sma, ema, rsi } from "../src/lib/strategies.js";
+import { classifyCrowding } from "../src/lib/derivatives.js";
 import { positionSize, riskRewardRatio, calculateATR, atrStopSuggestion } from "../src/lib/risk.js";
 import { monteCarlo, outcomeZones, tradeSetups, probabilityAboveAcrossWindows, probabilityPriceMap, SCENARIO_CONSENSUS_STEPS } from "../src/lib/forecast.js";
 import { resolveTimeframe, TIMEFRAMES, normalizeMarketSource, coinIdFromPair, auditTimeframes, auditLookbackDays } from "../src/lib/coingecko.js";
@@ -279,6 +280,124 @@ assert.ok(TIMEFRAMES.some((tf) => tf.id === "1M"), "TradingView-style monthly ti
   assert.equal(closeFill.trades[0].exitPrice, ftCandles[5].close, "close fill timing exits at the signal bar's own close");
   assert.equal(nextOpenFill.trades[0].entryPrice, ftCandles[3].open, "nextOpen fill timing enters at the following bar's open");
   assert.equal(nextOpenFill.trades[0].exitPrice, ftCandles[6].open, "nextOpen fill timing exits at the following bar's open");
+}
+
+// ---------------------------------------------------------------------------
+// nextOpen equity marking: a deferred fill must not leak the gap between the
+// signal bar's close and the next bar's open into the signal bar's equity.
+// A large gap-up entry used to appear as an instant ~50% "drawdown" on the
+// entry bar (units bought at the high next open, marked against the old low
+// close) even though no position existed yet at that close.
+// ---------------------------------------------------------------------------
+{
+  const gapCandles = [
+    { time: 0, open: 100, high: 100, low: 100, close: 100 },
+    { time: 1, open: 100, high: 100, low: 100, close: 100 }, // signal fires here
+    { time: 2, open: 200, high: 200, low: 200, close: 200 }, // fill at this huge gap-up open
+    { time: 3, open: 200, high: 210, low: 200, close: 210 },
+    { time: 4, open: 210, high: 210, low: 210, close: 210 },
+  ];
+  const gapSignals = [0, 1, 1, 1, 1];
+  const gapResult = runBacktest({ candles: gapCandles, signals: gapSignals, feePercent: 0, initialCapital: 10000, fillTiming: "nextOpen" });
+  assert.equal(gapResult.equityCurve[1].equity, 10000, "signal-bar equity is untouched until the deferred fill actually happens");
+  assert.equal(gapResult.maxDrawdownPercent, 0, "a gap-up entry produces no phantom drawdown");
+  assert.equal(gapResult.trades[0].entryPrice, 200, "the deferred fill price itself is unchanged");
+}
+
+// ---------------------------------------------------------------------------
+// SL/TP overlay entry anchoring under nextOpen: the stop distance must be
+// measured from the price the engine actually fills at (the next bar's
+// open), not from the signal bar's close. With a gap-up entry, a stop
+// anchored to the stale close either fires at the wrong level or not at all.
+// ---------------------------------------------------------------------------
+{
+  const slCandles = [
+    { time: 0, open: 100, high: 100, low: 100, close: 100 },
+    { time: 1, open: 100, high: 100, low: 100, close: 100 }, // signal fires here
+    { time: 2, open: 110, high: 110, low: 110, close: 110 }, // entry fills at 110
+    { time: 3, open: 110, high: 110, low: 103, close: 108 }, // dips 6.4% below the 110 fill
+    { time: 4, open: 108, high: 108, low: 108, close: 108 },
+    { time: 5, open: 108, high: 108, low: 108, close: 108 },
+  ];
+  const slSignals = [0, 1, 1, 1, 0, 0];
+  const slResult = runBacktest({
+    candles: slCandles,
+    signals: slSignals,
+    feePercent: 0,
+    initialCapital: 10000,
+    fillTiming: "nextOpen",
+    riskParams: { stopLossPercent: 5 },
+  });
+  assert.equal(slResult.trades.length, 1, "the gap-adjusted stop produces exactly one trade");
+  assert.equal(slResult.trades[0].entryPrice, 110, "entry books at the actual next-open fill");
+  assert.ok(Math.abs(slResult.trades[0].exitPrice - 104.5) < 1e-9, "stop fills at exactly -5% from the REAL fill price (110), not from the stale signal close (100)");
+  assert.ok(Math.abs(slResult.trades[0].pnlPercent - -5) < 1e-9, "realized loss is capped at the configured stop percentage");
+}
+
+// ---------------------------------------------------------------------------
+// Liquidation exit price: a leveraged position that crosses -100% intrabar
+// is closed at the theoretical liquidation level (entry × (1 − side/lev)),
+// not at the bar's full extreme — the bar's low overstates the exit.
+// ---------------------------------------------------------------------------
+{
+  const liqPriceCandles = [
+    { time: 0, open: 100, high: 100, low: 100, close: 100 },
+    { time: 1, open: 100, high: 100, low: 100, close: 100 }, // long opens at 100
+    { time: 2, open: 100, high: 100, low: 80, close: 95 },   // low pierces far below the 90 liq level
+    { time: 3, open: 95, high: 95, low: 95, close: 95 },
+  ];
+  const liqPriceResult = runLeveragedBacktest({
+    candles: liqPriceCandles,
+    signals: [0, 1, 1, 1],
+    feePercent: 0,
+    initialCapital: 10000,
+    leverage: 10,
+  });
+  assert.equal(liqPriceResult.wasLiquidated, true, "the intrabar excursion triggers a liquidation");
+  assert.ok(Math.abs(liqPriceResult.trades[0].exitPrice - 90) < 1e-9, "liquidation fills at the theoretical level (entry × (1 − 1/lev)), not the bar's low");
+  assert.equal(liqPriceResult.trades[0].pnlPercent, -100, "liquidation loss is exactly -100% of collateral");
+}
+
+// ---------------------------------------------------------------------------
+// Short-side RSI mirror: trendMomentumHybrid's short rule must mirror the
+// long rule around 50 — long requires RSI > floor, so short requires
+// RSI < (100 − floor). Using the floor directly is only coincidentally
+// correct at the default floor of 50 and breaks for any tuned value.
+// ---------------------------------------------------------------------------
+{
+  const p = { fastPeriod: 9, slowPeriod: 21, rsiPeriod: 14, rsiFloor: 60 };
+  const shortSignals = STRATEGIES.trendMomentumHybrid.generateShortSignals(candles, p);
+  const fast = ema(closes, p.fastPeriod);
+  const slow = ema(closes, p.slowPeriod);
+  const r = rsi(closes, p.rsiPeriod);
+  const expectedShortSignals = closes.map((_, i) => {
+    if (fast[i] == null || slow[i] == null || r[i] == null) return 0;
+    return fast[i] < slow[i] && r[i] < 100 - p.rsiFloor ? 1 : 0;
+  });
+  assert.deepEqual(shortSignals, expectedShortSignals, "short RSI condition mirrors the long floor (uses 100 − rsiFloor)");
+}
+
+// ---------------------------------------------------------------------------
+// Derivatives crowding sign: funding is paid BY the crowded side, so extreme
+// negative funding marks crowded shorts. The old fallback branch labeled
+// any |funding| > 40 as crowded_long — exactly backwards for negatives.
+// ---------------------------------------------------------------------------
+{
+  assert.equal(classifyCrowding(60, null), "crowded_long", "extreme positive funding = crowded longs");
+  assert.equal(classifyCrowding(-60, null), "crowded_short", "extreme NEGATIVE funding = crowded shorts (regression: was crowded_long)");
+  assert.equal(classifyCrowding(30, 1.5), "crowded_long", "moderate positive funding + high L/S ratio = crowded longs");
+  assert.equal(classifyCrowding(-20, 0.7), "crowded_short", "moderate negative funding + low L/S ratio = crowded shorts");
+  assert.equal(classifyCrowding(5, 1.0), "neutral", "ordinary funding is neutral");
+  assert.equal(classifyCrowding(null, 2), "neutral", "no funding data = no crowding call");
+}
+
+// ---------------------------------------------------------------------------
+// Guard rails: invalid inputs return error codes (i18n keys), not NaN math.
+// ---------------------------------------------------------------------------
+{
+  assert.equal(positionSize({ accountSize: 0, riskPercent: 1, entryPrice: 100, stopPrice: 95 }).error, "err.risk.account");
+  assert.equal(positionSize({ accountSize: 10000, riskPercent: 1, entryPrice: 100, stopPrice: 100 }).error, "err.risk.prices");
+  assert.equal(monteCarlo({ closes: [1, 2], horizon: 10, sims: 500 }).error, "err.mc.data");
 }
 
 // ---------------------------------------------------------------------------

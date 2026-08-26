@@ -10,7 +10,7 @@ export default function TickerTape() {
     return <div className="ticker-tape ticker-tape--loading">{t("ticker.loading")}</div>;
   }
   if (error) {
-    return <div className="ticker-tape ticker-tape--error">{t("ticker.error", { e: error })}</div>;
+    return <div className="ticker-tape ticker-tape--error">{t("ticker.error", { e: t(error) })}</div>;
   }
 
   return (

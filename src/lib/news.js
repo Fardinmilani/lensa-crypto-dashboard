@@ -38,6 +38,7 @@ export async function getNews(query = "") {
         {
           source: "Google News",
           title: `Search news for ${q}`,
+          titleKey: "news.searchFor",
           link: `https://news.google.com/search?q=${encodeURIComponent(q)}`,
         },
       ]
@@ -49,7 +50,7 @@ export async function getNews(query = "") {
     global: NEWS_SOURCES,
     fetchedAt: new Date().toISOString(),
     disabled: true,
-    warning:
-      "Live RSS aggregation is disabled in static mode because browser RSS fetches are commonly blocked by CORS. Open the external sources for current headlines.",
+    // i18n key — rendered through t() by NewsFeed.
+    warning: "news.corsWarning",
   };
 }
