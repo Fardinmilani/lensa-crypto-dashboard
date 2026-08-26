@@ -527,6 +527,26 @@ export function resolveTimeframe(value) {
   return { id: `custom-${days}`, label: `${days}D`, intervalMinutes: 1440, days };
 }
 
+/** Timeframes Edge Lab actually sweeps. Skips 1m/3m (too heavy) and 3M+ (too few bars). */
+export function auditTimeframes(isSingleSource, extraId) {
+  const ids = isSingleSource
+    ? ["1d", "1w", "1M"]
+    : ["15m", "30m", "1h", "2h", "4h", "1d", "1w"];
+  if (extraId && typeof extraId === "string" && !ids.includes(extraId) && TIMEFRAMES.some((tf) => tf.id === extraId)) {
+    ids.unshift(extraId);
+  }
+  return ids.map((id) => TIMEFRAMES.find((tf) => tf.id === id)).filter(Boolean);
+}
+
+/** Cap lookback so a 365-day setting does not pull a year of 15m candles. */
+export function auditLookbackDays(tf, userLookback) {
+  const interval = Math.max(1, tf?.intervalMinutes || 1440);
+  const native = Math.max(1, tf?.days || 90);
+  const user = Math.max(1, Math.round(Number(userLookback) || native));
+  const maxDays = Math.max(native, (2000 * interval) / (24 * 60));
+  return Math.min(user, Math.ceil(maxDays));
+}
+
 export function resolveLookbackDays(timeframe, lookbackDays) {
   const tf = resolveTimeframe(timeframe);
   if (lookbackDays == null || lookbackDays === "") return tf.days;

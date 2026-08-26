@@ -922,7 +922,13 @@ export default function Backtest() {
                   disabled={autoFit || !slEnabled}
                   onChange={(e) => setStopLossPercent(e.target.value)}
                 />
-                <small className="control-hint">{t("bt.risk.sl.hint")}</small>
+                <small className="control-hint">
+                  {t("bt.risk.sl.hint", {
+                    lev: effectiveLeverage,
+                    pos: stopLossPercent,
+                    coin: (Number(stopLossPercent) / Math.max(1, effectiveLeverage)).toFixed(2),
+                  })}
+                </small>
               </div>
               <div className="control-group">
                 <label className="toggle-row toggle-row--inline">
@@ -937,7 +943,13 @@ export default function Backtest() {
                   disabled={autoFit || !tpEnabled}
                   onChange={(e) => setTakeProfitPercent(e.target.value)}
                 />
-                <small className="control-hint">{t("bt.risk.tp.hint")}</small>
+                <small className="control-hint">
+                  {t("bt.risk.tp.hint", {
+                    lev: effectiveLeverage,
+                    pos: takeProfitPercent,
+                    coin: (Number(takeProfitPercent) / Math.max(1, effectiveLeverage)).toFixed(2),
+                  })}
+                </small>
               </div>
               <div className="control-group control-group--full">
                 <label className="toggle-row">
@@ -1164,6 +1176,9 @@ export default function Backtest() {
               <button className="run-btn run-btn--ghost" onClick={() => { window.location.hash = "edge"; }}>
                 {t("bt.handoff.edge")}
               </button>
+              <button className="run-btn run-btn--ghost" onClick={() => { window.location.hash = "guide"; }}>
+                {t("bt.handoff.guide")}
+              </button>
               {importedNotice && <small className="control-hint control-hint--accent">{t("bt.handoff.sent")}</small>}
             </div>
           )}
@@ -1208,6 +1223,9 @@ export default function Backtest() {
               <Stat label={t("bt.risk.tp")} value={result.riskParams.takeProfitPercent} suffix="%" decimals={1} tone="up" tip="glossary.btTakeProfit" />
             )}
           </div>
+          {!result.isOptions && !sizingAvailable && result.riskParams?.stopLossPercent != null && (
+            <p className="section-note">{t("bt.dd.compound", { sl: result.riskParams.stopLossPercent })}</p>
+          )}
           <div className="glass-card chart-card">
             <DataQualityGuard module={t("dq.module.backtestEquity")} meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
             <div className="panel-header"><h2>{t("bt.equity")}</h2></div>
@@ -1233,7 +1251,7 @@ export default function Backtest() {
                     </tr>
                   </thead>
                   <tbody>
-                    {result.trades.map((tr, i) => (
+                    {result.trades.slice().reverse().map((tr, i) => (
                       <tr key={i}>
                         <td className="num" data-label={t("bt.col.entry")}>{new Date(tr.entryTime * 1000).toLocaleDateString(locale)}</td>
                         <td className="num" data-label={t("bt.col.exit")}>{new Date(tr.exitTime * 1000).toLocaleDateString(locale)}</td>
@@ -1270,7 +1288,7 @@ export default function Backtest() {
                     </tr>
                   </thead>
                   <tbody>
-                    {result.rolls.map((roll, i) => (
+                    {result.rolls.slice().reverse().map((roll, i) => (
                       <tr key={i}>
                         <td data-label={t("bt.options.col.date")}>{new Date(roll.time * 1000).toLocaleDateString(locale)}</td>
                         <td data-label={t("bt.options.col.action")}>{t(`bt.options.action.${roll.action}`)}</td>

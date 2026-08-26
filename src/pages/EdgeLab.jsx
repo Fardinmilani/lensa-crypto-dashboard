@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import MarketContextBar from "../components/MarketContextBar";
 import DataQualityGuard from "../components/DataQualityGuard";
 import InfoTip from "../components/InfoTip";
-import { getChartCandles } from "../lib/coingecko";
+import { getChartCandles, auditTimeframes, auditLookbackDays } from "../lib/coingecko";
 import { STRATEGIES, combineDirectionalSignals, currentSignalState } from "../lib/strategies";
 import { getAllStrategies } from "../lib/customStrategies";
 import { runBacktest, runLeveragedBacktest, runAllStrategies } from "../lib/backtest";
@@ -17,8 +17,6 @@ import { useI18n, pick } from "../i18n/langStore";
 import { useLocalStorageState } from "../hooks/useLocalStorageState";
 import { useStaggerReveal } from "../hooks/useAnimations";
 
-const LOOKBACK = 365;
-
 export default function EdgeLab() {
   const { coin } = useCoin();
   const { market, updateFromCandles } = useMarket();
@@ -29,6 +27,15 @@ export default function EdgeLab() {
   const [direction] = useLocalStorageState("lensa.backtest.direction", "long");
   const [leverage] = useLocalStorageState("lensa.backtest.leverage", 1);
   const [fee] = useLocalStorageState("lensa.backtest.fee", 0.1);
+  const [lookbackDays] = useLocalStorageState("lensa.backtest.lookback", 365);
+  const [riskEnabled] = useLocalStorageState("lensa.backtest.risk.enabled", false);
+  const [slEnabled] = useLocalStorageState("lensa.backtest.risk.sl.enabled", true);
+  const [tpEnabled] = useLocalStorageState("lensa.backtest.risk.tp.enabled", true);
+  const [stopLossPercent] = useLocalStorageState("lensa.backtest.risk.sl", 5);
+  const [takeProfitPercent] = useLocalStorageState("lensa.backtest.risk.tp", 15);
+  const [sizingMode] = useLocalStorageState("lensa.backtest.sizing.mode", "allIn");
+  const [sizingRiskPercent] = useLocalStorageState("lensa.backtest.sizing.riskPercent", 1);
+  const [fillTiming] = useLocalStorageState("lensa.backtest.fillTiming", "close");
   const [gateRegimes, setGateRegimes] = useState(true);
   const [loading, setLoading] = useState(false);
   const [scanning, setScanning] = useState(false);
@@ -39,6 +46,8 @@ export default function EdgeLab() {
   const [live, setLive] = useState(null);
   const [ranking, setRanking] = useState(null);
   const [dataMeta, setDataMeta] = useState(null);
+  const [tfProgress, setTfProgress] = useState(null);
+  const [tfSweep, setTfSweep] = useState(null);
 
   const allStrategies = useMemo(() => getAllStrategies(STRATEGIES), []);
   const strategy = allStrategies[strategyKey] || STRATEGIES.trendMomentumHybrid;
@@ -46,18 +55,26 @@ export default function EdgeLab() {
   const effectiveDirection = isFutures ? direction : "long";
   const effectiveLeverage = isFutures ? Number(leverage) || 1 : 1;
 
-  async function loadCandles() {
+  const riskParams = riskEnabled && (slEnabled || tpEnabled)
+    ? {
+        stopLossPercent: slEnabled ? Number(stopLossPercent) || null : null,
+        takeProfitPercent: tpEnabled ? Number(takeProfitPercent) || null : null,
+      }
+    : null;
+  const sizing = sizingMode === "riskPercent"
+    ? { mode: "riskPercent", riskPercent: Number(sizingRiskPercent) || 1 }
+    : null;
+
+  async function loadCandles(timeframe = market.timeframe, lookback = lookbackDays) {
     const candles = await getChartCandles({
       id: coin.id,
       symbol: coin.symbol,
-      timeframe: market.timeframe,
-      lookbackDays: LOOKBACK,
+      timeframe,
+      lookbackDays: lookback,
       source: market.exchange,
       pair: market.pair,
       marketType: market.marketType,
     });
-    updateFromCandles(candles);
-    setDataMeta(candles.meta || null);
     return candles;
   }
 
@@ -76,6 +93,8 @@ export default function EdgeLab() {
     setError(null);
     try {
       const candles = await loadCandles();
+      updateFromCandles(candles);
+      setDataMeta(candles.meta || null);
       const regimes = classifyRegimes(candles);
       const now = currentRegime(candles);
       const snapshot = market.isSingleSource ? null : await getCrowdSnapshot(market.pair).catch(() => null);
@@ -89,54 +108,120 @@ export default function EdgeLab() {
     }
   }
 
+  function analyzeTimeframe(candles) {
+    const regimes = classifyRegimes(candles);
+    const now = currentRegime(candles);
+    const rawSignals = combineDirectionalSignals(strategy, candles, { ...strategy.params, ...params }, effectiveDirection);
+    const profitable = new Set();
+    const ungated = runEngine(candles, rawSignals);
+    const breakdown = breakdownTradesByRegime(ungated.trades, regimes);
+    for (const [id, bucket] of Object.entries(breakdown)) {
+      if (bucket.n >= 6 && Number.isFinite(bucket.profitFactor) && bucket.profitFactor >= 1) profitable.add(id);
+    }
+    const gatedSignals = gateRegimes && profitable.size
+      ? gateSignalsByRegime(rawSignals, regimes, profitable)
+      : rawSignals;
+    const result = gateRegimes ? runEngine(candles, gatedSignals) : ungated;
+    const edge = enrichBacktest(result, candles, { nTrials: Object.keys(STRATEGIES).length });
+    const permission = edgePermission({
+      current: now,
+      breakdown,
+      category: strategy.category,
+    });
+    const liveState = currentSignalState(strategy, candles, { ...strategy.params, ...params }, effectiveDirection);
+    return {
+      result,
+      ungated,
+      edge,
+      breakdown,
+      permission,
+      liveState,
+      gated: Boolean(gateRegimes && profitable.size),
+      allowedRegimes: [...profitable],
+      now,
+      regimes,
+    };
+  }
+
   async function runAudit() {
     setLoading(true);
     setError(null);
     setRanking(null);
+    setTfSweep(null);
     try {
-      const candles = await loadCandles();
-      const regimes = classifyRegimes(candles);
-      const now = currentRegime(candles);
-      const rawSignals = combineDirectionalSignals(strategy, candles, { ...strategy.params, ...params }, effectiveDirection);
-      const profitable = new Set();
-      // First pass without gating so we know which regimes actually paid.
-      const ungated = runEngine(candles, rawSignals);
-      const breakdown = breakdownTradesByRegime(ungated.trades, regimes);
-      for (const [id, bucket] of Object.entries(breakdown)) {
-        if (bucket.n >= 6 && Number.isFinite(bucket.profitFactor) && bucket.profitFactor >= 1) profitable.add(id);
+      const tfs = auditTimeframes(market.isSingleSource, market.timeframe);
+      const rows = [];
+      let chartPack = null;
+      let chartCandles = null;
+
+      for (let i = 0; i < tfs.length; i++) {
+        const tf = tfs[i];
+        setTfProgress({ tf: tf.id, i: i + 1, n: tfs.length });
+        const lookback = auditLookbackDays(tf, lookbackDays);
+        try {
+          const candles = await loadCandles(tf.id, lookback);
+          if (!candles || candles.length < 30) {
+            rows.push({ tfId: tf.id, label: tf.label, error: t("edge.tf.short"), isChart: tf.id === market.timeframe });
+            continue;
+          }
+          if (tf.id === market.timeframe) {
+            updateFromCandles(candles);
+            setDataMeta(candles.meta || null);
+            chartCandles = candles;
+          }
+          const pack = analyzeTimeframe(candles);
+          rows.push({
+            tfId: tf.id,
+            label: tf.label,
+            isChart: tf.id === market.timeframe,
+            permission: pack.permission,
+            result: pack.result,
+            edge: pack.edge,
+            liveState: pack.liveState,
+            now: pack.now,
+          });
+          if (tf.id === market.timeframe) chartPack = pack;
+        } catch (err) {
+          rows.push({ tfId: tf.id, label: tf.label, error: err.message, isChart: tf.id === market.timeframe });
+        }
+        if (i < tfs.length - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 180));
+        }
       }
-      const gatedSignals = gateRegimes && profitable.size
-        ? gateSignalsByRegime(rawSignals, regimes, profitable)
-        : rawSignals;
-      const result = gateRegimes ? runEngine(candles, gatedSignals) : ungated;
-      const edge = enrichBacktest(result, candles, { nTrials: Object.keys(STRATEGIES).length });
-      const permission = edgePermission({
-        current: now,
-        breakdown,
-        category: strategy.category,
-      });
-      const liveState = currentSignalState(strategy, candles, { ...strategy.params, ...params }, effectiveDirection);
+
+      const scored = rows.filter((row) => !row.error && row.permission);
+      const tradeN = scored.filter((row) => row.permission.action === "trade").length;
+      const standN = scored.filter((row) => row.permission.action === "stand_down").length;
+      let consensus = "split";
+      if (scored.length && tradeN >= Math.ceil(scored.length * 0.6)) consensus = "trade";
+      else if (scored.length && standN >= Math.ceil(scored.length * 0.6)) consensus = "stand";
+      setTfSweep({ rows, consensus, tradeN, standN, scored: scored.length });
+
       const snapshot = market.isSingleSource ? null : await getCrowdSnapshot(market.pair).catch(() => null);
       setCrowd(snapshot?.error ? null : snapshot);
-      setLive({ candles, regimes, now, vol: volatilityTargetNotional({ candles, accountSize: 10000, periodsPerYear: estimatePeriods(candles) }) });
-      setAudit({
-        result,
-        ungated,
-        edge,
-        breakdown,
-        permission,
-        liveState,
-        gated: Boolean(gateRegimes && profitable.size),
-        allowedRegimes: [...profitable],
-        strategyKey,
-        label: pick(lang, strategy.label),
-        category: strategy.category,
-      });
+
+      if (chartPack && chartCandles) {
+        setLive({
+          candles: chartCandles,
+          regimes: chartPack.regimes,
+          now: chartPack.now,
+          vol: volatilityTargetNotional({ candles: chartCandles, accountSize: 10000, periodsPerYear: estimatePeriods(chartCandles) }),
+        });
+        setAudit({
+          ...chartPack,
+          strategyKey,
+          label: pick(lang, strategy.label),
+          category: strategy.category,
+        });
+      } else if (!scored.length) {
+        throw new Error(t("edge.tf.allFailed"));
+      }
     } catch (err) {
       setError(err.message);
       setDataMeta(qualityMetaFromError(err));
     } finally {
       setLoading(false);
+      setTfProgress(null);
     }
   }
 
@@ -145,6 +230,8 @@ export default function EdgeLab() {
     setError(null);
     try {
       const candles = await loadCandles();
+      updateFromCandles(candles);
+      setDataMeta(candles.meta || null);
       const nTrials = Object.keys(allStrategies).length;
       const pack = runAllStrategies({
         candles,
@@ -171,9 +258,18 @@ export default function EdgeLab() {
   }
 
   function runEngine(candles, signals) {
+    const common = {
+      candles,
+      signals,
+      feePercent: Number(fee) || 0.1,
+      leverage: effectiveLeverage,
+      riskParams,
+      sizing,
+      fillTiming,
+    };
     return effectiveLeverage > 1 || signals.some((s) => s < 0)
-      ? runLeveragedBacktest({ candles, signals, feePercent: Number(fee) || 0.1, leverage: effectiveLeverage })
-      : runBacktest({ candles, signals, feePercent: Number(fee) || 0.1 });
+      ? runLeveragedBacktest(common)
+      : runBacktest(common);
   }
 
   const permission = audit?.permission;
@@ -190,6 +286,9 @@ export default function EdgeLab() {
           <span className="panel-subtitle">{t("edge.kicker")}</span>
           <h1>{t("edge.title")}</h1>
           <p>{t("edge.lead")}</p>
+          <button type="button" className="guide-toc__btn" style={{ marginTop: 10 }} onClick={() => { window.location.hash = "guide"; }}>
+            {t("edge.guide")}
+          </button>
         </div>
         <div className="edge-hero__actions">
           <label className="edge-check">
@@ -201,7 +300,11 @@ export default function EdgeLab() {
             {scanning ? t("common.loading") : t("edge.scan")}
           </button>
           <button type="button" className="run-btn" onClick={runAudit} disabled={loading}>
-            {loading ? t("edge.running") : t("edge.run")}
+            {loading && tfProgress
+              ? t("edge.tf.progress", { tf: tfProgress.tf, i: tfProgress.i, n: tfProgress.n })
+              : loading
+                ? t("edge.running")
+                : t("edge.run")}
           </button>
         </div>
       </section>
@@ -262,6 +365,52 @@ export default function EdgeLab() {
 
       {error && <p className="news-error reveal">{t(error)}</p>}
 
+      {tfSweep && (
+        <div className="glass-card reveal">
+          <div className="panel-header"><h2>{t("edge.tf.title")}</h2></div>
+          <p className="section-note">{t("edge.tf.body")}</p>
+          <p className="section-note">{t(`edge.tf.consensus.${tfSweep.consensus}`, { trade: tfSweep.tradeN, stand: tfSweep.standN, n: tfSweep.scored })}</p>
+          <div className="table-scroll">
+            <table className="trades-table">
+              <thead>
+                <tr>
+                  <th>{t("edge.tf.col.tf")}</th>
+                  <th>{t("edge.tf.col.regime")}</th>
+                  <th>{t("edge.tf.col.perm")}</th>
+                  <th>{t("edge.tf.col.pf")}</th>
+                  <th>{t("edge.tf.col.sharpe")}</th>
+                  <th>{t("edge.tf.col.sqn")}</th>
+                  <th>{t("edge.tf.col.signal")}</th>
+                  <th>{t("edge.tf.col.dd")}</th>
+                  <th>{t("edge.tf.col.trades")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tfSweep.rows.map((row) => (
+                  <tr key={row.tfId} className={row.isChart ? "is-chart-tf" : undefined}>
+                    <td>{row.label}{row.isChart ? ` · ${t("edge.tf.current")}` : ""}</td>
+                    {row.error ? (
+                      <td colSpan={8}>{row.error}</td>
+                    ) : (
+                      <>
+                        <td>{row.now ? regimeLabel(row.now.id, lang) : "—"}</td>
+                        <td>{t(`edge.action.${row.permission?.action || "wait"}`)}</td>
+                        <td className="num">{fmt(row.result?.profitFactor, 2)}</td>
+                        <td className="num">{fmt(row.result?.sharpe, 2)}</td>
+                        <td className="num">{fmt(row.edge?.sqn, 2)}</td>
+                        <td>{row.liveState?.state || "—"}</td>
+                        <td className="num">{fmt(row.result?.maxDrawdownPercent, 1, "%")}</td>
+                        <td className="num">{row.result?.tradeCount ?? "—"}</td>
+                      </>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {audit && (
         <>
           <section className={`glass-card edge-verdict reveal edge-verdict--${permission?.action || "wait"}`}>
@@ -276,6 +425,7 @@ export default function EdgeLab() {
             {audit.liveState && (
               <p className="section-note">{t("edge.liveSignal", { state: t(`edge.state.${audit.liveState.state}`) })}</p>
             )}
+            <p className="section-note">{t("edge.tf.detailNote")}</p>
           </section>
 
           <div className="stats-grid">

@@ -32,8 +32,10 @@ import { combineDirectionalSignals } from "./strategies.js";
 //
 // `riskParams`: { stopLossPercent, takeProfitPercent } — either or both may
 // be omitted/null to disable that side independently. Percentages are
-// always interpreted as a magnitude (e.g. stopLossPercent: 2 means "exit if
-// the position is down 2%", not literally -2).
+// POSITION P/L (what you see as red/green on a futures trade), not a raw
+// move in the coin. `leverage` converts them to an underlying price
+// distance: at 5x, a 25% stop is a 5% move in the coin. Spot (1x) is
+// unchanged — 25% still means 25% of price.
 //
 // Returns { signals, exitPrice }. `exitPrice[i]` holds the exact stop/target
 // price on any bar where this overlay forced an exit, or null otherwise.
@@ -44,9 +46,16 @@ import { combineDirectionalSignals } from "./strategies.js";
 // exactly backwards for a risk control. Filling at the configured bound
 // instead (as a real stop/limit order would, ignoring slippage) is what
 // keeps a trade's realized loss capped at stopLossPercent as configured.
-export function applyRiskExits(candles, signals, riskParams, fillPrices = null) {
-  const stopLossPercent = positiveOrNull(riskParams?.stopLossPercent);
-  const takeProfitPercent = positiveOrNull(riskParams?.takeProfitPercent);
+// `fillPrices` (from resolveFillPrices) lets the overlay anchor stop/target
+// distances to the SAME price the engine will actually fill entries at (bar
+// close by default, next bar's open under fillTiming: "nextOpen").
+export function applyRiskExits(candles, signals, riskParams, leverage = 1, fillPrices = null) {
+  const lev = Math.max(1, Number(leverage) || 1);
+  // User types position P/L. The tape only has price, so convert to an
+  // underlying move: position% / leverage. Capped so a 100% position stop
+  // is the liquidation price, not a request to lose more than collateral.
+  const stopLossPercent = positionToUnderlying(riskParams?.stopLossPercent, lev);
+  const takeProfitPercent = positionToUnderlying(riskParams?.takeProfitPercent, lev);
   if (stopLossPercent == null && takeProfitPercent == null) return { signals, exitPrice: new Array(signals.length).fill(null) };
 
   const out = signals.slice();
@@ -82,11 +91,8 @@ export function applyRiskExits(candles, signals, riskParams, fillPrices = null) 
     blockedSide = 0; // signal moved off the stopped-out side; block lifted
 
     if (side !== 0) {
-      // Percentage move of the open side from entry to each bound,
-      // amplified by nothing here (leverage is applied later by whichever
-      // engine consumes this signal; this overlay works in underlying-price
-      // percentage terms, matching how stopLossPercent/takeProfitPercent are
-      // presented to the user as "% move against/for the position").
+      // Underlying-price % from entry to each bound. Leverage was already
+      // divided out above, so a 25% position stop at 5x is a 5% coin move.
       const worstPrice = hasRange ? (side === 1 ? low : high) : close;
       const bestPrice = hasRange ? (side === 1 ? high : low) : close;
       const worstMove = ((worstPrice - entryPrice) / entryPrice) * 100 * side; // negative = loss
@@ -143,6 +149,13 @@ function positiveOrNull(value) {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+function positionToUnderlying(percent, leverage) {
+  const position = positiveOrNull(percent);
+  if (position == null) return null;
+  const lev = Math.max(1, Number(leverage) || 1);
+  return Math.min(position, 100) / lev;
+}
+
 // ---------------------------------------------------------------------------
 // Position sizing
 // ---------------------------------------------------------------------------
@@ -175,18 +188,17 @@ function resolveEntryNotional(cash, sizing, riskParams) {
   return Math.max(0, Math.min(cash, desiredNotional));
 }
 
-// Leveraged variant: a `stopLossPercent` move in the UNDERLYING is amplified
-// by `leverage` on the position's collateral (e.g. 5% underlying move at
-// 10x leverage is a 50% loss of collateral), so less collateral is needed
-// to risk the same dollar amount at higher leverage. Capped at 100% since a
-// position can't lose more than the collateral backing it (liquidation).
-function resolveEntryCollateral(cash, sizing, riskParams, lev) {
+// Leveraged variant: stopLossPercent is already position P/L (25 means
+// "lose 25% of collateral"), so leverage does not go into this fraction
+// again. Capped at 100% because isolated margin can't lose more than the
+// collateral backing the trade.
+function resolveEntryCollateral(cash, sizing, riskParams) {
   if (!sizing || sizing.mode !== "riskPercent") return cash;
   const riskPercent = Number(sizing.riskPercent);
   const stopLossPercent = Number(riskParams?.stopLossPercent);
   if (!(riskPercent > 0) || !(stopLossPercent > 0)) return cash;
   const riskAmount = cash * (riskPercent / 100);
-  const lossFraction = Math.min(1, (stopLossPercent / 100) * lev);
+  const lossFraction = Math.min(1, stopLossPercent / 100);
   if (!(lossFraction > 0)) return cash;
   const desiredCollateral = riskAmount / lossFraction;
   return Math.max(0, Math.min(cash, desiredCollateral));
@@ -230,8 +242,8 @@ function fillsAtNextOpen(candles, fillTiming, i) {
  * SL/TP" option — runs entirely client-side, no extra network calls.
  */
 export function autoFitRiskExits({ candles, signals, feePercent = 0.1, initialCapital = 10000, leverage = 1, sizing = null, fillTiming = "close" }) {
-  const STOP_CANDIDATES = [1, 2, 3, 5, 8, 12];
-  const TARGET_CANDIDATES = [2, 4, 6, 10, 15, 20, 30];
+  const STOP_CANDIDATES = [3, 5, 8, 12, 20, 25, 40];
+  const TARGET_CANDIDATES = [8, 15, 25, 40, 60, 80, 100];
   const runOne = (riskParams) =>
     leverage > 1 || signals.some((s) => s < 0)
       ? runLeveragedBacktest({ candles, signals, feePercent, initialCapital, leverage, riskParams, sizing, fillTiming })
@@ -264,7 +276,7 @@ export function runBacktest({
   }
   const fillPrices = resolveFillPrices(candles, fillTiming);
   const { signals: effectiveSignals, exitPrice: forcedExitPrice } = riskParams
-    ? applyRiskExits(candles, signals, riskParams, fillPrices)
+    ? applyRiskExits(candles, signals, riskParams, 1, fillPrices)
     : { signals, exitPrice: null };
 
   const equityCurve = [];
@@ -429,11 +441,11 @@ export function runLeveragedBacktest({
   if (candles.length !== signals.length) {
     throw new Error("candles و signals باید طول یکسان داشته باشند");
   }
+  const lev = Math.max(1, Number(leverage) || 1);
   const fillPrices = resolveFillPrices(candles, fillTiming);
   const { signals: effectiveSignals, exitPrice: forcedExitPrice } = riskParams
-    ? applyRiskExits(candles, signals, riskParams, fillPrices)
+    ? applyRiskExits(candles, signals, riskParams, lev, fillPrices)
     : { signals, exitPrice: null };
-  const lev = Math.max(1, Number(leverage) || 1);
   const hasShorts = effectiveSignals.some((s) => s < 0);
   if (lev === 1 && !hasShorts) {
     return runBacktest({ candles, signals, feePercent, initialCapital, riskParams, sizing, fillTiming });
@@ -499,7 +511,7 @@ export function runLeveragedBacktest({
   }
 
   function openPosition(side, atPrice, atTime) {
-    const notional = resolveEntryCollateral(cash, sizing, riskParams, lev);
+    const notional = resolveEntryCollateral(cash, sizing, riskParams);
     const fee = notional * (feePercent / 100);
     positionEquity = Math.max(0, notional - fee);
     cash -= notional;
@@ -526,21 +538,30 @@ export function runLeveragedBacktest({
     let signalTradeThisBar = false;
 
     if (entryPrice != null) {
-      // Mark-to-market against the bar's worst excursion before checking the
-      // exit signal, since a liquidation can happen intrabar even on the
-      // same candle that would otherwise have produced a clean exit. The
-      // "worst" price for a long is the bar's low; for a short it's the
-      // bar's high — whichever moves against the open side.
+      // Isolated-margin reality: a stop that is closer than liquidation
+      // must fill at the stop, unless this bar *opened* already through
+      // the liquidation price (a gap). Checking the bar's worst tick
+      // first used to skip a 25% stop and wipe the account on any candle
+      // wider than 100%/leverage.
+      const openPrice = Number.isFinite(candles[i].open) ? candles[i].open : close;
       const worstPrice =
         Number.isFinite(low) && Number.isFinite(high) ? (positionSide === 1 ? low : high) : close;
+      const openMovePercent = movePercent(openPrice);
       const worstMovePercent = movePercent(worstPrice);
-      if (worstMovePercent <= -100) {
-        // Fill at the theoretical liquidation price (the level where the
-        // amplified move hits exactly -100% of collateral), not at the
-        // bar's extreme — a real liquidation engine closes the position
-        // the moment that line is crossed, and reporting the bar's full
-        // excursion as the exit price overstates MAE. P&L is capped at
-        // -100% either way; this only corrects the reported exit level.
+      if (openMovePercent <= -100) {
+        // Gapped through the liquidation level at the open: trading resumed
+        // below (above, for a short) that line, so the fill can't be any
+        // better than the actual open.
+        closePosition(openPrice, time, { isLiquidation: true });
+      } else if (forcedExitPrice?.[i] != null) {
+        closePosition(fillPrice, time);
+      } else if (worstMovePercent <= -100) {
+        // Intrabar liquidation: fill at the theoretical liquidation price
+        // (the level where the amplified move hits exactly -100% of
+        // collateral), not at the bar's extreme — a real liquidation engine
+        // closes the position the moment that line is crossed, and reporting
+        // the bar's full excursion as the exit price overstates MAE. P&L is
+        // capped at -100% either way; this only corrects the exit level.
         const liquidationPrice = entryPrice * (1 - positionSide / lev);
         closePosition(liquidationPrice, time, { isLiquidation: true });
       } else if (direction !== prevDirection) {
