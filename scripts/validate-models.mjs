@@ -3,7 +3,7 @@ import { runBacktest, runLeveragedBacktest } from "../src/lib/backtest.js";
 import { STRATEGIES, sma } from "../src/lib/strategies.js";
 import { positionSize, riskRewardRatio, calculateATR, atrStopSuggestion } from "../src/lib/risk.js";
 import { monteCarlo, outcomeZones, tradeSetups, probabilityAboveAcrossWindows, probabilityPriceMap, SCENARIO_CONSENSUS_STEPS } from "../src/lib/forecast.js";
-import { resolveTimeframe, TIMEFRAMES, normalizeMarketSource, coinIdFromPair } from "../src/lib/coingecko.js";
+import { resolveTimeframe, TIMEFRAMES, normalizeMarketSource, coinIdFromPair, auditTimeframes, auditLookbackDays } from "../src/lib/coingecko.js";
 import { optimizeStrategy, walkForwardValidate } from "../src/lib/optimize.js";
 import { buildCustomStrategy, getAllStrategies } from "../src/lib/customStrategies.js";
 import { classifyRegimes, currentRegime, REGIME, gateSignalsByRegime, breakdownTradesByRegime } from "../src/lib/regime.js";
@@ -144,9 +144,8 @@ assert.ok(TIMEFRAMES.some((tf) => tf.id === "1M"), "TradingView-style monthly ti
 }
 
 // ---------------------------------------------------------------------------
-// Position sizing (leveraged): collateral scales down as leverage rises
-// relative to the stop distance, capped at riskAmount once leverage makes
-// the stop-implied loss exceed 100% of collateral.
+// Position sizing (leveraged): stop % is position P/L, so collateral is
+// riskAmount / (stopLossPercent/100) with no extra leverage multiplier.
 // ---------------------------------------------------------------------------
 {
   const levCandles = [];
@@ -161,12 +160,12 @@ assert.ok(TIMEFRAMES.some((tf) => tf.id === "1M"), "TradingView-style monthly ti
   const levAllIn = runLeveragedBacktest({ ...levCommon, sizing: null });
   const levRiskSized = runLeveragedBacktest({ ...levCommon, sizing: { mode: "riskPercent", riskPercent: 1 } });
 
-  const expectedCollateralFraction = (10000 * 0.01) / Math.min(1, (4 / 100) * 5) / 10000; // = 0.05
+  const expectedCollateralFraction = (1 / 100) / (4 / 100); // riskPercent / position-stop = 0.25
   const allInDev = levAllIn.equityCurve[2].equity - 10000;
   const riskDev = levRiskSized.equityCurve[2].equity - 10000;
   assert.ok(
     Math.abs(riskDev - allInDev * expectedCollateralFraction) < 1e-6,
-    "leveraged risk-based sizing scales collateral by the leverage-amplified stop distance"
+    "leveraged risk-based sizing uses position-level stop, not underlying * leverage"
   );
 }
 
@@ -182,19 +181,73 @@ assert.ok(TIMEFRAMES.some((tf) => tf.id === "1M"), "TradingView-style monthly ti
     return { time: i, open: prev, close: c, high: Math.max(prev, c), low: Math.min(prev, c) };
   });
   const liqSignals = new Array(closesSeq.length).fill(1); // stays long throughout; only the crash matters
-  const liqCommon = { candles: liqCandles, signals: liqSignals, feePercent: 0, initialCapital: 10000, leverage: 10, riskParams: { stopLossPercent: 50 } };
+  const liqCommon = { candles: liqCandles, signals: liqSignals, feePercent: 0, initialCapital: 10000, leverage: 10 };
 
   const liqAllIn = runLeveragedBacktest({ ...liqCommon, sizing: null });
   assert.equal(liqAllIn.wasLiquidated, true, "all-in: the crash still triggers a liquidation");
   assert.equal(liqAllIn.equityCurve.at(-1).equity, 0, "all-in: liquidation still permanently zeroes the account (unchanged from before)");
   assert.equal(liqAllIn.trades.length, 1, "all-in: no re-entry is possible after the whole account is gone");
 
-  const liqRiskSized = runLeveragedBacktest({ ...liqCommon, sizing: { mode: "riskPercent", riskPercent: 1 } });
-  assert.equal(liqRiskSized.wasLiquidated, true, "risk-sized: the trade that got liquidated is still correctly flagged as such");
-  assert.ok(liqRiskSized.trades.length > 1, "risk-sized: the account keeps trading on its untouched idle cash after a contained liquidation");
+  const liqRiskSized = runLeveragedBacktest({
+    ...liqCommon,
+    riskParams: { stopLossPercent: 50 },
+    sizing: { mode: "riskPercent", riskPercent: 1 },
+  });
+  assert.ok(liqRiskSized.trades.length >= 1, "risk-sized: the stopped trade is recorded");
   assert.ok(
-    liqRiskSized.equityCurve.at(-1).equity > 9900,
-    "risk-sized: surviving idle cash lets the account participate in the subsequent recovery instead of being frozen"
+    liqRiskSized.equityCurve.at(-1).equity > 9800,
+    "risk-sized: a 50% position stop at 10x is a 5% coin move — idle cash survives the crash"
+  );
+  const stopped = liqRiskSized.trades[0];
+  assert.ok(stopped.pnlPercent > -55 && stopped.pnlPercent < -45, "position stop caps the loss near 50%, not a 10x wipe");
+}
+
+{
+  // 5x leverage + 25% POSITION stop: a 10% coin drop would be -50% of
+  // collateral without a stop. The stop must fire at 5% of price (−25% of
+  // the position), which is what the user types as "25".
+  const px = [100, 100, 90, 90];
+  const slCandles = px.map((c, i) => {
+    const prev = i === 0 ? c : px[i - 1];
+    return { time: i, open: prev, close: c, high: Math.max(prev, c), low: Math.min(prev, c) };
+  });
+  const slSignals = [1, 1, 1, 1];
+  const slResult = runLeveragedBacktest({
+    candles: slCandles,
+    signals: slSignals,
+    feePercent: 0,
+    initialCapital: 10000,
+    leverage: 5,
+    riskParams: { stopLossPercent: 25, takeProfitPercent: 100 },
+  });
+  assert.ok(slResult.trades.length >= 1, "25% position stop actually exits");
+  assert.ok(
+    slResult.trades[0].pnlPercent > -28 && slResult.trades[0].pnlPercent < -22,
+    "5x + typed 25% stop loses ~25% of the position, not 5×25%"
+  );
+  assert.ok(!slResult.trades[0].liquidated, "a 25% stop is inside liquidation, so the trade is not wiped");
+}
+
+{
+  // A candle that wicks through both the 25% position stop AND the 5x
+  // liquidation price (20% coin) must still fill the stop, not wipe.
+  const wick = [
+    { time: 0, open: 100, close: 100, high: 101, low: 99 },
+    { time: 1, open: 99, close: 70, high: 99, low: 70 },
+  ];
+  const wickResult = runLeveragedBacktest({
+    candles: wick,
+    signals: [1, 1],
+    feePercent: 0,
+    initialCapital: 10000,
+    leverage: 5,
+    riskParams: { stopLossPercent: 25 },
+  });
+  assert.ok(wickResult.trades.length >= 1, "wide candle still records a trade");
+  assert.ok(!wickResult.trades[0].liquidated, "stop fills before a through-liquidation wick");
+  assert.ok(
+    wickResult.trades[0].pnlPercent > -28 && wickResult.trades[0].pnlPercent < -22,
+    "wide candle stop is still ~25% of the position"
   );
 }
 
@@ -317,6 +370,13 @@ assert.ok(TIMEFRAMES.some((tf) => tf.id === "1M"), "TradingView-style monthly ti
 {
   assert.equal(TIMEFRAMES.some((tf) => tf.id === "45m"), false, "45m is not offered (no venue has it)");
   assert.equal(TIMEFRAMES.some((tf) => tf.id === "3h"), false, "3h is not offered (mapped to 4h on every venue)");
+  const cryptoTfs = auditTimeframes(false, "4h").map((tf) => tf.id);
+  assert.ok(cryptoTfs.includes("15m") && cryptoTfs.includes("1w") && cryptoTfs.includes("4h"), "crypto audit sweeps 15m–1w");
+  assert.equal(cryptoTfs.includes("1m"), false, "1m is too heavy for the audit sweep");
+  const singleTfs = auditTimeframes(true).map((tf) => tf.id);
+  assert.deepEqual(singleTfs, ["1d", "1w", "1M"]);
+  const tf15 = TIMEFRAMES.find((tf) => tf.id === "15m");
+  assert.ok(auditLookbackDays(tf15, 365) < 40, "a 365-day lookback does not pull a year of 15m candles");
   assert.equal(normalizeMarketSource("Binance USD-M Futures"), "binanceUsdFutures");
   assert.equal(normalizeMarketSource("binance", "USD-M Futures"), "binanceUsdFutures");
   assert.equal(normalizeMarketSource("Binance"), "binance");
