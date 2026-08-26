@@ -44,7 +44,7 @@ import { combineDirectionalSignals } from "./strategies.js";
 // exactly backwards for a risk control. Filling at the configured bound
 // instead (as a real stop/limit order would, ignoring slippage) is what
 // keeps a trade's realized loss capped at stopLossPercent as configured.
-export function applyRiskExits(candles, signals, riskParams) {
+export function applyRiskExits(candles, signals, riskParams, fillPrices = null) {
   const stopLossPercent = positiveOrNull(riskParams?.stopLossPercent);
   const takeProfitPercent = positiveOrNull(riskParams?.takeProfitPercent);
   if (stopLossPercent == null && takeProfitPercent == null) return { signals, exitPrice: new Array(signals.length).fill(null) };
@@ -115,9 +115,15 @@ export function applyRiskExits(candles, signals, riskParams) {
       }
     }
 
+    // Track the SAME entry price the engine will actually fill at (bar
+    // close by default, next bar's open under fillTiming: "nextOpen") so
+    // the stop/target distances measured here match the realized trade.
+    // Anchoring to the bar close while the engine fills at a gapped next
+    // open would make every stop fire at the wrong distance from entry.
+    const engineEntryPrice = fillPrices?.[i] ?? close;
     if (side === 0 && rawSignal !== 0) {
       side = rawSignal;
-      entryPrice = close;
+      entryPrice = engineEntryPrice;
     } else if (side !== 0 && rawSignal === 0) {
       side = 0;
       entryPrice = null;
@@ -125,7 +131,7 @@ export function applyRiskExits(candles, signals, riskParams) {
       // direction flip (long -> short or vice versa) without an
       // intermediate flat bar
       side = rawSignal;
-      entryPrice = close;
+      entryPrice = engineEntryPrice;
     }
   }
 
@@ -204,6 +210,18 @@ function resolveFillPrices(candles, fillTiming) {
   });
 }
 
+// Whether bar i's fill actually executes at the NEXT bar's open (true for
+// every nextOpen bar except the last one, which falls back to its own
+// close). Used to mark equity correctly on trade bars: a fill that hasn't
+// economically happened yet by this bar's close must not be reflected in
+// this bar's equity, or a gap between this close and the next open shows
+// up as a phantom same-bar gain/loss.
+function fillsAtNextOpen(candles, fillTiming, i) {
+  if (fillTiming !== "nextOpen") return false;
+  const next = candles[i + 1];
+  return Boolean(next && Number.isFinite(next.open));
+}
+
 /**
  * Grid-searches a small set of stop-loss / take-profit combinations against
  * the given signals and returns the combination with the best Sharpe ratio
@@ -244,11 +262,10 @@ export function runBacktest({
   if (candles.length !== signals.length) {
     throw new Error("candles و signals باید طول یکسان داشته باشند");
   }
-  const { signals: effectiveSignals, exitPrice: forcedExitPrice } = riskParams
-    ? applyRiskExits(candles, signals, riskParams)
-    : { signals, exitPrice: null };
-
   const fillPrices = resolveFillPrices(candles, fillTiming);
+  const { signals: effectiveSignals, exitPrice: forcedExitPrice } = riskParams
+    ? applyRiskExits(candles, signals, riskParams, fillPrices)
+    : { signals, exitPrice: null };
 
   const equityCurve = [];
   const trades = [];
@@ -263,7 +280,13 @@ export function runBacktest({
     const signal = effectiveSignals[i];
     // A forced SL/TP exit always fills at its own configured bound; absent
     // that, the fill uses fillTiming (see resolveFillPrices above).
+    const forcedExit = forcedExitPrice?.[i] != null;
     const fillPrice = forcedExitPrice?.[i] ?? fillPrices[i];
+    // Forced SL/TP exits are resting orders that fill intrabar on THIS
+    // bar; only ordinary signal fills are deferred to the next open.
+    const deferredFill = !forcedExit && fillsAtNextOpen(candles, fillTiming, i);
+    const cashBefore = cash;
+    const unitsBefore = units;
 
     if (prevSignal === 0 && signal === 1) {
       const notional = resolveEntryNotional(cash, sizing, riskParams);
@@ -284,7 +307,14 @@ export function runBacktest({
       entryTime = null;
     }
 
-    equityCurve.push({ time, equity: cash + units * close });
+    // A trade whose fill happens at the NEXT bar's open hasn't economically
+    // executed by this bar's close — mark this bar's equity from the
+    // pre-trade state, otherwise the overnight gap between this close and
+    // the next open leaks into this bar as a phantom gain/loss (e.g. a
+    // gap-up entry showing an instant drawdown that never happened).
+    const tradedThisBar = units !== unitsBefore;
+    const equity = deferredFill && tradedThisBar ? cashBefore + unitsBefore * close : cash + units * close;
+    equityCurve.push({ time, equity });
     prevSignal = signal;
   }
 
@@ -310,7 +340,7 @@ export function runBacktest({
   let maxDrawdownPercent = 0;
   for (const point of equityCurve) {
     if (point.equity > peak) peak = point.equity;
-    const dd = ((peak - point.equity) / peak) * 100;
+    const dd = peak > 0 ? ((peak - point.equity) / peak) * 100 : 0;
     if (dd > maxDrawdownPercent) maxDrawdownPercent = dd;
   }
 
@@ -399,16 +429,15 @@ export function runLeveragedBacktest({
   if (candles.length !== signals.length) {
     throw new Error("candles و signals باید طول یکسان داشته باشند");
   }
+  const fillPrices = resolveFillPrices(candles, fillTiming);
   const { signals: effectiveSignals, exitPrice: forcedExitPrice } = riskParams
-    ? applyRiskExits(candles, signals, riskParams)
+    ? applyRiskExits(candles, signals, riskParams, fillPrices)
     : { signals, exitPrice: null };
   const lev = Math.max(1, Number(leverage) || 1);
   const hasShorts = effectiveSignals.some((s) => s < 0);
   if (lev === 1 && !hasShorts) {
     return runBacktest({ candles, signals, feePercent, initialCapital, riskParams, sizing, fillTiming });
   }
-
-  const fillPrices = resolveFillPrices(candles, fillTiming);
 
   const equityCurve = [];
   const trades = [];
@@ -482,7 +511,19 @@ export function runLeveragedBacktest({
   for (let i = 0; i < candles.length; i++) {
     const { time, close, low, high } = candles[i];
     const direction = liquidated ? 0 : Math.sign(effectiveSignals[i] ?? 0);
+    const forcedExit = forcedExitPrice?.[i] != null;
     const fillPrice = forcedExitPrice?.[i] ?? fillPrices[i];
+    // Liquidations and forced SL/TP exits fill intrabar on THIS bar; only
+    // ordinary signal fills are deferred to the next open (see the spot
+    // engine's equity-marking note for why this distinction matters).
+    const deferredFill = !forcedExit && fillsAtNextOpen(candles, fillTiming, i);
+    const before = {
+      cash,
+      positionEquity,
+      positionSide,
+      entryPrice,
+    };
+    let signalTradeThisBar = false;
 
     if (entryPrice != null) {
       // Mark-to-market against the bar's worst excursion before checking the
@@ -494,19 +535,40 @@ export function runLeveragedBacktest({
         Number.isFinite(low) && Number.isFinite(high) ? (positionSide === 1 ? low : high) : close;
       const worstMovePercent = movePercent(worstPrice);
       if (worstMovePercent <= -100) {
-        closePosition(worstPrice, time, { isLiquidation: true });
+        // Fill at the theoretical liquidation price (the level where the
+        // amplified move hits exactly -100% of collateral), not at the
+        // bar's extreme — a real liquidation engine closes the position
+        // the moment that line is crossed, and reporting the bar's full
+        // excursion as the exit price overstates MAE. P&L is capped at
+        // -100% either way; this only corrects the reported exit level.
+        const liquidationPrice = entryPrice * (1 - positionSide / lev);
+        closePosition(liquidationPrice, time, { isLiquidation: true });
       } else if (direction !== prevDirection) {
         closePosition(fillPrice, time);
+        signalTradeThisBar = true;
       }
     }
 
     if (entryPrice == null && direction !== 0 && !liquidated) {
       openPosition(direction, fillPrice, time);
+      signalTradeThisBar = true;
     }
 
-    const markPrice = close;
-    const openEquity = entryPrice != null ? positionEquity * (1 + movePercent(markPrice) / 100) : 0;
-    equityCurve.push({ time, equity: cash + Math.max(0, openEquity) });
+    // Same phantom-gap guard as the spot engine: a signal fill deferred to
+    // the next bar's open hasn't happened by this close, so this bar's
+    // equity must reflect the PRE-trade state.
+    let equity;
+    if (deferredFill && signalTradeThisBar) {
+      const beforeOpenEquity =
+        before.entryPrice != null
+          ? before.positionEquity * (1 + (((close - before.entryPrice) / before.entryPrice) * 100 * before.positionSide * lev) / 100)
+          : 0;
+      equity = before.cash + Math.max(0, beforeOpenEquity);
+    } else {
+      const openEquity = entryPrice != null ? positionEquity * (1 + movePercent(close) / 100) : 0;
+      equity = cash + Math.max(0, openEquity);
+    }
+    equityCurve.push({ time, equity });
     prevDirection = liquidated ? 0 : direction;
     if (entryPrice == null && positionEquity === 0 && cash <= 0) liquidated = true;
   }

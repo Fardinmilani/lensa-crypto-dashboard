@@ -77,15 +77,17 @@ export function monteCarlo({
 }) {
   const safeHorizon = Math.round(Number(horizon));
   const safeSims = Math.round(Number(sims));
+  // Errors are i18n keys, translated by the caller with t() — a Persian
+  // prose string here would surface untranslated in the English UI.
   if (!Number.isFinite(safeHorizon) || safeHorizon < 1 || safeHorizon > 2000) {
-    return { error: "افق شبیه‌سازی باید بین ۱ تا ۲۰۰۰ کندل باشد." };
+    return { error: "err.mc.horizon" };
   }
   if (!Number.isFinite(safeSims) || safeSims < 100 || safeSims > 20000) {
-    return { error: "تعداد مسیرهای شبیه‌سازی باید بین ۱۰۰ تا ۲۰۰۰۰ باشد." };
+    return { error: "err.mc.sims" };
   }
   const rets = logReturns(closes);
   if (rets.length < 5 || closes.length < 6) {
-    return { error: "داده‌ی کافی برای شبیه‌سازی موجود نیست." };
+    return { error: "err.mc.data" };
   }
   const current = closes[closes.length - 1];
   const mu = driftMode === "zero" ? 0 : mean(rets);

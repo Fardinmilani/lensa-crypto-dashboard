@@ -54,7 +54,11 @@ export async function getCrowdSnapshot(pair) {
     let crowding = "neutral";
     if (fundingApr != null && fundingApr > 25 && (lsRatio == null || lsRatio > 1.2)) crowding = "crowded_long";
     else if (fundingApr != null && fundingApr < -15 && (lsRatio == null || lsRatio < 0.85)) crowding = "crowded_short";
-    else if (fundingApr != null && Math.abs(fundingApr) > 40) crowding = "crowded_long";
+    // Fallback when the L/S ratio isn't extreme: very large funding still
+    // signals crowding, but on the side that is *paying* — strongly negative
+    // funding means shorts are crowded, not longs.
+    else if (fundingApr != null && fundingApr > 40) crowding = "crowded_long";
+    else if (fundingApr != null && fundingApr < -40) crowding = "crowded_short";
 
     return {
       symbol,

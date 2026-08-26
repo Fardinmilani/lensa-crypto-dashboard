@@ -60,7 +60,7 @@ function PositionSizeCalculator() {
           <Row label={t("risk.pos.pctAcct")} value={`${result.positionPercentOfAccount.toFixed(1)}%`} />
         </div>
       )}
-      {result?.error && <p className="news-error">{result.error}</p>}
+      {result?.error && <p className="news-error">{t(result.error)}</p>}
     </div>
   );
 }
@@ -100,7 +100,7 @@ function ATRStopCalculator() {
 
   return (
     <div className="risk-card glass-card reveal">
-      <DataQualityGuard module="ATR stop" meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
+      <DataQualityGuard module={t("dq.module.atrStop")} meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
       <h3>
         {t("risk.atr.title")}
         <InfoTip term="glossary.atr" />
@@ -156,9 +156,9 @@ function RiskRewardCalculator() {
       {ratio != null && (
         <div className="result-box">
           <Row label={t("risk.rr.ratio")} value={`1 : ${ratio.toFixed(2)}`} />
-          <Row label="Entry" value={formatUsd(entryPrice, market.precision, { mode: "trading" })} />
-          <Row label="Stop" value={formatUsd(stopPrice, market.precision, { mode: "futures" })} />
-          <Row label="Target" value={formatUsd(targetPrice, market.precision, { mode: "futures" })} />
+          <Row label={t("risk.rr.entryShort")} value={formatUsd(entryPrice, market.precision, { mode: "trading" })} />
+          <Row label={t("risk.rr.stopShort")} value={formatUsd(stopPrice, market.precision, { mode: "futures" })} />
+          <Row label={t("risk.rr.targetShort")} value={formatUsd(targetPrice, market.precision, { mode: "futures" })} />
           <p className="card-hint">{ratio >= 2 ? t("risk.rr.good") : t("risk.rr.bad")}</p>
         </div>
       )}
@@ -186,6 +186,7 @@ function KellyCalculator() {
       <Field label={t("risk.kelly.win")} value={winRate} onChange={setWinRate} type="number" step="0.1" />
       <Field label={t("risk.kelly.avgWin")} value={avgWin} onChange={setAvgWin} type="number" step="0.1" />
       <Field label={t("risk.kelly.avgLoss")} value={avgLoss} onChange={setAvgLoss} type="number" step="0.1" />
+      {kelly.usable == null && <p className="news-error">{t("risk.kelly.invalid")}</p>}
       {kelly.usable != null && (
         <div className="result-box">
           <Row label={t("risk.kelly.full")} value={`${(kelly.full * 100).toFixed(1)}%`} />
@@ -239,6 +240,7 @@ function VolTargetCalculator() {
         {loading ? t("common.loading") : t("risk.vol.get", { sym: coin.symbol })}
       </button>
       {error && <p className="news-error">{error}</p>}
+      {result?.error && <p className="news-error">{t(`err.vol.${result.error}`)}</p>}
       {result && !result.error && (
         <div className="result-box">
           <Row label={t("risk.vol.realized")} value={`${(result.realizedVol * 100).toFixed(0)}%`} />

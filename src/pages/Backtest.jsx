@@ -685,7 +685,7 @@ export default function Backtest() {
     <div className="backtest-page" ref={reveal}>
       <div className="disclaimer-banner reveal">{t("bt.disclaimer")}</div>
       <MarketContextBar />
-      <DataQualityGuard module="Backtest" meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
+      <DataQualityGuard module={t("dq.module.backtest")} meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
 
       <div className="backtest-controls glass-card reveal">
         <ControlsSection
@@ -1200,14 +1200,14 @@ export default function Backtest() {
             )}
           </div>
           <div className="glass-card chart-card">
-            <DataQualityGuard module="Backtest equity" meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
+            <DataQualityGuard module={t("dq.module.backtestEquity")} meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
             <div className="panel-header"><h2>{t("bt.equity")}</h2></div>
             <p className="section-note">{t("bt.equity.note")}</p>
             <EquityChart equityCurve={result.equityCurve} benchmarkCurve={benchmarkResult?.equityCurve} />
           </div>
           {!result.isOptions && result.trades.length > 0 && (
             <div className="glass-card table-card">
-              <DataQualityGuard module="Backtest trades" meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
+              <DataQualityGuard module={t("dq.module.backtestTrades")} meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
               <div className="panel-header"><h2>{t("bt.trades", { n: result.tradeCount })}</h2></div>
               <p className="section-note">{t("bt.trades.note")}</p>
               <BacktestConfigSummary report={report} t={t} lang={lang} />
@@ -1302,7 +1302,7 @@ function AggregateResults({ aggregate, t, lang, dataMeta, analysisMarket, market
   return (
     <div className="aggregate-results reveal">
       <div className="glass-card chart-card">
-        <DataQualityGuard module="Backtest all strategies" meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
+        <DataQualityGuard module={t("dq.module.backtestAll")} meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
         <div className="panel-header"><h2>{t("bt.agg.title")}</h2></div>
         <p className="section-note">{t("bt.agg.subtitle", { n: summary.count })}</p>
 

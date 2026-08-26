@@ -23,6 +23,7 @@ export default function Dashboard() {
   const { t } = useI18n();
   const [chartType, setChartType] = useState("candles");
   const [detail, setDetail] = useState(null);
+  const [detailError, setDetailError] = useState(false);
   const [updatedAt, setUpdatedAt] = useState(null);
   const reveal = useStaggerReveal([coin.id]);
 
@@ -35,10 +36,14 @@ export default function Dashboard() {
         const d = await getCoinDetail(coin.id, 12_000);
         if (!cancelled) {
           setDetail(d);
+          setDetailError(false);
           setUpdatedAt(new Date());
         }
       } catch {
-        /* keep last-known/empty detail */
+        // Keep the last-known detail on screen, but tell the user the
+        // numbers are stale instead of failing silently — a hero full of
+        // "-" with no explanation reads as a broken app, not a data outage.
+        if (!cancelled) setDetailError(true);
       }
     }
     refresh({ clear: true });
@@ -74,7 +79,8 @@ export default function Dashboard() {
                   {up ? "▲" : "▼"} {Math.abs(change24).toFixed(2)}%
                 </span>
               )}
-              {updatedAt && <span className="live-pill">{t("hero.live", { time: updatedAt.toLocaleTimeString() })}</span>}
+              {updatedAt && !detailError && <span className="live-pill">{t("hero.live", { time: updatedAt.toLocaleTimeString() })}</span>}
+              {detailError && <span className="live-pill live-pill--stale">{t("hero.stale")}</span>}
             </div>
           </div>
         </div>
@@ -111,7 +117,7 @@ export default function Dashboard() {
             />
             {!market.isSingleSource && (
               <div className="chart-toolbar__field">
-                <label>Market</label>
+                <label>{t("chart.market")}</label>
                 <select value={market.marketType} onChange={(e) => setMarketType(e.target.value)}>
                   {MARKET_TYPES.map((type) => (
                     <option key={type} value={type}>{type}</option>

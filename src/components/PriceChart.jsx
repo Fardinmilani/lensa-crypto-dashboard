@@ -68,7 +68,16 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
   const [renderTick, setRenderTick] = useState(0);
   const [lookbackDays, setLookbackDays] = useState(null);
   const visibleRangeRef = useRef(null);
+  // Split pagination state: `loadingMoreRef` marks "a scroll-back expansion
+  // was REQUESTED and not yet consumed" (set by the visible-range
+  // subscription, consumed exactly once by the next effect run), while
+  // `paginationBusyRef` marks "that expansion's fetch is IN FLIGHT". A
+  // single sticky boolean used to serve both roles, which meant a
+  // pagination fetch superseded mid-flight (identity change, indicator
+  // edit) leaked `true` into the next, unrelated run — skipping its
+  // loading state and wrongly taking the soft chart-reuse path.
   const loadingMoreRef = useRef(false);
+  const paginationBusyRef = useRef(false);
   // Suppresses the scroll-back auto-expand logic for a short window after any
   // container resize (fullscreen enter/exit, window resize). A resize alone
   // can shift the visible logical range (more/fewer bars fit at the same bar
@@ -128,7 +137,11 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
 
   useEffect(() => {
     let cancelled = false;
+    // Consume the pending pagination request so it can't leak into any
+    // later run; track the in-flight phase separately.
     const isLoadingMore = loadingMoreRef.current;
+    loadingMoreRef.current = false;
+    if (isLoadingMore) paginationBusyRef.current = true;
     lookbackDaysRef.current = lookbackDays;
     // "Reuse" identity deliberately excludes lookbackDays and indicators —
     // those are the only two inputs that should ever refresh the chart's
@@ -221,7 +234,7 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
         } else if (!reuseExistingChart) {
           chart.timeScale().fitContent();
         }
-        loadingMoreRef.current = false;
+        paginationBusyRef.current = false;
         latestCandlesRef.current = candles;
 
         if (!reuseExistingChart) {
@@ -232,7 +245,7 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
           suppressAutoExpand(300);
           chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
             setRenderTick((tick) => tick + 1);
-            if (!range || loadingMoreRef.current || suppressAutoExpandRef.current) return;
+            if (!range || loadingMoreRef.current || paginationBusyRef.current || suppressAutoExpandRef.current) return;
             // Once the visible window scrolls within ~20 bars of the oldest
             // loaded candle, fetch a deeper history window. candlesNeeded grows
             // with lookbackDays, so doubling it (capped) reaches further back
@@ -262,12 +275,14 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
           setError(err.message);
           setSourceMeta(qualityMetaFromError(err, source));
           setLoading(false);
-          loadingMoreRef.current = false;
+          paginationBusyRef.current = false;
         }
       }
     })();
     return () => {
       cancelled = true;
+      // A pagination fetch superseded mid-flight is no longer in flight.
+      paginationBusyRef.current = false;
     };
   // market.precision is a fallback before fetched symbol metadata arrives; including it would refetch after storing that metadata.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -304,6 +319,17 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
     };
   }, []);
 
+  // Escape closes the indicator menu — backdrop click alone leaves
+  // keyboard users with no way out of it.
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    function onKeyDown(e) {
+      if (e.key === "Escape") setMenuOpen(false);
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [menuOpen]);
+
   const [isFullscreen, setIsFullscreen] = useState(false);
   useEffect(() => {
     function onFullscreenChange() {
@@ -336,7 +362,13 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
       {/* Top indicator panel */}
       <div className="indicator-panel no-print">
         <div className="indicator-add">
-          <button type="button" className="indicator-add__trigger" onClick={() => setMenuOpen((open) => !open)}>
+          <button
+            type="button"
+            className="indicator-add__trigger"
+            onClick={() => setMenuOpen((open) => !open)}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+          >
             <b>+</b>
             <span>{INDICATOR_TYPES[addType].label}</span>
           </button>
@@ -353,11 +385,21 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
                     <div className="indicator-menu__group" key={group}>
                       <span>{group}</span>
                       {items.map(([key, meta]) => (
-                        <button type="button" key={key} className={key === addType ? "is-selected" : ""} onClick={() => setAddType(key)}>
-                          <i className="indicator-dot" style={{ background: INDICATOR_TYPES[key].color }} />
-                          {meta.label}
+                        // The glossary tip renders its own <button>, so it
+                        // must be a SIBLING of the option button — nesting a
+                        // button inside a button is invalid HTML and breaks
+                        // focus/click behavior for assistive tech.
+                        <div className="indicator-menu__option" key={key}>
+                          <button
+                            type="button"
+                            className={`indicator-menu__option-btn ${key === addType ? "is-selected" : ""}`}
+                            onClick={() => setAddType(key)}
+                          >
+                            <i className="indicator-dot" style={{ background: INDICATOR_TYPES[key].color }} />
+                            {meta.label}
+                          </button>
                           {meta.glossaryKey ? <InfoTip term={meta.glossaryKey} /> : null}
-                        </button>
+                        </div>
                       ))}
                     </div>
                   ))}
@@ -431,7 +473,7 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
           {sourceMeta.source && ` · using ${sourceMeta.sourceLabel} fallback`}
         </div>
       )}
-      {sourceMeta && <DataQualityGuard module="Chart" meta={sourceMeta} expectedTimeframe={days} />}
+      {sourceMeta && <DataQualityGuard module={t("dq.module.chart")} meta={sourceMeta} expectedTimeframe={days} />}
     </div>
   );
 }
@@ -478,7 +520,7 @@ function IndicatorEditor({ item, active, onToggleSettings, onChange, onParamChan
       </div>
       {active && (
         <div className="indicator-editor__controls">
-          <label>{t("chart.visible")}<select value={item.visible ? "yes" : "no"} onChange={(e) => onChange({ visible: e.target.value === "yes" })}><option value="yes">On</option><option value="no">Off</option></select></label>
+          <label>{t("chart.visible")}<select value={item.visible ? "yes" : "no"} onChange={(e) => onChange({ visible: e.target.value === "yes" })}><option value="yes">{t("chart.on")}</option><option value="no">{t("chart.off")}</option></select></label>
           <label>{t("chart.color")}<input type="color" value={item.color} onChange={(e) => onChange({ color: e.target.value })} /></label>
           <label>{t("chart.width")}<input type="number" min="1" max="6" value={item.width} onChange={(e) => onChange({ width: Number(e.target.value) })} /></label>
           <label>{t("chart.style")}<select value={item.style} onChange={(e) => onChange({ style: e.target.value })}>{Object.entries(LINE_STYLES).map(([key, style]) => <option key={key} value={key}>{style.label}</option>)}</select></label>
