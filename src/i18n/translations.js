@@ -1,4 +1,5 @@
 import { guideEn, guideFa } from "./guideCopy";
+import { analyticsEn, analyticsFa } from "./analyticsCopy";
 
 const decisionEn = {
   "decision.disclaimer": "Rule-based decision support only. Lensa does not connect to exchanges, execute orders, or provide financial advice.",
@@ -795,6 +796,7 @@ export const translations = {
     ...glossaryEn,
     ...dqEn,
     ...guideEn,
+    ...analyticsEn,
     "brand.sub": "Market Decision-Support",
     "tab.dashboard": "Overview",
     "tab.forecast": "Scenarios",
@@ -1412,6 +1414,7 @@ export const translations = {
     ...glossaryFa,
     ...dqFa,
     ...guideFa,
+    ...analyticsFa,
     "brand.sub": "سامانه تصمیم‌یاری بازارها",
     "tab.dashboard": "نمای کلی",
     "tab.forecast": "تحلیل سناریو",

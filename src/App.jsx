@@ -8,6 +8,7 @@ const Forecast = lazy(() => import("./pages/Forecast"));
 const RiskTools = lazy(() => import("./pages/RiskTools"));
 const DecisionCenter = lazy(() => import("./pages/DecisionCenter"));
 const EdgeLab = lazy(() => import("./pages/EdgeLab"));
+const Analytics = lazy(() => import("./pages/Analytics"));
 const Guide = lazy(() => import("./pages/Guide"));
 const About = lazy(() => import("./pages/About"));
 import { CoinProvider } from "./context/CoinContext";
@@ -21,6 +22,7 @@ const TABS = [
   { id: "dashboard", labelKey: "tab.dashboard", component: Dashboard, icon: GridIcon, group: "core" },
   { id: "decision", labelKey: "tab.decision", component: DecisionCenter, icon: ShieldIcon, group: "core" },
   { id: "edge", labelKey: "tab.edge", component: EdgeLab, icon: AtomIcon, group: "advanced" },
+  { id: "analytics", labelKey: "tab.analytics", component: Analytics, icon: LayersIcon, group: "advanced" },
   { id: "forecast", labelKey: "tab.forecast", component: Forecast, icon: WaveIcon, group: "advanced" },
   { id: "backtest", labelKey: "tab.backtest", component: Backtest, icon: ChartIcon, group: "advanced" },
   { id: "risk", labelKey: "tab.risk", component: RiskTools, icon: GaugeIcon, group: "advanced" },
@@ -31,7 +33,7 @@ const TAB_IDS = new Set(TABS.map((tab) => tab.id));
 
 function tabFromHash() {
   if (typeof window === "undefined") return null;
-  const id = window.location.hash.replace("#", "");
+  const id = window.location.hash.replace("#", "").split("?")[0];
   return TAB_IDS.has(id) ? id : null;
 }
 
@@ -225,6 +227,14 @@ function GlobeIcon() {
     <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
       <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="2" />
       <path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18" fill="none" stroke="currentColor" strokeWidth="1.6" />
+    </svg>
+  );
+}
+function LayersIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <path d="M12 3l9 5-9 5-9-5 9-5z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+      <path d="M3 12l9 5 9-5M3 17l9 5 9-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
     </svg>
   );
 }

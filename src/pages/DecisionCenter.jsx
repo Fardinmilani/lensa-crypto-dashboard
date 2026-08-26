@@ -16,6 +16,10 @@ import { useLocalStorageState } from "../hooks/useLocalStorageState";
 import { useStaggerReveal } from "../hooks/useAnimations";
 import { buildCustomStrategy, getAllStrategies } from "../lib/customStrategies";
 import InfoTip from "../components/InfoTip";
+import EquityChart from "../components/EquityChart";
+import { analyzePaperTrades } from "../lib/journalAnalytics";
+import { evaluateMultiTfConfluence } from "../lib/multitf";
+import { auditTimeframes, auditLookbackDays } from "../lib/coingecko";
 
 const DEFAULT_RISK = {
   accountSize: 10000,
@@ -248,6 +252,8 @@ export default function DecisionCenter() {
   const [watchResults, setWatchResults] = useState([]);
   const [watchLoading, setWatchLoading] = useState(false);
   const [paperTrades, setPaperTrades] = useState([]);
+  const [mtfSummary, setMtfSummary] = useState(null);
+  const [notifyStatus, setNotifyStatus] = useState(typeof Notification !== "undefined" ? Notification.permission : "denied");
   const [alertDraft, setAlertDraft] = useState({ type: "price", level: "", score: 70, rr: 2 });
   const [note, setNote] = useState("");
   const [alertPrice, setAlertPrice] = useState("");
@@ -332,6 +338,13 @@ export default function DecisionCenter() {
         const hit = hits.get(item.id);
         if (hit) {
           changed = true;
+          if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+            try {
+              new Notification("Lensa alert", { body: hit.reason, tag: item.id });
+            } catch {
+              /* ignore */
+            }
+          }
           return { ...item, status: "Triggered while app was open", triggerReason: hit.reason, triggeredAt: new Date().toISOString() };
         }
         if (item.status === "Triggered while app was open") return item;
@@ -370,6 +383,26 @@ export default function DecisionCenter() {
         ...analyzeDecision(candles, candles.meta, resolvedRunMarket, t, importedStrategy),
         analysisMarket: resolvedRunMarket,
       });
+      const strat = resolveImportedStrategy(importedStrategy) || STRATEGIES.trendMomentumHybrid;
+      const tfs = auditTimeframes(runMarket.isSingleSource, runMarket.timeframe).slice(0, 5);
+      const sets = [];
+      for (const tf of tfs) {
+        try {
+          const c = await getChartCandles({
+            id: runMarket.coin.id,
+            symbol: runMarket.symbol,
+            timeframe: tf.id,
+            lookbackDays: auditLookbackDays(tf, importedStrategy?.lookbackDays || 365),
+            source: runMarket.exchange,
+            pair: runMarket.pair,
+            marketType: runMarket.marketType,
+          });
+          sets.push({ id: tf.id, label: tf.label, candles: c });
+        } catch {
+          /* skip tf */
+        }
+      }
+      setMtfSummary(evaluateMultiTfConfluence({ strategy: strat, candleSets: sets }));
     } catch (err) {
       setError(err.message);
       setDecision(null);
@@ -402,6 +435,14 @@ export default function DecisionCenter() {
     () => alerts.filter((item) => item.contextKey === contextKey(market)).slice(0, 6),
     [alerts, market]
   );
+
+  const journalStats = useMemo(() => analyzePaperTrades(paperTrades), [paperTrades]);
+
+  async function enableNotifications() {
+    if (typeof Notification === "undefined") return;
+    const perm = await Notification.requestPermission();
+    setNotifyStatus(perm);
+  }
 
   function exportImportedStrategy() {
     if (!importedStrategy) return;
@@ -660,6 +701,11 @@ export default function DecisionCenter() {
       {decision && (
         <>
           <TradeDecisionPanel decision={decision} precision={decision.precision} market={decisionMarket} meta={dataMeta} t={t} />
+          {mtfSummary && !mtfSummary.error && (
+            <p className="pill reveal">
+              {t("decision.mtf.badge")}: {mtfSummary.consensus} ({Math.round(mtfSummary.score * 100)}%)
+            </p>
+          )}
           <DecisionTestsPanel decision={decision} t={t} />
           <SimulationCards cards={decision.simulationCards} />
           <BacktestSummary backtest={decision.backtest} precision={decision.precision} t={t} />
@@ -681,6 +727,17 @@ export default function DecisionCenter() {
           />
 
           <SetupComparison decision={decision} precision={decision.precision} market={decisionMarket} meta={dataMeta} t={t} />
+
+          {paperTrades.length > 0 && (
+            <div className="glass-card reveal">
+              <h2>{t("decision.journal.analytics")}</h2>
+              <div className="stats-grid">
+                <span>{t("decision.journal.winRate")}: {journalStats.winRate?.toFixed(0) ?? "—"}%</span>
+                <span className="num">{journalStats.tradeCount} trades</span>
+              </div>
+              <EquityChart equityCurve={journalStats.equityCurve} />
+            </div>
+          )}
 
           <WatchlistScreener
             watchlist={watchlist}
@@ -724,6 +781,8 @@ export default function DecisionCenter() {
               market={market}
               precision={decision.precision}
               removeAlert={(id) => setAlerts((prev) => prev.filter((item) => item.id !== id))}
+              enableNotifications={enableNotifications}
+              notifyStatus={notifyStatus}
               t={t}
             />
           </div>
@@ -1811,11 +1870,15 @@ function PaperTradePanel({ note, setNote, saveNote, scopedJournal, savePaperTrad
   );
 }
 
-function BrowserAlertsPanel({ alertPrice, setAlertPrice, saveAlert, alertDraft, setAlertDraft, saveDecisionAlert, scopedAlerts, market, precision, removeAlert, t }) {
+function BrowserAlertsPanel({ alertPrice, setAlertPrice, saveAlert, alertDraft, setAlertDraft, saveDecisionAlert, scopedAlerts, market, precision, removeAlert, enableNotifications, notifyStatus, t }) {
   return (
     <div className="local-panel glass-card reveal">
       <h2>{t("decision.alerts.title")}</h2>
       <p className="card-hint"><strong>{t("decision.alerts.strong")}</strong> {t("decision.alerts.hint")}</p>
+      <button type="button" className="run-btn run-btn--ghost" onClick={enableNotifications}>
+        {notifyStatus === "granted" ? t("decision.notify.granted") : t("decision.notify.enable")}
+      </button>
+      {notifyStatus === "denied" && <p className="card-hint">{t("decision.notify.denied")}</p>}
 
       <div className="backtest-controls">
         <div className="control-group">

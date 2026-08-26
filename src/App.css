@@ -4146,3 +4146,99 @@
 @media (max-width: 720px) {
   .guide-map { grid-template-columns: 1fr; }
 }
+
+/* ---- Analytics desk ---- */
+.analytics-page {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding-bottom: 32px;
+}
+.analytics-hero h1 { margin: 8px 0; font-size: 1.55rem; }
+.analytics-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 16px 0;
+}
+.analytics-nav__btn {
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.analytics-nav__btn.active {
+  border-color: rgba(245, 158, 11, 0.55);
+  color: var(--gold);
+  background: rgba(245, 158, 11, 0.1);
+}
+.analytics-weights {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px;
+  margin: 12px 0;
+}
+.analytics-weights label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.82rem;
+}
+.corr-matrix-wrap { overflow-x: auto; margin-top: 12px; }
+.corr-matrix { border-collapse: collapse; font-size: 0.78rem; }
+.corr-matrix th, .corr-matrix td { padding: 8px 10px; text-align: center; }
+.corr-cell { border-radius: 4px; }
+.season-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+.macro-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.macro-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-subtle);
+}
+.replay-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0;
+}
+.replay-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  font-size: 0.9rem;
+}
+.events-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.events-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+}
+.compare-panel { margin-top: 12px; }
+.heatmap-table td.up { color: var(--up); }
+.heatmap-table td.down { color: var(--down); }
