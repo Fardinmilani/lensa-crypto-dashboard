@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { STRATEGIES, PARAM_LABELS, DIRECTION_MODES, combineDirectionalSignals, currentSignalState } from "../lib/strategies";
 import { runBacktest, runLeveragedBacktest, runAllStrategies, autoFitRiskExits, summarizeEquityCurve } from "../lib/backtest";
 import { optimizeStrategy, optimizeAllStrategies, walkForwardValidate, optimizeOptionsStrategy, optimizeAllOptionsStrategies } from "../lib/optimize";
@@ -148,6 +148,8 @@ export default function Backtest() {
   const [liveSignal, setLiveSignal] = useState(null);
   const [importedNotice, setImportedNotice] = useState(false);
   const [, setImportedStrategy] = useLocalStorageState(IMPORTED_STRATEGY_KEY, null);
+  const importedNoticeTimerRef = useRef(null);
+  useEffect(() => () => clearTimeout(importedNoticeTimerRef.current), []);
 
   const riskParams = riskEnabled && (slEnabled || tpEnabled)
     ? autoFit && autoFitResult
@@ -512,7 +514,8 @@ export default function Backtest() {
   function handleSendToDecisionCenter() {
     setImportedStrategy(buildStrategyPayload());
     setImportedNotice(true);
-    setTimeout(() => setImportedNotice(false), 4000);
+    clearTimeout(importedNoticeTimerRef.current);
+    importedNoticeTimerRef.current = setTimeout(() => setImportedNotice(false), 4000);
   }
 
   function handleExportStrategy() {
@@ -685,7 +688,7 @@ export default function Backtest() {
     <div className="backtest-page" ref={reveal}>
       <div className="disclaimer-banner reveal">{t("bt.disclaimer")}</div>
       <MarketContextBar />
-      <DataQualityGuard module="Backtest" meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
+      <DataQualityGuard module={t("dq.module.backtest")} meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
 
       <div className="backtest-controls glass-card reveal">
         <ControlsSection
@@ -818,7 +821,7 @@ export default function Backtest() {
                   <option key={lv} value={lv}>{lv}x</option>
                 ))}
               </select>
-              <small className="control-hint">{t("bt.leverage.hint", { market: market.isForex ? "Forex" : market.marketType })}</small>
+              <small className="control-hint">{t("bt.leverage.hint", { market: market.isForex ? t("bt.market.forex") : market.marketType })}</small>
             </div>
           )}
           <div className="control-group">
@@ -830,14 +833,20 @@ export default function Backtest() {
                 const blockedByStrategy = !isOptions && mode !== "long" && isFutures && !supportsShort;
                 const disabled = blockedByMarket || blockedByStrategy;
                 const hint = blockedByMarket ? t("bt.direction.spotOnlyLong") : blockedByStrategy ? t("bt.direction.noShortRule") : undefined;
+                // Highlight follows the direction the run will ACTUALLY use
+                // (effectiveDirection clamps to long on Spot), not the raw
+                // saved value — otherwise a Short chip left over from a
+                // futures session stays lit while the results are long-only.
+                const isActive = isOptionsMode ? mode === "options" : effectiveDirection === mode;
                 return (
                   <button
                     type="button"
                     key={mode}
-                    className={`chip-toggle${direction === mode ? " is-active" : ""}`}
+                    className={`chip-toggle${isActive ? " is-active" : ""}`}
                     onClick={() => setDirection(mode)}
                     disabled={disabled}
                     title={hint}
+                    aria-pressed={isActive}
                   >
                     {t(`bt.direction.${mode}`)}
                   </button>
@@ -1148,7 +1157,7 @@ export default function Backtest() {
         <p>{t("bt.guide.metrics")}</p>
       </div>
       <p className="strategy-description reveal">{pick(lang, strategy.description)}</p>
-      {error && <p className="news-error reveal">{error}</p>}
+      {error && <p className="news-error reveal">{t(error)}</p>}
 
       {result && (
         <div className="backtest-results">
@@ -1218,14 +1227,14 @@ export default function Backtest() {
             <p className="section-note">{t("bt.dd.compound", { sl: result.riskParams.stopLossPercent })}</p>
           )}
           <div className="glass-card chart-card">
-            <DataQualityGuard module="Backtest equity" meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
+            <DataQualityGuard module={t("dq.module.backtestEquity")} meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
             <div className="panel-header"><h2>{t("bt.equity")}</h2></div>
             <p className="section-note">{t("bt.equity.note")}</p>
             <EquityChart equityCurve={result.equityCurve} benchmarkCurve={benchmarkResult?.equityCurve} />
           </div>
           {!result.isOptions && result.trades.length > 0 && (
             <div className="glass-card table-card">
-              <DataQualityGuard module="Backtest trades" meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
+              <DataQualityGuard module={t("dq.module.backtestTrades")} meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
               <div className="panel-header"><h2>{t("bt.trades", { n: result.tradeCount })}</h2></div>
               <p className="section-note">{t("bt.trades.note")}</p>
               <BacktestConfigSummary report={report} t={t} lang={lang} />
@@ -1320,7 +1329,7 @@ function AggregateResults({ aggregate, t, lang, dataMeta, analysisMarket, market
   return (
     <div className="aggregate-results reveal">
       <div className="glass-card chart-card">
-        <DataQualityGuard module="Backtest all strategies" meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
+        <DataQualityGuard module={t("dq.module.backtestAll")} meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
         <div className="panel-header"><h2>{t("bt.agg.title")}</h2></div>
         <p className="section-note">{t("bt.agg.subtitle", { n: summary.count })}</p>
 

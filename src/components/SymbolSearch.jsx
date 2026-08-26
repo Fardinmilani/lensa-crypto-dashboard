@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { defaultPairForSymbol, searchCoins } from "../lib/coingecko";
 import { isForexCoinId, parseForexCoinId, forexPairLabel } from "../lib/forex";
 import { isIrrFxCoinId, parseIrrFxCoinId, irrFxPairLabel } from "../lib/irrfx";
@@ -16,6 +16,21 @@ export default function SymbolSearch({ coin, source, pair, onSelect }) {
   const [tab, setTab] = useState("all");
   const [searchResults, setSearchResults] = useState([]);
   const [loading, setLoading] = useState(false);
+  const triggerRef = useRef(null);
+
+  // Escape closes the dialog and focus returns to the trigger — without
+  // this, keyboard users who open the modal have no way back out of it.
+  useEffect(() => {
+    if (!open) return undefined;
+    function onKeyDown(e) {
+      if (e.key === "Escape") {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [open]);
 
   // Debounced search across CoinGecko coins and Frankfurter forex pairs.
   useEffect(() => {
@@ -111,7 +126,15 @@ export default function SymbolSearch({ coin, source, pair, onSelect }) {
 
   return (
     <div className="symbol-search no-print">
-      <button type="button" className="symbol-search__trigger" onClick={() => setOpen(true)} title={t("symbol.tooltip")}>
+      <button
+        type="button"
+        ref={triggerRef}
+        className="symbol-search__trigger"
+        onClick={() => setOpen(true)}
+        title={t("symbol.tooltip")}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+      >
         {coin.thumb && <img src={coin.thumb} alt="" width="16" height="16" />}
         <span>
           <strong>{selectedLabel}</strong>
@@ -121,7 +144,7 @@ export default function SymbolSearch({ coin, source, pair, onSelect }) {
 
       {open && (
         <div className="symbol-search__backdrop" onMouseDown={() => setOpen(false)}>
-          <div className="symbol-search__dialog" onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+          <div className="symbol-search__dialog" onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={t("symbol.tooltip")}>
             <div className="symbol-search__tabs">
               {TABS.map((item) => (
                 <button type="button" key={item} className={tab === item ? "is-active" : ""} onClick={() => setTab(item)}>
@@ -137,7 +160,7 @@ export default function SymbolSearch({ coin, source, pair, onSelect }) {
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder={t("symbol.placeholder")}
               />
-              {loading && <span className="coin-search__spinner" style={{ right: "12px", top: "18px" }} />}
+              {loading && <span className="coin-search__spinner" style={{ insetInlineEnd: "12px", top: "18px" }} />}
             </div>
             <div className="symbol-search__head">
               <span>{t("symbol.symbol")}</span>
@@ -165,7 +188,7 @@ export default function SymbolSearch({ coin, source, pair, onSelect }) {
               ))}
               {filtered.length === 0 && !loading && (
                 <div style={{ padding: "30px", textShadow: "none", color: "#64748b", textAlign: "center" }}>
-                  No matching symbols found
+                  {t("symbol.noMatch")}
                 </div>
               )}
             </div>

@@ -183,9 +183,14 @@
   cursor: pointer;
   transition: background 0.15s ease;
 }
-.coin-search__option.is-active,
 .coin-search__option:hover {
   background: var(--bg-raised);
+}
+/* Keyboard-focused row needs a clearly visible highlight: --bg-raised alone is
+   near-invisible on the solid dropdown background. */
+.coin-search__option.is-active {
+  background: rgba(245, 158, 11, 0.12);
+  box-shadow: inset 0 0 0 1px var(--border-glow);
 }
 .coin-search__option img {
   border-radius: 50%;
@@ -470,6 +475,11 @@
   border-radius: 999px;
   border: 1px solid rgba(34, 197, 94, 0.25);
   background: rgba(34, 197, 94, 0.08);
+}
+.live-pill--stale {
+  border-color: rgba(245, 158, 11, 0.35);
+  background: rgba(245, 158, 11, 0.1);
+  color: var(--gold-2);
 }
 .coin-hero__stats {
   display: flex;
@@ -881,7 +891,13 @@
   border-radius: 50%;
   flex-shrink: 0;
 }
-.indicator-menu__group button {
+.indicator-menu__option {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.indicator-menu__option-btn {
+  flex: 1;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -895,13 +911,13 @@
   font-size: 0.78rem;
   transition: all 0.15s;
 }
-.indicator-menu__group button:hover,
-.indicator-menu__group button.is-selected {
+.indicator-menu__option-btn:hover,
+.indicator-menu__option-btn.is-selected {
   color: var(--text-primary);
   border-color: var(--border-glow);
   background: rgba(245, 158, 11, 0.06);
 }
-.indicator-menu__group button.is-selected {
+.indicator-menu__option-btn.is-selected {
   background: rgba(245, 158, 11, 0.12);
 }
 .indicator-menu__add {
@@ -1025,6 +1041,14 @@
   overflow: hidden;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-subtle);
+  /* The chart itself is an inherently LTR artifact (time flows left to
+     right and lightweight-charts reports pixel coordinates in physical
+     space), and the drawing layer's SVG geometry is computed from those
+     same physical coordinates. Pinning the whole chart body to LTR keeps
+     the toolbar / flyouts / panels and the SVG overlay aligned with the
+     canvas under dir="rtl" instead of half-mirroring and drifting apart.
+     This matches how major trading UIs handle RTL locales. */
+  direction: ltr;
 }
 
 /* ── canvas + stage ── */
@@ -1111,7 +1135,11 @@
   display: flex;
   justify-content: center;
 }
-.dtool-group:hover .dtool-flyout {
+/* :focus-within alongside :hover keeps the flyout reachable without a
+   hover-capable pointer: tapping (touch) or tabbing to the group button
+   focuses it, which opens the variant list too. */
+.dtool-group:hover .dtool-flyout,
+.dtool-group:focus-within .dtool-flyout {
   opacity: 1;
   visibility: visible;
   transform: translateX(0);
@@ -1724,7 +1752,7 @@
 }
 .data-quality ul {
   margin: 8px 0 0;
-  padding-left: 18px;
+  padding-inline-start: 18px;
   color: var(--gold-2);
   line-height: 1.55;
 }
@@ -1734,7 +1762,7 @@
   height: 3px;
   border-radius: 2px;
   vertical-align: middle;
-  margin-left: 5px;
+  margin-inline-start: 5px;
 }
 .dot--gold {
   background: var(--gold);
@@ -1861,7 +1889,7 @@
   padding: 0;
   color: inherit;
   font-family: inherit;
-  text-align: left;
+  text-align: start;
   width: 100%;
 }
 .controls-section__title {
@@ -1972,7 +2000,7 @@
 .active-coin-chip__hint {
   font-size: 0.68rem;
   color: var(--text-tertiary) !important;
-  margin-right: auto;
+  margin-inline-end: auto;
 }
 .run-btn {
   background: linear-gradient(135deg, var(--gold-2), var(--gold));
@@ -2223,13 +2251,13 @@
   margin-bottom: 8px;
 }
 .live-signal-card {
-  border-left: 3px solid var(--border-strong);
+  border-inline-start: 3px solid var(--border-strong);
 }
 .live-signal-card--long {
-  border-left-color: #4ade80;
+  border-inline-start-color: #4ade80;
 }
 .live-signal-card--short {
-  border-left-color: #f87171;
+  border-inline-start-color: #f87171;
 }
 .live-signal-state {
   display: flex;
@@ -3052,7 +3080,7 @@
 .reason-list ul,
 .risk-warning-list {
   margin: 0;
-  padding-left: 18px;
+  padding-inline-start: 18px;
   color: var(--text-secondary);
   font-size: 0.8rem;
   line-height: 1.65;
@@ -3540,12 +3568,23 @@
     order: 2;
     width: 100%;
     justify-content: center;
+    border-radius: 18px;
+  }
+  /* Icons alone are ambiguous on small screens — keep a tiny label under
+     each icon instead of hiding the text entirely. */
+  .tab-btn {
+    flex-direction: column;
+    gap: 3px;
+    padding: 7px 10px;
+    border-radius: 14px;
+    flex: 1 1 0;
+    justify-content: center;
   }
   .tab-btn span {
-    display: none;
-  }
-  .tab-btn {
-    padding: 9px 13px;
+    font-size: 0.58rem;
+    line-height: 1.1;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
   }
   .tab-divider {
     display: none;

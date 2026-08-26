@@ -983,9 +983,14 @@ export const STRATEGIES = {
       const fast = ema(c, p.fastPeriod);
       const slow = ema(c, p.slowPeriod);
       const r = rsi(c, p.rsiPeriod);
+      // Mirror of the long rule: the long side requires RSI *above* the
+      // floor, so the short side must require RSI *below* 100 - floor.
+      // Using p.rsiFloor directly happens to work at the default of 50
+      // but breaks the symmetry for any optimized floor.
+      const rsiCeiling = 100 - p.rsiFloor;
       return c.map((_, i) => {
         if (fast[i] == null || slow[i] == null || r[i] == null) return 0;
-        return fast[i] < slow[i] && r[i] < p.rsiFloor ? 1 : 0;
+        return fast[i] < slow[i] && r[i] < rsiCeiling ? 1 : 0;
       });
     },
   },

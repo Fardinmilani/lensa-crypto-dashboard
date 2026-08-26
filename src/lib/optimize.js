@@ -449,8 +449,27 @@ export function walkForwardValidate({
   const fit = optimizeStrategy({ strategy, candles: trainCandles, direction, leverage, feePercent, riskParams, sizing, fillTiming, maxCombos });
   if (!fit) return null;
 
-  const testFittedResult = runOne({ strategy, candles: testCandles, params: fit.bestParams, direction, leverage, feePercent, riskParams, sizing, fillTiming });
-  const testDefaultResult = runOne({ strategy, candles: testCandles, params: strategy.params, direction, leverage, feePercent, riskParams, sizing, fillTiming });
+  // Score the test slice with WARM indicators: generate signals over the
+  // full history, then slice candles+signals together — the same approach
+  // scoreCandidateOutOfSample() uses and documents above. Regenerating
+  // signals from the bare test slice would cold-start every indicator
+  // (an SMA200 sees almost nothing in a 30% tail), starving the test
+  // period of trades and making testScore incomparable to trainScore.
+  const evalOnTestSlice = (params) => {
+    const fullSignals = combineDirectionalSignals(strategy, candles, params, direction);
+    return runOnSignals({
+      candles: testCandles,
+      signals: fullSignals.slice(splitIndex),
+      direction,
+      leverage,
+      feePercent,
+      riskParams,
+      sizing,
+      fillTiming,
+    });
+  };
+  const testFittedResult = evalOnTestSlice(fit.bestParams);
+  const testDefaultResult = evalOnTestSlice(strategy.params);
 
   return {
     trainRatio: ratio,

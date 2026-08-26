@@ -267,7 +267,8 @@ export function runOptionsStrategy({ candles, kind, params, initialCapital = 100
 
   const startIdx = volLookback;
   if (startIdx >= n - 1) {
-    return { equityCurve: [], rolls: [], initialCapital, startIdx: 0, error: "تاریخچه‌ی کافی برای این پارامترها وجود ندارد — بازه‌ی زمانی طولانی‌تری انتخاب کنید یا پنجره‌ی نوسان را کوتاه‌تر کنید." };
+    // i18n key, translated by the caller with t().
+    return { equityCurve: [], rolls: [], initialCapital, startIdx: 0, error: "err.options.history" };
   }
 
   // Every strategy is sized against the SAME notional: "as many units of the
