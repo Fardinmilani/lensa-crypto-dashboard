@@ -9,6 +9,8 @@ import { runBacktest, runLeveragedBacktest, runAllStrategies } from "../lib/back
 import { classifyRegimes, currentRegime, breakdownTradesByRegime, gateSignalsByRegime, edgePermission, REGIME, REGIME_LABELS } from "../lib/regime";
 import { enrichBacktest, deflatedSharpeRatio, volatilityTargetNotional } from "../lib/edge";
 import { getCrowdSnapshot } from "../lib/derivatives";
+import { getFundingHistory, compareFundingVenues } from "../lib/fundingHistory";
+import FundingHistoryChart from "../components/FundingHistoryChart";
 import { qualityMetaFromError } from "../lib/dataQuality";
 import { formatUsd } from "../lib/priceFormat";
 import { useCoin } from "../context/coinStore";
@@ -42,6 +44,8 @@ export default function EdgeLab() {
   const [error, setError] = useState(null);
   const [audit, setAudit] = useState(null);
   const [crowd, setCrowd] = useState(null);
+  const [fundingHist, setFundingHist] = useState(null);
+  const [fundingCompare, setFundingCompare] = useState(null);
   const [live, setLive] = useState(null);
   const [ranking, setRanking] = useState(null);
   const [dataMeta, setDataMeta] = useState(null);
@@ -87,6 +91,11 @@ export default function EdgeLab() {
       const now = currentRegime(candles);
       const snapshot = market.isSingleSource ? null : await getCrowdSnapshot(market.pair).catch(() => null);
       setCrowd(snapshot?.error ? null : snapshot);
+      if (!market.isSingleSource) {
+        const hist = await getFundingHistory(market.pair, 90);
+        setFundingHist(hist.history || null);
+        setFundingCompare(await compareFundingVenues(market.pair));
+      }
       setLive({ candles, regimes, now, vol: volatilityTargetNotional({ candles, accountSize: 10000, periodsPerYear: estimatePeriods(candles) }) });
     } catch (err) {
       setError(err.message);
@@ -185,6 +194,11 @@ export default function EdgeLab() {
 
       const snapshot = market.isSingleSource ? null : await getCrowdSnapshot(market.pair).catch(() => null);
       setCrowd(snapshot?.error ? null : snapshot);
+      if (!market.isSingleSource) {
+        const hist = await getFundingHistory(market.pair, 90);
+        setFundingHist(hist.history || null);
+        setFundingCompare(await compareFundingVenues(market.pair));
+      }
 
       if (chartPack && chartCandles) {
         setLive({
@@ -334,6 +348,15 @@ export default function EdgeLab() {
             <MiniStat label={t("edge.crowd.ls")} value={fmt(crowd.lsRatio, 2)} />
             <MiniStat label={t("edge.crowd.taker")} value={fmt(crowd.takerRatio, 2)} />
           </div>
+        </div>
+      )}
+
+      {fundingHist?.length > 0 && (
+        <div className="glass-card reveal">
+          <FundingHistoryChart history={fundingHist} />
+          {fundingCompare?.spreadApr != null && (
+            <p className="section-note">{t("edge.funding.spread")}: {fundingCompare.spreadApr.toFixed(2)}%</p>
+          )}
         </div>
       )}
 

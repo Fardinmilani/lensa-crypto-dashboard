@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import TickerTape from "../components/TickerTape";
 import PriceChart from "../components/PriceChart";
+import CompareChart from "../components/CompareChart";
 import NewsFeed from "../components/NewsFeed";
 import TimeframePicker from "../components/TimeframePicker";
 import SymbolSearch from "../components/SymbolSearch";
@@ -11,6 +12,8 @@ import { useCoin } from "../context/coinStore";
 import { MARKET_TYPES, useMarket } from "../context/MarketContext";
 import { useI18n } from "../i18n/langStore";
 import { useStaggerReveal } from "../hooks/useAnimations";
+import { useLocalStorageState } from "../hooks/useLocalStorageState";
+import { fetchEconomicEvents } from "../lib/events";
 
 function fmtCompact(n) {
   if (n == null) return "-";
@@ -22,6 +25,8 @@ export default function Dashboard() {
   const { market, setExchange, setPair, setTimeframe, setMarketType } = useMarket();
   const { t } = useI18n();
   const [chartType, setChartType] = useState("candles");
+  const [compareSymbol, setCompareSymbol] = useLocalStorageState("lensa.dashboard.compare", "");
+  const [events, setEvents] = useState([]);
   const [detail, setDetail] = useState(null);
   const [updatedAt, setUpdatedAt] = useState(null);
   const reveal = useStaggerReveal([coin.id]);
@@ -48,6 +53,10 @@ export default function Dashboard() {
       window.clearInterval(timer);
     };
   }, [coin.id]);
+
+  useEffect(() => {
+    fetchEconomicEvents().then((r) => setEvents(r.events || []));
+  }, []);
 
   const change24 = detail?.change24h;
   const up = (change24 ?? 0) >= 0;
@@ -128,6 +137,16 @@ export default function Dashboard() {
                 <option value="area">{t("chart.type.area")}</option>
               </select>
             </div>
+            <div className="chart-toolbar__field">
+              <label>{t("dash.compare.pick")}</label>
+              <select value={compareSymbol} onChange={(e) => setCompareSymbol(e.target.value)}>
+                <option value="">{t("dash.compare.off")}</option>
+                <option value="ETHUSDT">ETHUSDT</option>
+                <option value="BTCUSDT">BTCUSDT</option>
+                <option value="SOLUSDT">SOLUSDT</option>
+                <option value="BNBUSDT">BNBUSDT</option>
+              </select>
+            </div>
           </div>
           <PriceChart
             coinId={coin.id}
@@ -138,7 +157,28 @@ export default function Dashboard() {
             marketType={market.marketType}
             chartType={chartType}
           />
+          {compareSymbol && !market.isSingleSource && (
+            <CompareChart compareSymbol={compareSymbol} market={market} coin={coin} />
+          )}
         </div>
+
+        {events.length > 0 && (
+          <div className="glass-card reveal events-panel">
+            <div className="panel-header">
+              <h2>{t("dash.events.title")}</h2>
+              <span className="panel-subtitle">{t("dash.events.hint")}</span>
+            </div>
+            <ul className="events-list">
+              {events.slice(0, 8).map((e, i) => (
+                <li key={i}>
+                  <strong>{e.title}</strong>
+                  <span>{e.country} · {e.impact} {t("dash.events.impact")}</span>
+                  <small>{e.date}</small>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         <div className="reveal">
           <NewsFeed query={`${coin.symbol} ${coin.name}`} coinSymbol={coin.symbol} />

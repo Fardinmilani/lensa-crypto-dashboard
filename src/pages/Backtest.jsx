@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { STRATEGIES, PARAM_LABELS, DIRECTION_MODES, combineDirectionalSignals, currentSignalState } from "../lib/strategies";
 import { runBacktest, runLeveragedBacktest, runAllStrategies, autoFitRiskExits, summarizeEquityCurve } from "../lib/backtest";
 import { optimizeStrategy, optimizeAllStrategies, walkForwardValidate, optimizeOptionsStrategy, optimizeAllOptionsStrategies } from "../lib/optimize";
@@ -8,6 +8,9 @@ import { getChartCandles, isBinanceFamilySource, sourceForMarketType } from "../
 import { formatUsd } from "../lib/priceFormat";
 import { qualityMetaFromError } from "../lib/dataQuality";
 import EquityChart from "../components/EquityChart";
+import TradeReplay from "../components/TradeReplay";
+import UnderwaterChart from "../components/UnderwaterChart";
+import OptionsPayoffChart from "../components/OptionsPayoffChart";
 import ReportActions from "../components/ReportActions";
 import TimeframePicker from "../components/TimeframePicker";
 import MarketContextBar from "../components/MarketContextBar";
@@ -20,6 +23,10 @@ import { useI18n, pick } from "../i18n/langStore";
 import { useStaggerReveal, useCountUp } from "../hooks/useAnimations";
 import { useLocalStorageState } from "../hooks/useLocalStorageState";
 import InfoTip from "../components/InfoTip";
+import { underwaterEquity } from "../lib/underwater";
+import { expiryPayoff, legsFromOptionStrategy } from "../lib/optionsPayoff";
+import { strategyShareUrl, parseStrategyFromHash } from "../lib/strategyShare";
+import { saveCustomDef } from "../lib/customStrategies";
 
 const CATEGORY_ORDER = ["trend", "momentum", "reversion", "quant", "hybrid", "custom"];
 const LOOKBACK_PRESETS = [90, 180, 365, 730];
@@ -43,6 +50,8 @@ export default function Backtest() {
   const [loading, setLoading] = useState(false);
   const [loadingAll, setLoadingAll] = useState(false);
   const [error, setError] = useState(null);
+  const [lastCandles, setLastCandles] = useState([]);
+  const [shareNotice, setShareNotice] = useState(false);
   const reveal = useStaggerReveal([result, aggregate, error]);
   // Bumped whenever a custom strategy is saved/deleted in the Strategy
   // Builder below, so allStrategies (and therefore the dropdown/registry
@@ -54,6 +63,20 @@ export default function Backtest() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- strategiesVersion is a deliberate cache-buster: getAllStrategies() re-reads localStorage each call and has no other argument that changes when a custom strategy is saved/deleted.
     [strategiesVersion]
   );
+
+  useEffect(() => {
+    const imported = parseStrategyFromHash(window.location.hash);
+    if (!imported?.strategyKey) return;
+    setStrategyKey(imported.strategyKey);
+    if (imported.params) setParams(imported.params);
+    if (imported.customDefinition) saveCustomDef(imported.customDefinition);
+  }, [setStrategyKey, setParams]);
+
+  const underwater = useMemo(
+    () => (result?.equityCurve ? underwaterEquity(result.equityCurve) : null),
+    [result]
+  );
+
   const strategy = allStrategies[strategyKey] || STRATEGIES.trendMomentumHybrid;
   // Keep only parameters the current strategy still supports. Besides
   // preventing stale values from another strategy leaking across reloads,
@@ -136,7 +159,14 @@ export default function Backtest() {
     OPTIONS_STRATEGIES.coveredCall.params
   );
 
-  // Best-fit parameter search (per-strategy and all-strategies) — see
+  const payoffPoints = useMemo(() => {
+    if (!result?.isOptions || !lastCandles.length) return [];
+    const spot = lastCandles.at(-1)?.close ?? 100;
+    const legs = legsFromOptionStrategy(optionKind, { spot, strike: spot * 1.05, premium: spot * 0.02 });
+    return expiryPayoff({ legs, spotMin: spot * 0.7, spotMax: spot * 1.3, steps: 60 });
+  }, [result, lastCandles, optionKind]);
+
+  // Best-fit parameter search
   // lib/optimize.js. `optimizing`/`optimizingAll` drive button spinners;
   // `fitInfo` and `fitAllInfo` hold the last search's summary so the UI can
   // show what changed and how many combinations were tried.
@@ -215,6 +245,7 @@ export default function Backtest() {
     try {
       const candles = await fetchCandles();
       if (candles.length < 30) throw new Error(t("bt.noData"));
+      setLastCandles(candles);
       updateFromCandles(candles);
       setDataMeta(candles.meta || null);
       setAnalysisMarket(snapshotMarket(market));
@@ -523,6 +554,15 @@ export default function Backtest() {
     link.download = `lensa-strategy-${strategyKey}.json`;
     link.click();
     URL.revokeObjectURL(url);
+  }
+
+  function handleShareStrategy() {
+    const url = strategyShareUrl(buildStrategyPayload());
+    if (!url) return;
+    navigator.clipboard?.writeText(url).then(() => {
+      setShareNotice(true);
+      setTimeout(() => setShareNotice(false), 3000);
+    });
   }
 
   async function handleRunAll() {
@@ -1164,6 +1204,10 @@ export default function Backtest() {
               <button className="run-btn run-btn--ghost" onClick={handleExportStrategy}>
                 {t("bt.handoff.export")}
               </button>
+              <button className="run-btn run-btn--ghost" onClick={handleShareStrategy}>
+                {t("bt.share.copy")}
+              </button>
+              {shareNotice && <small className="control-hint control-hint--accent">{t("bt.share.copied")}</small>}
               <button className="run-btn run-btn--ghost" onClick={() => { window.location.hash = "edge"; }}>
                 {t("bt.handoff.edge")}
               </button>
@@ -1223,6 +1267,22 @@ export default function Backtest() {
             <p className="section-note">{t("bt.equity.note")}</p>
             <EquityChart equityCurve={result.equityCurve} benchmarkCurve={benchmarkResult?.equityCurve} />
           </div>
+          {underwater?.points?.length > 0 && (
+            <div className="glass-card chart-card">
+              <UnderwaterChart points={underwater.points} />
+              {underwater.recoveries?.length > 0 && (
+                <p className="section-note">{t("bt.underwater.recovery")}: {underwater.recoveries.length}</p>
+              )}
+            </div>
+          )}
+          {!result.isOptions && result.trades?.length > 0 && lastCandles.length > 0 && (
+            <TradeReplay trades={result.trades} candles={lastCandles} precision={market.precision} />
+          )}
+          {result.isOptions && payoffPoints.length > 0 && (
+            <div className="glass-card chart-card">
+              <OptionsPayoffChart points={payoffPoints} spot={lastCandles.at(-1)?.close} />
+            </div>
+          )}
           {!result.isOptions && result.trades.length > 0 && (
             <div className="glass-card table-card">
               <DataQualityGuard module="Backtest trades" meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />

@@ -8,6 +8,13 @@ import { optimizeStrategy, walkForwardValidate } from "../src/lib/optimize.js";
 import { buildCustomStrategy, getAllStrategies } from "../src/lib/customStrategies.js";
 import { classifyRegimes, currentRegime, REGIME, gateSignalsByRegime, breakdownTradesByRegime } from "../src/lib/regime.js";
 import { kellyFraction, systemQualityNumber, maeMfeAnalysis, tradeSequenceMonteCarlo, deflatedSharpeRatio, enrichBacktest } from "../src/lib/edge.js";
+import { runPortfolioBacktest, estimateVolatility } from "../src/lib/portfolio.js";
+import { correlationMatrix, relativeStrength } from "../src/lib/correlation.js";
+import { seasonalityAnalysis } from "../src/lib/seasonality.js";
+import { applyStressScenario, monteCarloPortfolioStress } from "../src/lib/stress.js";
+import { underwaterEquity } from "../src/lib/underwater.js";
+import { encodeStrategyPayload, decodeStrategyPayload } from "../src/lib/strategyShare.js";
+import { evaluateMultiTfConfluence } from "../src/lib/multitf.js";
 
 function makeCandles(length = 180) {
   const start = Date.UTC(2025, 0, 1) / 1000;
@@ -436,6 +443,35 @@ assert.ok(TIMEFRAMES.some((tf) => tf.id === "1M"), "TradingView-style monthly ti
   assert.ok(enriched.kelly, "Kelly object is present even if unused");
 }
 
+{
+  const sets = [
+    { key: "A", candles: candles.map((c, i) => ({ ...c, close: c.close * (1 + i * 0.001) })) },
+    { key: "B", candles },
+  ];
+  const port = runPortfolioBacktest({ candleSets: sets, weights: { A: 50, B: 50 } });
+  assert.ok(port.equityCurve.length > 0, "portfolio equity");
+  const { matrix } = correlationMatrix({ A: sets[0].candles.map((c) => c.close), B: sets[1].candles.map((c) => c.close) });
+  assert.equal(matrix.A.A, 1);
+  const rs = relativeStrength(sets[0].candles.map((c) => c.close), sets[1].candles.map((c) => c.close), 30);
+  assert.ok(rs.spread != null);
+  const season = seasonalityAnalysis(candles);
+  assert.ok(season.dayOfWeek.length > 0);
+  const stress = applyStressScenario({ weights: { A: 1 }, shocks: { __market__: -10 } });
+  assert.ok(stress.portfolioReturnPercent < 0);
+  const mcStress = monteCarloPortfolioStress({ weights: { A: 100 }, meanReturns: { A: 5 }, vols: { A: 20 }, sims: 100 });
+  assert.ok(mcStress.p50 != null);
+  const uw = underwaterEquity(port.equityCurve);
+  assert.equal(uw.points.length, port.equityCurve.length);
+  const token = encodeStrategyPayload({ strategyKey: "buyAndHold", params: {} });
+  assert.deepEqual(decodeStrategyPayload(token), { strategyKey: "buyAndHold", params: {} });
+  const mtf = evaluateMultiTfConfluence({
+    strategy: STRATEGIES.buyAndHold,
+    candleSets: [{ id: "1d", label: "1D", candles }],
+  });
+  assert.ok(mtf.rows.length === 1);
+  assert.ok(estimateVolatility(candles.map((c) => c.close)) > 0);
+}
+
 console.log(
-  "Model validation passed: strategies, backtest, position sizing, fill timing, risk tools, Monte Carlo (incl. block bootstrap), walk-forward validation, custom strategies, timeframes, regime, Kelly, MAE/MFE, trade-sequence Monte Carlo, and deflated Sharpe."
+  "Model validation passed: strategies, backtest, position sizing, fill timing, risk tools, Monte Carlo (incl. block bootstrap), walk-forward validation, custom strategies, timeframes, regime, Kelly, MAE/MFE, trade-sequence Monte Carlo, deflated Sharpe, portfolio, correlation, seasonality, stress, underwater, strategy share, and multi-TF."
 );

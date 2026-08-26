@@ -4,6 +4,7 @@ import { useStaggerReveal } from "../hooks/useAnimations";
 const TOC = [
   ["map", "guide.toc.map"],
   ["workflow", "guide.toc.workflow"],
+  ["analytics", "guide.toc.analytics"],
   ["best", "guide.toc.best"],
   ["validate", "guide.toc.validate"],
   ["decide", "guide.toc.decide"],
@@ -16,6 +17,7 @@ const MAP = [
   ["decision", "guide.map.decision.title", "guide.map.decision.body"],
   ["backtest", "guide.map.backtest.title", "guide.map.backtest.body"],
   ["edge", "guide.map.edge.title", "guide.map.edge.body"],
+  ["analytics", "guide.map.analytics.title", "guide.map.analytics.body"],
   ["forecast", "guide.map.forecast.title", "guide.map.forecast.body"],
   ["risk", "guide.map.risk.title", "guide.map.risk.body"],
 ];
@@ -73,6 +75,19 @@ export default function Guide() {
             </li>
           ))}
         </ol>
+      </section>
+
+      <section className="glass-card guide-section reveal" id="guide-analytics">
+        <h2>{t("guide.analytics.title")}</h2>
+        <p>{t("guide.analytics.intro")}</p>
+        <ul className="guide-list">
+          <li>{t("guide.analytics.a1")}</li>
+          <li>{t("guide.analytics.a2")}</li>
+          <li>{t("guide.analytics.a3")}</li>
+          <li>{t("guide.analytics.a4")}</li>
+          <li>{t("guide.analytics.a5")}</li>
+          <li>{t("guide.analytics.a6")}</li>
+        </ul>
       </section>
 
       <section className="glass-card guide-section reveal" id="guide-best">
