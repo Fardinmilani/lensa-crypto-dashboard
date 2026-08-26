@@ -8,6 +8,7 @@ const Forecast = lazy(() => import("./pages/Forecast"));
 const RiskTools = lazy(() => import("./pages/RiskTools"));
 const DecisionCenter = lazy(() => import("./pages/DecisionCenter"));
 const EdgeLab = lazy(() => import("./pages/EdgeLab"));
+const Guide = lazy(() => import("./pages/Guide"));
 const About = lazy(() => import("./pages/About"));
 import { CoinProvider } from "./context/CoinContext";
 import { MarketProvider } from "./context/MarketContext";
@@ -23,6 +24,7 @@ const TABS = [
   { id: "forecast", labelKey: "tab.forecast", component: Forecast, icon: WaveIcon, group: "advanced" },
   { id: "backtest", labelKey: "tab.backtest", component: Backtest, icon: ChartIcon, group: "advanced" },
   { id: "risk", labelKey: "tab.risk", component: RiskTools, icon: GaugeIcon, group: "advanced" },
+  { id: "guide", labelKey: "tab.guide", component: Guide, icon: BookIcon, group: "meta" },
   { id: "about", labelKey: "tab.about", component: About, icon: InfoIcon, group: "meta" },
 ];
 const TAB_IDS = new Set(TABS.map((tab) => tab.id));
@@ -61,7 +63,7 @@ export default function App() {
   // Keep the URL hash and the active tab in sync both ways: switching tabs
   // updates the hash (so the tab is bookmarkable/shareable), and using the
   // browser's back/forward buttons (or opening a shared link) updates the
-  // active tab. No router dependency needed for six top-level tabs.
+  // active tab.
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (window.location.hash.replace("#", "") !== activeTab) {
@@ -198,6 +200,14 @@ function AtomIcon() {
       <ellipse cx="12" cy="12" rx="9" ry="3.6" fill="none" stroke="currentColor" strokeWidth="2" />
       <ellipse cx="12" cy="12" rx="9" ry="3.6" fill="none" stroke="currentColor" strokeWidth="2" transform="rotate(60 12 12)" />
       <ellipse cx="12" cy="12" rx="9" ry="3.6" fill="none" stroke="currentColor" strokeWidth="2" transform="rotate(120 12 12)" />
+    </svg>
+  );
+}
+function BookIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H12v18H6.5A2.5 2.5 0 0 1 4 18.5z" fill="none" stroke="currentColor" strokeWidth="2" />
+      <path d="M20 5.5A2.5 2.5 0 0 0 17.5 3H12v18h5.5A2.5 2.5 0 0 0 20 18.5z" fill="none" stroke="currentColor" strokeWidth="2" />
     </svg>
   );
 }

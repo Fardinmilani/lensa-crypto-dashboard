@@ -3993,3 +3993,117 @@
 @media (max-width: 560px) {
   .edge-physics { grid-template-columns: 1fr; }
 }
+
+/* ---- Guide / آموزش ---- */
+.guide-page {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-width: 820px;
+}
+.guide-hero h1 {
+  margin: 6px 0 12px;
+  font-size: clamp(1.4rem, 2.4vw, 2rem);
+}
+.guide-hero p,
+.guide-section > p {
+  margin: 0 0 14px;
+  color: var(--text-secondary);
+  line-height: 1.7;
+}
+.guide-toc {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.guide-toc__btn,
+.guide-map__link {
+  font: inherit;
+  cursor: pointer;
+  color: var(--gold);
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  border-radius: 999px;
+  padding: 6px 12px;
+}
+.guide-toc__btn:hover,
+.guide-map__link:hover {
+  border-color: var(--gold);
+}
+.guide-section h2 {
+  margin: 0 0 10px;
+  font-size: 1.15rem;
+}
+.guide-map {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.guide-map__card {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+}
+.guide-map__card p {
+  margin: 8px 0 0;
+  color: var(--text-secondary);
+  font-size: 0.88rem;
+  line-height: 1.65;
+}
+.guide-map__link {
+  border-radius: 8px;
+  padding: 4px 10px;
+}
+.guide-steps,
+.guide-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.guide-steps li,
+.guide-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-inline-start: 14px;
+  border-inline-start: 2px solid rgba(245, 158, 11, 0.45);
+  color: var(--text-secondary);
+  line-height: 1.65;
+  font-size: 0.92rem;
+}
+.guide-steps li strong {
+  color: var(--text-primary);
+}
+.guide-callout {
+  border-color: rgba(245, 158, 11, 0.45);
+}
+.guide-example {
+  font-size: 0.88rem;
+  color: var(--text-tertiary);
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 10px;
+  padding: 12px 14px;
+  line-height: 1.65;
+}
+.guide-honest {
+  margin: 0 4px 24px;
+  font-size: 0.86rem;
+  color: var(--text-tertiary);
+  line-height: 1.6;
+}
+.edge-tf-progress {
+  font-size: 0.82rem;
+  color: var(--gold);
+}
+.trades-table tr.is-chart-tf td {
+  background: rgba(245, 158, 11, 0.08);
+}
+
+@media (max-width: 720px) {
+  .guide-map { grid-template-columns: 1fr; }
+}
