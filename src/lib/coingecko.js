@@ -299,8 +299,8 @@ function inferPrecisionFromCandles(candles) {
 async function getPrecisionMetadata(source, pair, marketType = "Spot") {
   try {
     if (source === "binance" || source === "binanceUsdFutures" || source === "binanceCoinFutures") return getBinancePrecision(pair, marketType);
-    if (source === "okx") return getOkxPrecision(pair);
-    if (source === "bybit") return getBybitPrecision(pair);
+    if (source === "okx") return getOkxPrecision(pair, marketType);
+    if (source === "bybit") return getBybitPrecision(pair, marketType);
     if (source === "coinbase") return getCoinbasePrecision(pair);
   } catch {
     return {};
@@ -325,6 +325,8 @@ export async function getMarketSnapshot(ids) {
     "coingecko",
     `/coins/markets?vs_currency=usd&ids=${idsParam}&order=market_cap_desc&price_change_percentage=24h,7d`
   );
+  // Rate-limit / error bodies are objects; the ticker maps over this.
+  if (!Array.isArray(data)) throw new Error(data?.status?.error_message || "Invalid CoinGecko markets response");
   return data;
 }
 
@@ -583,6 +585,9 @@ async function getCoinGeckoCandles(id, timeframe = 90, lookbackDays) {
 
   if (OHLC_ALLOWED.includes(d)) {
     const data = await cachedJson("coingecko", `/coins/${id}/ohlc?vs_currency=usd&days=${d}`);
+    // CoinGecko error bodies are JSON objects, not arrays — surface a
+    // readable error instead of an opaque "data.map is not a function".
+    if (!Array.isArray(data)) throw new Error(data?.status?.error_message || "Invalid CoinGecko OHLC response");
     return data.map(([time, open, high, low, close]) => ({
       time: Math.floor(time / 1000),
       open,
@@ -627,7 +632,10 @@ export async function getChartCandles({ id, symbol, timeframe = "4h", lookbackDa
   // Binance-only for now.
   const candidates =
     marketType === "USD-M Futures"
-      ? ["binance", "bybit", "okx"]
+      ? // Honor the user's explicitly selected venue first (when it supports
+        // USD-M perps), then fall through the usual chain — always forcing
+        // Binance first silently ignored an OKX/Bybit selection.
+        [...(["bybit", "okx"].includes(requested) ? [requested] : []), "binance", "bybit", "okx"]
       : marketType === "Coin-M Futures"
       ? ["binance"]
       : requested === "coingecko"
@@ -800,22 +808,29 @@ async function getBinancePrecision(pair, marketType = "Spot") {
   };
 }
 
-async function getBybitPrecision(pair) {
+async function getBybitPrecision(pair, marketType = "Spot") {
   const symbol = String(pair || "").replace(/[^a-z0-9]/gi, "").toUpperCase();
   if (!symbol) return {};
-  const data = await cachedJson("bybit", `/v5/market/instruments-info?category=spot&symbol=${symbol}`, 300_000);
+  // Bybit uses the same symbol for spot and linear perps; only the
+  // `category` differs — querying spot for a futures chart returns the
+  // wrong (or no) tick/step size.
+  const category = marketType === "USD-M Futures" ? "linear" : "spot";
+  const data = await cachedJson("bybit", `/v5/market/instruments-info?category=${category}&symbol=${symbol}`, 300_000);
   const info = data?.result?.list?.[0];
   return {
     tickSize: info?.priceFilter?.tickSize,
-    stepSize: info?.lotSizeFilter?.basePrecision,
+    stepSize: info?.lotSizeFilter?.basePrecision ?? info?.lotSizeFilter?.qtyStep,
     pricePrecision: null,
   };
 }
 
-async function getOkxPrecision(pair) {
-  const symbol = pairToDashSymbol(pair);
+async function getOkxPrecision(pair, marketType = "Spot") {
+  const isSwap = marketType === "USD-M Futures";
+  const base = pairToDashSymbol(pair);
+  const symbol = isSwap && base ? `${base}-SWAP` : base;
   if (!symbol) return {};
-  const data = await cachedJson("okx", `${publicPath("api", "v5", "public", "instruments")}?instType=SPOT&instId=${symbol}`, 300_000);
+  const instType = isSwap ? "SWAP" : "SPOT";
+  const data = await cachedJson("okx", `${publicPath("api", "v5", "public", "instruments")}?instType=${instType}&instId=${symbol}`, 300_000);
   const info = data?.data?.[0];
   return {
     tickSize: info?.tickSz,
@@ -903,12 +918,21 @@ async function getOkxCandles(pair, timeframe, lookbackDays, marketType = "Spot")
   const symbol = marketType === "USD-M Futures" ? `${pairToDashSymbol(pair)}-SWAP` : pairToDashSymbol(pair);
   if (!symbol) throw new Error("Missing OKX symbol");
 
+  // OKX pagination semantics: `after=<ts>` returns records OLDER than ts,
+  // `before=<ts>` returns records NEWER than ts. Paging back through
+  // history therefore needs `after` anchored at the oldest timestamp seen
+  // so far — the previous `before`-based loop just re-fetched the same
+  // newest candles. Deep history also lives on a separate endpoint
+  // (`history-candles`, max 100/page) — the plain `candles` endpoint only
+  // serves the most recent ~1440 bars (max 300/page).
   let all = [];
-  let before;
+  let after;
   while (all.length < needed) {
-    const limit = Math.min(1000, needed - all.length);
-    let query = `${publicPath("api", "v5", "market", "candles")}?instId=${symbol}&bar=${bar}&limit=${limit}`;
-    if (before) query += `&before=${before}`;
+    const endpoint = after ? "history-candles" : "candles";
+    const pageMax = after ? 100 : 300;
+    const limit = Math.min(pageMax, needed - all.length);
+    let query = `${publicPath("api", "v5", "market", endpoint)}?instId=${symbol}&bar=${bar}&limit=${limit}`;
+    if (after) query += `&after=${after}`;
     const resData = await cachedJson("okx", query, 12_000);
     if (resData.code !== "0" || !Array.isArray(resData.data) || !resData.data.length) break;
     const batch = [...resData.data].reverse().map((k) => ({
@@ -919,9 +943,11 @@ async function getOkxCandles(pair, timeframe, lookbackDays, marketType = "Spot")
       close: Number(k[4]),
       volume: Number(k[5]),
     }));
-    all = [...batch, ...all];
-    if (batch.length < limit) break;
-    before = resData.data[resData.data.length - 1][0];
+    // Guard against any overlap between pages/endpoints.
+    const oldestHeld = all.length ? all[0].time : Infinity;
+    all = [...batch.filter((c) => c.time < oldestHeld), ...all];
+    if (resData.data.length < limit) break;
+    after = resData.data[resData.data.length - 1][0];
   }
 
   if (!all.length) throw new Error("Invalid OKX response");
@@ -952,37 +978,75 @@ async function getCoinbaseCandles(pair, timeframe, lookbackDays) {
   const tf = resolveTimeframe(timeframe);
   const days = resolveLookbackDays(timeframe, lookbackDays);
   const needed = candlesNeeded(tf.intervalMinutes, days);
-  const granularity = coinbaseGranularity(tf.id);
+  const intervalSeconds = tf.intervalMinutes * 60;
+  const granularity = coinbaseGranularity(intervalSeconds);
+  // Coinbase only serves six native granularities. Fetch at the largest
+  // native one that divides the requested interval, then aggregate up —
+  // the old fixed map silently returned mislabeled data (e.g. "4h" candles
+  // that were actually 6h, "30m" that were 15m) with no re-bucketing.
+  const ratio = Math.max(1, Math.round(intervalSeconds / granularity));
+  const rawNeeded = needed * ratio;
   const symbol = pairToDashSymbol(pair, ["USDT", "USDC", "USD", "EUR", "BTC"]);
   if (!symbol) throw new Error("Missing Coinbase symbol");
-  const data = await cachedJson("coinbase", `/products/${symbol}/candles?granularity=${granularity}`, 12_000);
-  if (!Array.isArray(data)) throw new Error("Invalid Coinbase response");
-  const candles = [...data].reverse().map((k) => ({
-    time: Number(k[0]),
-    low: Number(k[1]),
-    high: Number(k[2]),
-    open: Number(k[3]),
-    close: Number(k[4]),
-    volume: Number(k[5]),
-  }));
-  return candles.slice(-needed);
+
+  // The candles endpoint caps each response at 300 rows; page back through
+  // history with explicit start/end windows until we have enough raw bars.
+  let all = [];
+  while (all.length < rawNeeded) {
+    const limit = Math.min(300, rawNeeded - all.length);
+    let query = `/products/${symbol}/candles?granularity=${granularity}`;
+    if (all.length) {
+      const end = all[0].time;
+      query += `&start=${end - limit * granularity}&end=${end}`;
+    }
+    const data = await cachedJson("coinbase", query, 12_000);
+    if (!Array.isArray(data)) throw new Error("Invalid Coinbase response");
+    if (!data.length) break;
+    const batch = [...data].reverse().map((k) => ({
+      time: Number(k[0]),
+      low: Number(k[1]),
+      high: Number(k[2]),
+      open: Number(k[3]),
+      close: Number(k[4]),
+      volume: Number(k[5]),
+    }));
+    const oldestHeld = all.length ? all[0].time : Infinity;
+    const older = batch.filter((c) => c.time < oldestHeld);
+    if (!older.length) break; // no further history available
+    all = [...older, ...all];
+  }
+
+  if (!all.length) throw new Error("Invalid Coinbase response");
+  const aggregated = ratio > 1 ? aggregateCandlesByInterval(all, intervalSeconds) : all;
+  return aggregated.slice(-needed);
 }
 
-function coinbaseGranularity(id) {
-  const map = {
-    "1m": 60,
-    "3m": 60,
-    "5m": 300,
-    "15m": 900,
-    "30m": 900,
-    "1h": 3600,
-    "2h": 3600,
-    "4h": 21600,
-    "1d": 86400,
-    "1w": 86400,
-    "1M": 86400,
-  };
-  return map[id] || 86400;
+const COINBASE_GRANULARITIES = [86400, 21600, 3600, 900, 300, 60];
+
+function coinbaseGranularity(intervalSeconds) {
+  for (const g of COINBASE_GRANULARITIES) {
+    if (g <= intervalSeconds && intervalSeconds % g === 0) return g;
+  }
+  return 60;
+}
+
+/** Roll ascending OHLCV candles up into a coarser fixed interval. */
+function aggregateCandlesByInterval(candles, intervalSeconds) {
+  const out = [];
+  let bucket = null;
+  for (const c of candles) {
+    const key = Math.floor(c.time / intervalSeconds) * intervalSeconds;
+    if (!bucket || bucket.time !== key) {
+      bucket = { time: key, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume || 0 };
+      out.push(bucket);
+    } else {
+      bucket.high = Math.max(bucket.high, c.high);
+      bucket.low = Math.min(bucket.low, c.low);
+      bucket.close = c.close;
+      bucket.volume += c.volume || 0;
+    }
+  }
+  return out;
 }
 
 export const getOHLC = getCandles;

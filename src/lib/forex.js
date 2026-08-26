@@ -34,15 +34,23 @@ async function fetchJson(url, ttl = CACHE_TTL_MS) {
   if (inflight.has(url)) return inflight.get(url);
 
   const promise = (async () => {
-    const res = await fetch(url, { mode: "cors", headers: { Accept: "application/json" } });
-    if (!res.ok) {
-      const err = new Error(`HTTP ${res.status}`);
-      err.status = res.status;
-      throw err;
+    // Same timeout discipline as the crypto data layer — a hung Frankfurter
+    // request would otherwise stall forex search/charts indefinitely.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12_000);
+    try {
+      const res = await fetch(url, { mode: "cors", headers: { Accept: "application/json" }, signal: controller.signal });
+      if (!res.ok) {
+        const err = new Error(`HTTP ${res.status}`);
+        err.status = res.status;
+        throw err;
+      }
+      const data = await res.json();
+      cache.set(url, { data, time: Date.now() });
+      return data;
+    } finally {
+      clearTimeout(timer);
     }
-    const data = await res.json();
-    cache.set(url, { data, time: Date.now() });
-    return data;
   })().finally(() => inflight.delete(url));
 
   inflight.set(url, promise);

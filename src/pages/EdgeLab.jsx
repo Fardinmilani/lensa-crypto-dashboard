@@ -25,12 +25,13 @@ export default function EdgeLab() {
   const { t, lang } = useI18n();
   const reveal = useStaggerReveal([]);
   const [strategyKey, setStrategyKey] = useLocalStorageState("lensa.backtest.strategy", "trendMomentumHybrid");
-  const [params] = useLocalStorageState("lensa.backtest.params", STRATEGIES.trendMomentumHybrid.params);
+  const [params, setParams] = useLocalStorageState("lensa.backtest.params", STRATEGIES.trendMomentumHybrid.params);
   const [direction] = useLocalStorageState("lensa.backtest.direction", "long");
   const [leverage] = useLocalStorageState("lensa.backtest.leverage", 1);
   const [fee] = useLocalStorageState("lensa.backtest.fee", 0.1);
   const [gateRegimes, setGateRegimes] = useState(true);
   const [loading, setLoading] = useState(false);
+  const [scanning, setScanning] = useState(false);
   const [loadingAll, setLoadingAll] = useState(false);
   const [error, setError] = useState(null);
   const [audit, setAudit] = useState(null);
@@ -60,7 +61,18 @@ export default function EdgeLab() {
     return candles;
   }
 
+  // Strategy and params share one localStorage pair with the Backtest page,
+  // written together there. Changing only the strategy here would leave the
+  // OTHER strategy's saved knobs applied to this one (merged over its
+  // defaults below), silently skewing the audit — so reset params to the
+  // newly selected strategy's defaults, exactly like Backtest does.
+  function handleStrategyChange(key) {
+    setStrategyKey(key);
+    setParams(allStrategies[key]?.params || {});
+  }
+
   async function scanLive() {
+    setScanning(true);
     setError(null);
     try {
       const candles = await loadCandles();
@@ -72,6 +84,8 @@ export default function EdgeLab() {
     } catch (err) {
       setError(err.message);
       setDataMeta(qualityMetaFromError(err));
+    } finally {
+      setScanning(false);
     }
   }
 
@@ -183,7 +197,9 @@ export default function EdgeLab() {
             {t("edge.gate")}
             <InfoTip term="glossary.regimeGate" />
           </label>
-          <button type="button" className="run-btn run-btn--ghost" onClick={scanLive}>{t("edge.scan")}</button>
+          <button type="button" className="run-btn run-btn--ghost" onClick={scanLive} disabled={scanning}>
+            {scanning ? t("common.loading") : t("edge.scan")}
+          </button>
           <button type="button" className="run-btn" onClick={runAudit} disabled={loading}>
             {loading ? t("edge.running") : t("edge.run")}
           </button>
@@ -237,14 +253,14 @@ export default function EdgeLab() {
       <div className="glass-card reveal">
         <div className="panel-header"><h2>{t("edge.strategy")}</h2></div>
         <p className="section-note">{t("edge.strategyHint", { name: pick(lang, strategy.label) })}</p>
-        <select value={strategyKey} onChange={(e) => setStrategyKey(e.target.value)}>
+        <select value={strategyKey} onChange={(e) => handleStrategyChange(e.target.value)} aria-label={t("edge.strategy")}>
           {Object.entries(allStrategies).map(([key, s]) => (
             <option key={key} value={key}>{pick(lang, s.label)}</option>
           ))}
         </select>
       </div>
 
-      {error && <p className="news-error reveal">{error}</p>}
+      {error && <p className="news-error reveal">{t(error)}</p>}
 
       {audit && (
         <>
@@ -258,7 +274,7 @@ export default function EdgeLab() {
             })}</p>
             {audit.gated && <p className="section-note">{t("edge.gatedNote", { n: audit.allowedRegimes.length })}</p>}
             {audit.liveState && (
-              <p className="section-note">{t("edge.liveSignal", { state: audit.liveState.state })}</p>
+              <p className="section-note">{t("edge.liveSignal", { state: t(`edge.state.${audit.liveState.state}`) })}</p>
             )}
           </section>
 
