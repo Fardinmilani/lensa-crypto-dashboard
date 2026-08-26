@@ -3563,12 +3563,23 @@
     order: 2;
     width: 100%;
     justify-content: center;
+    border-radius: 18px;
+  }
+  /* Icons alone are ambiguous on small screens — keep a tiny label under
+     each icon instead of hiding the text entirely. */
+  .tab-btn {
+    flex-direction: column;
+    gap: 3px;
+    padding: 7px 10px;
+    border-radius: 14px;
+    flex: 1 1 0;
+    justify-content: center;
   }
   .tab-btn span {
-    display: none;
-  }
-  .tab-btn {
-    padding: 9px 13px;
+    font-size: 0.58rem;
+    line-height: 1.1;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
   }
   .tab-divider {
     display: none;

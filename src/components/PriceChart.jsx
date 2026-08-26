@@ -431,7 +431,7 @@ export default function PriceChart({ coinId, symbol, days, source = "coingecko",
 
       {/* Chart area: drawing toolbar + canvas side by side */}
       <div className="price-chart__body">
-        {error && <div className="chart-overlay chart-overlay--error">{t("chart.error", { e: error })}</div>}
+        {error && <div className="chart-overlay chart-overlay--error">{t("chart.error", { e: t(error) })}</div>}
         {loading && !error && <div className="chart-overlay">{t("chart.loading", { sym: symbol })}</div>}
         <div className={`price-chart__stage${isFullscreen ? " is-fullscreen" : ""}`} ref={stageRef}>
           <div className="price-chart__canvas" ref={wrapRef} />

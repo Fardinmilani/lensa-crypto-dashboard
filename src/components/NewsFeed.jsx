@@ -65,8 +65,8 @@ export default function NewsFeed({ query = "", coinSymbol = "" }) {
       </div>
 
       {loading && <p className="news-loading">{t("news.loading")}</p>}
-      {error && !loading && <p className="news-error">{t("news.error", { e: error })}</p>}
-      {news?.warning && !loading && <p className="news-warning">{news.warning}</p>}
+      {error && !loading && <p className="news-error">{t("news.error", { e: t(error) })}</p>}
+      {news?.warning && !loading && <p className="news-warning">{t(news.warning)}</p>}
 
       {showGlobalFallback && (
         <p className="news-note">{t("news.fallback", { sym: coinSymbol })}</p>
@@ -77,7 +77,7 @@ export default function NewsFeed({ query = "", coinSymbol = "" }) {
           {list.map((item, i) => (
             <li className="news-item reveal" key={i}>
               <a href={item.link} target="_blank" rel="noopener noreferrer">
-                <span className="news-title">{item.title}</span>
+                <span className="news-title">{item.titleKey ? t(item.titleKey, { q: news?.query || "" }) : item.title}</span>
               </a>
               <div className="news-meta">
                 <span className="news-source">{item.source}</span>

@@ -24,6 +24,22 @@ function perpSymbol(pair) {
 }
 
 /**
+ * Pure crowding classifier (exported for the model-validation tests).
+ * Funding is the price the crowded side PAYS: extreme positive funding =
+ * crowded longs, extreme negative funding = crowded shorts. The L/S
+ * account ratio corroborates the moderate band; past ±40% APR the funding
+ * signal alone is decisive — on the side actually paying it.
+ */
+export function classifyCrowding(fundingApr, lsRatio) {
+  if (fundingApr == null) return "neutral";
+  if (fundingApr > 25 && (lsRatio == null || lsRatio > 1.2)) return "crowded_long";
+  if (fundingApr < -15 && (lsRatio == null || lsRatio < 0.85)) return "crowded_short";
+  if (fundingApr > 40) return "crowded_long";
+  if (fundingApr < -40) return "crowded_short";
+  return "neutral";
+}
+
+/**
  * Snapshot of crowding for a USD-M perpetual. Spot-only assets still get
  * a read on the corresponding USDT perp when one exists.
  */
@@ -51,14 +67,7 @@ export async function getCrowdSnapshot(pair) {
     const lsRatio = num(longShort?.longShortRatio) ?? (shortAccount > 0 && longAccount != null ? longAccount / shortAccount : null);
     const takerRatio = num(takerLast?.buySellRatio);
 
-    let crowding = "neutral";
-    if (fundingApr != null && fundingApr > 25 && (lsRatio == null || lsRatio > 1.2)) crowding = "crowded_long";
-    else if (fundingApr != null && fundingApr < -15 && (lsRatio == null || lsRatio < 0.85)) crowding = "crowded_short";
-    // Fallback when the L/S ratio isn't extreme: very large funding still
-    // signals crowding, but on the side that is *paying* — strongly negative
-    // funding means shorts are crowded, not longs.
-    else if (fundingApr != null && fundingApr > 40) crowding = "crowded_long";
-    else if (fundingApr != null && fundingApr < -40) crowding = "crowded_short";
+    const crowding = classifyCrowding(fundingApr, lsRatio);
 
     return {
       symbol,

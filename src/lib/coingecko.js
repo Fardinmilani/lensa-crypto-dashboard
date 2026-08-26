@@ -686,7 +686,9 @@ export async function getChartCandles({ id, symbol, timeframe = "4h", lookbackDa
   }
 
   const message = warnings.map((w) => `${w.sourceLabel}: ${w.status}`).join("; ");
-  throw new Error(`No browser-accessible market source is available. ${message}`);
+  // "i18nKey::technical detail" format — translate() renders the key in the
+  // active language and appends the raw diagnostic detail unchanged.
+  throw new Error(`err.data.noSource::${message}`);
 }
 
 /**
@@ -724,7 +726,7 @@ async function getForexChartCandles({ base, quote }, { timeframe, lookbackDays }
   } catch (err) {
     const status = classifyFetchError(err);
     setSourceHealth(healthSource, status, friendlyMessage(healthSource, status, err));
-    throw new Error(`No browser-accessible market source is available. ${SOURCE_LABELS[healthSource]}: ${status}`, { cause: err });
+    throw new Error(`err.data.noSource::${SOURCE_LABELS[healthSource]}: ${status}`, { cause: err });
   }
 }
 
@@ -756,7 +758,7 @@ async function getTseChartCandles({ insCode }, { timeframe, lookbackDays }) {
   } catch (err) {
     const status = classifyFetchError(err);
     setSourceHealth(healthSource, status, friendlyMessage(healthSource, status, err));
-    throw new Error(`No browser-accessible market source is available. ${SOURCE_LABELS[healthSource]}: ${status}`, { cause: err });
+    throw new Error(`err.data.noSource::${SOURCE_LABELS[healthSource]}: ${status}`, { cause: err });
   }
 }
 
@@ -788,7 +790,7 @@ async function getIrrFxChartCandles({ currency, rateType }, { timeframe, lookbac
   } catch (err) {
     const status = classifyFetchError(err);
     setSourceHealth(healthSource, status, friendlyMessage(healthSource, status, err));
-    throw new Error(`No browser-accessible market source is available. ${SOURCE_LABELS[healthSource]}: ${status}`, { cause: err });
+    throw new Error(`err.data.noSource::${SOURCE_LABELS[healthSource]}: ${status}`, { cause: err });
   }
 }
 

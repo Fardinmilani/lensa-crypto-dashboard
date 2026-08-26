@@ -885,6 +885,10 @@ export const translations = {
     "news.loading": "Loading news…",
     "news.error": "News error: {e}",
     "news.empty": "Nothing to show.",
+    "news.corsWarning":
+      "Live RSS aggregation is disabled in static mode because browser RSS fetches are commonly blocked by CORS. Open the external sources for current headlines.",
+    "news.searchFor": "Search news for {q}",
+    "err.data.noSource": "No browser-accessible market source is available.",
     "news.fallback": "No dedicated news for {sym} — latest from the whole market:",
     "time.now": "just now",
     "time.min": "{n} min ago",
@@ -1459,6 +1463,10 @@ export const translations = {
     "news.loading": "در حال بارگذاری اخبار…",
     "news.error": "خطا در دریافت اخبار: {e}",
     "news.empty": "خبری برای نمایش نیست.",
+    "news.corsWarning":
+      "جمع‌آوری زنده‌ی RSS در حالت استاتیک غیرفعال است، چون درخواست‌های RSS مرورگر معمولاً توسط CORS مسدود می‌شوند. برای تیترهای به‌روز، منابع خارجی را باز کنید.",
+    "news.searchFor": "جستجوی اخبار {q}",
+    "err.data.noSource": "هیچ منبع بازارِ قابل‌دسترسی از مرورگر در دسترس نیست.",
     "news.fallback": "خبر اختصاصی برای {sym} یافت نشد — جدیدترین اخبار کل بازار:",
     "time.now": "همین حالا",
     "time.min": "{n} دقیقه پیش",
