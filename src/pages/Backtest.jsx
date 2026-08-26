@@ -4,13 +4,15 @@ import { runBacktest, runLeveragedBacktest, runAllStrategies, autoFitRiskExits, 
 import { optimizeStrategy, optimizeAllStrategies, walkForwardValidate, optimizeOptionsStrategy, optimizeAllOptionsStrategies } from "../lib/optimize";
 import { getAllStrategies, loadCustomDefs } from "../lib/customStrategies";
 import { OPTIONS_STRATEGIES, OPTION_PARAM_LABELS, runOptionsStrategy, runAllOptionsStrategies } from "../lib/options";
-import { getChartCandles, isBinanceFamilySource, sourceForMarketType } from "../lib/coingecko";
+import { getChartCandles, isBinanceFamilySource, sourceForMarketType, coinIdFromPair } from "../lib/coingecko";
 import { formatUsd } from "../lib/priceFormat";
 import { qualityMetaFromError } from "../lib/dataQuality";
 import EquityChart from "../components/EquityChart";
 import TradeReplay from "../components/TradeReplay";
 import UnderwaterChart from "../components/UnderwaterChart";
 import OptionsPayoffChart from "../components/OptionsPayoffChart";
+import RollingMetricsChart from "../components/RollingMetricsChart";
+import ParamHeatmap from "../components/ParamHeatmap";
 import ReportActions from "../components/ReportActions";
 import TimeframePicker from "../components/TimeframePicker";
 import MarketContextBar from "../components/MarketContextBar";
@@ -27,6 +29,9 @@ import { underwaterEquity } from "../lib/underwater";
 import { expiryPayoff, legsFromOptionStrategy } from "../lib/optionsPayoff";
 import { strategyShareUrl, parseStrategyFromHash } from "../lib/strategyShare";
 import { saveCustomDef } from "../lib/customStrategies";
+import { rollingMetrics } from "../lib/rolling";
+import { buildParamHeatmap } from "../lib/heatmap";
+import { downloadCsv } from "../lib/csvExport";
 
 const CATEGORY_ORDER = ["trend", "momentum", "reversion", "quant", "hybrid", "custom"];
 const LOOKBACK_PRESETS = [90, 180, 365, 730];
@@ -77,7 +82,17 @@ export default function Backtest() {
     [result]
   );
 
+  const rolling = useMemo(
+    () => (result?.equityCurve?.length > 31 ? rollingMetrics(result.equityCurve, 30) : null),
+    [result]
+  );
+
   const strategy = allStrategies[strategyKey] || STRATEGIES.trendMomentumHybrid;
+
+  const heatmapParams = useMemo(() => {
+    const keys = Object.keys(strategy.params || {}).filter((k) => Number.isFinite(strategy.params[k]));
+    return keys.slice(0, 2);
+  }, [strategy]);
   // Keep only parameters the current strategy still supports. Besides
   // preventing stale values from another strategy leaking across reloads,
   // this migrates saved Monte Carlo configs away from the removed exact
@@ -130,6 +145,10 @@ export default function Backtest() {
   const [tpEnabled, setTpEnabled] = useLocalStorageState("lensa.backtest.risk.tp.enabled", true);
   const [stopLossPercent, setStopLossPercent] = useLocalStorageState("lensa.backtest.risk.sl", 5);
   const [takeProfitPercent, setTakeProfitPercent] = useLocalStorageState("lensa.backtest.risk.tp", 15);
+  const [trailEnabled, setTrailEnabled] = useLocalStorageState("lensa.backtest.risk.trail.enabled", false);
+  const [trailingStopPercent, setTrailingStopPercent] = useLocalStorageState("lensa.backtest.risk.trail", 8);
+  const [partialEnabled, setPartialEnabled] = useLocalStorageState("lensa.backtest.risk.partial.enabled", false);
+  const [partialTakeProfitFraction, setPartialTakeProfitFraction] = useLocalStorageState("lensa.backtest.risk.partial", 0.5);
   const [autoFit, setAutoFit] = useLocalStorageState("lensa.backtest.risk.autofit", false);
   const [autoFitResult, setAutoFitResult] = useState(null);
 
@@ -146,6 +165,9 @@ export default function Backtest() {
   // that same close). "nextOpen" is the more conservative alternative: a
   // decision made from bar i's data is filled at bar i+1's open instead.
   const [fillTiming, setFillTiming] = useLocalStorageState("lensa.backtest.fillTiming", "close");
+  const [benchmarkSymbol, setBenchmarkSymbol] = useLocalStorageState("lensa.backtest.benchmark", "");
+  const [heatmap, setHeatmap] = useState(null);
+  const [heatmapLoading, setHeatmapLoading] = useState(false);
 
   const [walkForwardRunning, setWalkForwardRunning] = useState(false);
   const [walkForwardResult, setWalkForwardResult] = useState(null);
@@ -181,15 +203,21 @@ export default function Backtest() {
   const importedNoticeTimerRef = useRef(null);
   useEffect(() => () => clearTimeout(importedNoticeTimerRef.current), []);
 
-  const riskParams = riskEnabled && (slEnabled || tpEnabled)
+  const runShortcutRef = useRef(null);
+
+  const riskParams = riskEnabled && (slEnabled || tpEnabled || trailEnabled || partialEnabled)
     ? autoFit && autoFitResult
       ? {
           stopLossPercent: slEnabled ? autoFitResult.stopLossPercent : null,
           takeProfitPercent: tpEnabled ? autoFitResult.takeProfitPercent : null,
+          trailingStopPercent: trailEnabled ? Number(trailingStopPercent) || null : null,
+          partialTakeProfitFraction: partialEnabled && tpEnabled ? Number(partialTakeProfitFraction) || null : null,
         }
       : {
           stopLossPercent: slEnabled ? Number(stopLossPercent) || null : null,
           takeProfitPercent: tpEnabled ? Number(takeProfitPercent) || null : null,
+          trailingStopPercent: trailEnabled ? Number(trailingStopPercent) || null : null,
+          partialTakeProfitFraction: partialEnabled && tpEnabled ? Number(partialTakeProfitFraction) || null : null,
         }
     : null;
 
@@ -232,6 +260,29 @@ export default function Backtest() {
       source: market.exchange,
       pair: market.pair,
       marketType: market.marketType,
+    });
+  }
+
+  async function fetchBenchmarkCandles() {
+    const sym = String(benchmarkSymbol || "").trim().toUpperCase();
+    if (!sym || sym === String(market.pair || "").toUpperCase()) return null;
+    return getChartCandles({
+      id: coinIdFromPair(sym, coin.id),
+      symbol: sym.replace(/USDT$/i, ""),
+      timeframe: market.timeframe,
+      lookbackDays: Number(lookbackDays),
+      source: market.exchange,
+      pair: sym,
+      marketType: market.marketType,
+    });
+  }
+
+  function runBenchmark(candles, benchCandles) {
+    const benchOn = benchCandles?.length >= 30 ? benchCandles : candles;
+    return runBacktest({
+      candles: benchOn,
+      signals: STRATEGIES.buyAndHold.generateSignals(benchOn),
+      feePercent: Number(fee),
     });
   }
 
@@ -302,11 +353,9 @@ export default function Backtest() {
         effectiveLeverage > 1 || effectiveDirection !== "long"
           ? runLeveragedBacktest({ candles, signals, feePercent: Number(fee), leverage: effectiveLeverage, riskParams: effectiveRiskParams, sizing, fillTiming })
           : runBacktest({ candles, signals, feePercent: Number(fee), riskParams: effectiveRiskParams, sizing, fillTiming });
-      const benchmark = runBacktest({
-        candles,
-        signals: STRATEGIES.buyAndHold.generateSignals(candles),
-        feePercent: Number(fee),
-      });
+      const benchCandles = await fetchBenchmarkCandles();
+      const benchmark = runBenchmark(candles, benchCandles);
+      setHeatmap(null);
       setResult(strategyResult);
       setBenchmarkResult(benchmark);
       setLiveSignal(currentSignalState(strategy, candles, activeParams, effectiveDirection));
@@ -318,6 +367,20 @@ export default function Backtest() {
       setLoading(false);
     }
   }
+
+  useEffect(() => {
+    runShortcutRef.current = () => {
+      if (!loading && !loadingAll && !optimizing && !optimizingAll) handleRun();
+    };
+  }, [loading, loadingAll, optimizing, optimizingAll]);
+
+  useEffect(() => {
+    function onRunShortcut() {
+      runShortcutRef.current?.();
+    }
+    window.addEventListener("lensa:run-backtest", onRunShortcut);
+    return () => window.removeEventListener("lensa:run-backtest", onRunShortcut);
+  }, []);
 
   // Search a bounded grid of parameter values around this strategy's
   // defaults and adopt whichever combination scored best on this exact
@@ -398,7 +461,9 @@ export default function Backtest() {
         effectiveLeverage > 1 || effectiveDirection !== "long"
           ? runLeveragedBacktest({ candles, signals, feePercent: Number(fee), leverage: effectiveLeverage, riskParams: effectiveRiskParams, sizing, fillTiming })
           : runBacktest({ candles, signals, feePercent: Number(fee), riskParams: effectiveRiskParams, sizing, fillTiming });
-      const benchmark = runBacktest({ candles, signals: STRATEGIES.buyAndHold.generateSignals(candles), feePercent: Number(fee) });
+      const benchCandles = await fetchBenchmarkCandles();
+      const benchmark = runBenchmark(candles, benchCandles);
+      setHeatmap(null);
       setResult(strategyResult);
       setBenchmarkResult(benchmark);
       setLiveSignal(currentSignalState(strategy, candles, fit.bestParams, effectiveDirection));
@@ -647,6 +712,74 @@ export default function Backtest() {
     } finally {
       setWalkForwardRunning(false);
     }
+  }
+
+  function paramGridValues(defaultVal) {
+    const base = Number(defaultVal) || 10;
+    const step = Math.max(1, Math.round(base * 0.15));
+    const vals = [];
+    for (let i = -2; i <= 2; i++) vals.push(Math.max(1, base + i * step));
+    return [...new Set(vals)].sort((a, b) => a - b);
+  }
+
+  async function handleBuildHeatmap() {
+    if (heatmapParams.length < 2) return;
+    setHeatmapLoading(true);
+    setError(null);
+    try {
+      const candles = lastCandles.length >= 30 ? lastCandles : await fetchCandles();
+      if (candles.length < 30) throw new Error(t("bt.noData"));
+      const [paramX, paramY] = heatmapParams;
+      setHeatmap(
+        buildParamHeatmap({
+          strategy,
+          candles,
+          paramX,
+          paramY,
+          xValues: paramGridValues(strategy.params[paramX]),
+          yValues: paramGridValues(strategy.params[paramY]),
+          direction: effectiveDirection,
+          leverage: effectiveLeverage,
+          feePercent: Number(fee),
+          fillTiming,
+        })
+      );
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setHeatmapLoading(false);
+    }
+  }
+
+  function handleShowTradesOnChart() {
+    if (!result?.trades?.length) return;
+    const markers = result.trades.flatMap((tr) => {
+      const entryT = Math.floor(tr.entryTime > 1e11 ? tr.entryTime / 1000 : tr.entryTime);
+      const exitT = Math.floor(tr.exitTime > 1e11 ? tr.exitTime / 1000 : tr.exitTime);
+      const isLong = (tr.side ?? 1) >= 0;
+      return [
+        { time: entryT, position: isLong ? "belowBar" : "aboveBar", color: "#22c55e", shape: isLong ? "arrowUp" : "arrowDown" },
+        { time: exitT, position: isLong ? "aboveBar" : "belowBar", color: "#ef4444", shape: "circle" },
+      ];
+    });
+    localStorage.setItem("lensa.chart.tradeMarkers", JSON.stringify(markers));
+    window.location.hash = "dashboard";
+  }
+
+  function handleExportTradesCsv() {
+    if (!result?.trades?.length) return;
+    downloadCsv(
+      `lensa-trades-${market.pair}-${Date.now()}.csv`,
+      result.trades.map((tr) => ({
+        entryTime: tr.entryTime,
+        exitTime: tr.exitTime,
+        entryPrice: tr.entryPrice,
+        exitPrice: tr.exitPrice,
+        side: tr.side ?? 1,
+        pnlPercent: tr.pnlPercent,
+      })),
+      ["entryTime", "exitTime", "entryPrice", "exitPrice", "side", "pnlPercent"]
+    );
   }
 
   // Discards any single-strategy fit and puts this strategy's inputs back
@@ -991,6 +1124,37 @@ export default function Backtest() {
                   })}
                 </small>
               </div>
+              <div className="control-group">
+                <label className="toggle-row toggle-row--inline">
+                  <input type="checkbox" checked={trailEnabled} disabled={autoFit} onChange={(e) => setTrailEnabled(e.target.checked)} />
+                  {t("bt.risk.trail")}
+                </label>
+                <input
+                  type="number"
+                  min="0.1"
+                  step="0.5"
+                  value={trailingStopPercent}
+                  disabled={autoFit || !trailEnabled}
+                  onChange={(e) => setTrailingStopPercent(e.target.value)}
+                />
+                <small className="control-hint">{t("bt.risk.trail.hint")}</small>
+              </div>
+              <div className="control-group">
+                <label className="toggle-row toggle-row--inline">
+                  <input type="checkbox" checked={partialEnabled} disabled={autoFit || !tpEnabled} onChange={(e) => setPartialEnabled(e.target.checked)} />
+                  {t("bt.risk.partial")}
+                </label>
+                <input
+                  type="number"
+                  min="0.1"
+                  max="0.9"
+                  step="0.05"
+                  value={partialTakeProfitFraction}
+                  disabled={autoFit || !partialEnabled || !tpEnabled}
+                  onChange={(e) => setPartialTakeProfitFraction(e.target.value)}
+                />
+                <small className="control-hint">{t("bt.risk.partial.hint")}</small>
+              </div>
               <div className="control-group control-group--full">
                 <label className="toggle-row">
                   <input type="checkbox" checked={autoFit} onChange={(e) => setAutoFit(e.target.checked)} />
@@ -1054,7 +1218,18 @@ export default function Backtest() {
             <select value={fillTiming} onChange={(e) => setFillTiming(e.target.value)}>
               <option value="close">{t("bt.fillTiming.close")}</option>
               <option value="nextOpen">{t("bt.fillTiming.nextOpen")}</option>
+              <option value="limitTouch">{t("bt.fillTiming.limitTouch")}</option>
             </select>
+          </div>
+          <div className="control-group control-group--wide">
+            <label>{t("bt.benchmark.symbol")}</label>
+            <input
+              type="text"
+              placeholder={t("bt.benchmark.placeholder")}
+              value={benchmarkSymbol}
+              onChange={(e) => setBenchmarkSymbol(e.target.value.toUpperCase())}
+            />
+            <small className="control-hint">{t("bt.benchmark.hint")}</small>
           </div>
         </ControlsSection>
         )}
@@ -1284,8 +1459,15 @@ export default function Backtest() {
               )}
             </div>
           )}
+          {rolling?.length > 0 && <RollingMetricsChart points={rolling} />}
+          {heatmap && <ParamHeatmap heatmap={heatmap} paramLabels={PARAM_LABELS[strategyKey] || {}} />}
           {!result.isOptions && result.trades?.length > 0 && lastCandles.length > 0 && (
-            <TradeReplay trades={result.trades} candles={lastCandles} precision={market.precision} />
+            <TradeReplay
+              key={`${result.tradeCount}-${result.trades[0]?.entryTime}`}
+              trades={result.trades}
+              candles={lastCandles}
+              precision={market.precision}
+            />
           )}
           {result.isOptions && payoffPoints.length > 0 && (
             <div className="glass-card chart-card">
@@ -1295,7 +1477,22 @@ export default function Backtest() {
           {!result.isOptions && result.trades.length > 0 && (
             <div className="glass-card table-card">
               <DataQualityGuard module={t("dq.module.backtestTrades")} meta={dataMeta} expectedTimeframe={analysisMarket?.timeframe || market.timeframe} analysisMarket={analysisMarket} />
-              <div className="panel-header"><h2>{t("bt.trades", { n: result.tradeCount })}</h2></div>
+              <div className="panel-header panel-header--wrap">
+                <h2>{t("bt.trades", { n: result.tradeCount })}</h2>
+                <div className="run-btn-row">
+                  <button type="button" className="run-btn run-btn--ghost" onClick={handleShowTradesOnChart}>
+                    {t("bt.trades.showChart")}
+                  </button>
+                  <button type="button" className="run-btn run-btn--ghost" onClick={handleExportTradesCsv}>
+                    {t("bt.trades.exportCsv")}
+                  </button>
+                  {heatmapParams.length >= 2 && (
+                    <button type="button" className="run-btn run-btn--ghost" disabled={heatmapLoading} onClick={handleBuildHeatmap}>
+                      {heatmapLoading ? t("bt.heatmap.running") : t("bt.heatmap.run")}
+                    </button>
+                  )}
+                </div>
+              </div>
               <p className="section-note">{t("bt.trades.note")}</p>
               <BacktestConfigSummary report={report} t={t} lang={lang} />
               <div className="table-scroll">

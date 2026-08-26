@@ -18,6 +18,7 @@ import { evaluateMultiTfConfluence } from "../lib/multitf";
 import { detectDivergences } from "../lib/divergence";
 import { fetchMacroSnapshot } from "../lib/macro";
 import { fetchFearGreedIndex, fetchGlobalMarketLite } from "../lib/onchain";
+import { fetchTseComparison } from "../lib/tsePanel";
 
 const SECTIONS = [
   "portfolio",
@@ -28,6 +29,7 @@ const SECTIONS = [
   "macro",
   "multitf",
   "divergence",
+  "tse",
 ];
 
 export default function Analytics() {
@@ -55,6 +57,8 @@ export default function Analytics() {
   const [macroData, setMacroData] = useState(null);
   const [mtfResult, setMtfResult] = useState(null);
   const [divRows, setDivRows] = useState([]);
+  const [tseRows, setTseRows] = useState([]);
+  const [tseSymbols, setTseSymbols] = useState("فملی,فولاد,شپنا");
 
   const [rebalanceDays, setRebalanceDays] = useState("");
   const [stressPreset, setStressPreset] = useState("crash");
@@ -214,6 +218,12 @@ export default function Analytics() {
           }
         }
         setDivRows(rows.sort((a, b) => b.time - a.time).slice(0, 20));
+      }
+
+      if (section === "tse") {
+        const syms = tseSymbols.split(/[,،\s]+/).map((s) => s.trim()).filter(Boolean);
+        const { rows } = await fetchTseComparison(syms, Math.min(Number(lookbackDays) || 90, 365));
+        setTseRows(rows);
       }
     } catch (err) {
       setError(err?.message || String(err));
@@ -481,6 +491,41 @@ export default function Analytics() {
                       <td>{r.type === "bullish" ? t("analytics.div.bullish") : t("analytics.div.bearish")}</td>
                       <td>{r.indicator}</td>
                       <td className="num">{new Date(r.time * 1000).toLocaleDateString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
+
+      {section === "tse" && (
+        <section className="glass-card table-card reveal">
+          <h2>{t("analytics.tse.title")}</h2>
+          <p className="card-hint">{t("analytics.tse.hint")}</p>
+          <label className="control-group">
+            {t("analytics.tse.symbol")}
+            <input value={tseSymbols} onChange={(e) => setTseSymbols(e.target.value)} />
+          </label>
+          {tseRows.length > 0 && (
+            <div className="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>{t("analytics.tse.symbol")}</th>
+                    <th>{t("analytics.tse.last")}</th>
+                    <th>{t("analytics.tse.return")}</th>
+                    <th>{t("analytics.tse.bars")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {tseRows.map((r) => (
+                    <tr key={r.symbol}>
+                      <td>{r.label || r.symbol}</td>
+                      <td className="num">{r.last?.toLocaleString()}</td>
+                      <td className={`num ${r.returnPct >= 0 ? "up" : "down"}`}>{r.returnPct?.toFixed(2) ?? "—"}%</td>
+                      <td className="num">{r.bars}</td>
                     </tr>
                   ))}
                 </tbody>

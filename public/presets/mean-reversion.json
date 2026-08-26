@@ -1,0 +1,26 @@
+{
+  "name": "Mean reversion preset",
+  "sustain": "immediate",
+  "combine": "AND",
+  "conditions": [
+    {
+      "left": { "type": "rsi", "params": { "period": 14 } },
+      "op": "<",
+      "rightConst": 30
+    },
+    {
+      "left": { "type": "close", "params": {} },
+      "op": ">",
+      "right": { "type": "bbLower", "params": { "period": 20, "mult": 2 } }
+    }
+  ],
+  "exitCombine": "OR",
+  "exitConditions": [
+    {
+      "left": { "type": "rsi", "params": { "period": 14 } },
+      "op": ">",
+      "rightConst": 55
+    }
+  ],
+  "mirrorShort": false
+}

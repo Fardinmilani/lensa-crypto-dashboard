@@ -113,7 +113,7 @@ function buildCombos(defaultParams, maxCombos = DEFAULT_MAX_COMBOS) {
  * drawdown penalty so a parameter set that merely got lucky on a huge,
  * volatile swing doesn't automatically win over a steadier one.
  */
-function scoreResult(result) {
+export function scoreResult(result) {
   if (!result || result.tradeCount < MIN_TRADES_FOR_SCORING) return -Infinity;
   const riskAdjusted = Number.isFinite(result.sharpe) ? result.sharpe : (result.totalReturnPercent || 0) / 50;
   const drawdownPenalty = (result.maxDrawdownPercent || 0) / 100;

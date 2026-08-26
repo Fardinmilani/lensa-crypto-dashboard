@@ -1,5 +1,7 @@
+import { useRef, useState } from "react";
 import { useI18n } from "../i18n/langStore";
 import { useStaggerReveal } from "../hooks/useAnimations";
+import { downloadWorkspaceBackup, importWorkspaceBackup } from "../lib/workspaceBackup";
 
 const GITHUB = "https://github.com/Fardinmilani";
 const AVATAR = "https://github.com/Fardinmilani.png";
@@ -8,6 +10,24 @@ const STACK = ["React", "Vite", "GSAP", "Lightweight Charts", "GitHub Pages", "C
 export default function About() {
   const { t } = useI18n();
   const reveal = useStaggerReveal([]);
+  const fileRef = useRef(null);
+  const [merge, setMerge] = useState(false);
+  const [notice, setNotice] = useState("");
+
+  function handleImport(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const json = JSON.parse(String(reader.result));
+        const n = importWorkspaceBackup(json, { merge });
+        setNotice(t("about.backup.done", { n }));
+      } catch {
+        setNotice("Invalid backup file");
+      }
+    };
+    reader.readAsText(file);
+  }
 
   return (
     <div className="about-page" ref={reveal}>
@@ -33,6 +53,25 @@ export default function About() {
               <span className="about-chip" key={s}>{s}</span>
             ))}
           </div>
+        </div>
+
+        <div className="about-backup">
+          <h2>{t("about.backup.title")}</h2>
+          <p className="card-hint">{t("about.backup.hint")}</p>
+          <div className="about-backup__actions">
+            <button type="button" className="run-btn run-btn--ghost" onClick={downloadWorkspaceBackup}>
+              {t("about.backup.export")}
+            </button>
+            <button type="button" className="run-btn run-btn--ghost" onClick={() => fileRef.current?.click()}>
+              {t("about.backup.import")}
+            </button>
+            <label className="toggle-row">
+              <input type="checkbox" checked={merge} onChange={(e) => setMerge(e.target.checked)} />
+              {t("about.backup.merge")}
+            </label>
+          </div>
+          <input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={(e) => handleImport(e.target.files?.[0])} />
+          {notice && <p className="section-note">{notice}</p>}
         </div>
       </div>
     </div>

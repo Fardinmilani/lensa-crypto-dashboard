@@ -110,6 +110,58 @@ export const analyticsEn = {
   "dash.events.hint": "This week’s macro events (public feed, best-effort).",
   "dash.events.impact": "Impact",
   "dash.events.unavailable": "Calendar feed unavailable in this browser.",
+
+  "bt.rolling.title": "Rolling metrics",
+  "bt.rolling.hint": "30-bar rolling Sharpe proxy and max drawdown.",
+  "bt.rolling.sharpe": "Rolling Sharpe",
+  "bt.rolling.dd": "Rolling max DD %",
+
+  "bt.heatmap.title": "Parameter heatmap",
+  "bt.heatmap.hint": "In-sample optimizer score surface for two strategy params.",
+  "bt.heatmap.run": "Build heatmap",
+  "bt.heatmap.running": "Building…",
+
+  "bt.benchmark.symbol": "Custom benchmark symbol",
+  "bt.benchmark.placeholder": "Same asset (buy & hold)",
+  "bt.benchmark.hint": "Optional second symbol for buy & hold benchmark (e.g. ETHUSDT).",
+
+  "bt.risk.trail": "Trailing stop %",
+  "bt.risk.trail.hint": "Trail from peak/trough; position P/L percent.",
+  "bt.risk.partial": "Partial take-profit fraction",
+  "bt.risk.partial.hint": "Scale out this share at take-profit; remainder stays open.",
+
+  "bt.fillTiming.limitTouch": "Limit at close (fill if touched)",
+
+  "bt.trades.showChart": "Show on Dashboard chart",
+  "bt.trades.exportCsv": "Export CSV",
+
+  "about.backup.title": "Workspace backup",
+  "about.backup.hint": "Export or restore all Lensa settings stored in this browser.",
+  "about.backup.export": "Download backup",
+  "about.backup.import": "Restore backup",
+  "about.backup.merge": "Merge (keep existing keys)",
+  "about.backup.done": "Restored {n} entries — reload recommended.",
+
+  "app.shortcuts.hint": "Shortcuts: 1–9 tabs, R run backtest (on Backtest tab)",
+
+  "analytics.nav.tse": "TSE compare",
+  "analytics.tse.title": "TSE comparison",
+  "analytics.tse.hint": "Daily return vs start for Tehran Stock Exchange symbols.",
+  "analytics.tse.symbol": "Symbol",
+  "analytics.tse.last": "Last",
+  "analytics.tse.return": "Return %",
+  "analytics.tse.bars": "Bars",
+
+  "fc.portfolioMc.title": "Portfolio Monte Carlo",
+  "fc.portfolioMc.hint": "Simulate watchlist weights using historical vol estimates (30d).",
+  "fc.portfolioMc.run": "Run portfolio MC",
+  "fc.portfolioMc.probLoss": "Prob. loss",
+  "fc.portfolioMc.p5": "P5",
+  "fc.portfolioMc.p50": "P50",
+  "fc.portfolioMc.p95": "P95",
+
+  "sb.presets.title": "Load preset",
+  "sb.presets.load": "Load",
 };
 
 export const analyticsFa = {
@@ -224,4 +276,56 @@ export const analyticsFa = {
   "dash.events.hint": "رویدادهای ماکرو این هفته (فید عمومی، best-effort).",
   "dash.events.impact": "تأثیر",
   "dash.events.unavailable": "فید تقویم در این مرورگر در دسترس نیست.",
+
+  "bt.rolling.title": "معیارهای غلتان",
+  "bt.rolling.hint": "شارپ تقریبی و بیشینه افت در پنجره ۳۰ کندل.",
+  "bt.rolling.sharpe": "شارپ غلتان",
+  "bt.rolling.dd": "افت غلتان %",
+
+  "bt.heatmap.title": "نقشه حرارتی پارامتر",
+  "bt.heatmap.hint": "سطح امتیاز بهینه‌ساز در نمونه برای دو پارامتر استراتژی.",
+  "bt.heatmap.run": "ساخت نقشه",
+  "bt.heatmap.running": "در حال ساخت…",
+
+  "bt.benchmark.symbol": "نماد بنچمارک سفارشی",
+  "bt.benchmark.placeholder": "همان دارایی (خرید و نگه‌داری)",
+  "bt.benchmark.hint": "نماد دوم اختیاری برای بنچمارک (مثلاً ETHUSDT).",
+
+  "bt.risk.trail": "حد ضرر متحرک %",
+  "bt.risk.trail.hint": "از سقف/کف؛ درصد سود/زیان پوزیشن.",
+  "bt.risk.partial": "برداشت جزئی سود",
+  "bt.risk.partial.hint": "این سهم در TP بسته می‌شود؛ باقی باز می‌ماند.",
+
+  "bt.fillTiming.limitTouch": "لیمیت روی close (در صورت لمس)",
+
+  "bt.trades.showChart": "نمایش روی چارت داشبورد",
+  "bt.trades.exportCsv": "خروجی CSV",
+
+  "about.backup.title": "پشتیبان workspace",
+  "about.backup.hint": "تنظیمات Lensa ذخیره‌شده در مرورگر را صادر یا بازیابی کنید.",
+  "about.backup.export": "دانلود پشتیبان",
+  "about.backup.import": "بازیابی پشتیبان",
+  "about.backup.merge": "ادغام (نگه‌داشتن کلیدهای موجود)",
+  "about.backup.done": "{n} مورد بازیابی شد — بارگذاری مجدد توصیه می‌شود.",
+
+  "app.shortcuts.hint": "میانبر: ۱–۹ تب‌ها، R اجرای بک‌تست (در تب بک‌تست)",
+
+  "analytics.nav.tse": "مقایسه بورس",
+  "analytics.tse.title": "مقایسه بورس تهران",
+  "analytics.tse.hint": "بازده روزانه نسبت به ابتدای دوره برای نمادهای TSE.",
+  "analytics.tse.symbol": "نماد",
+  "analytics.tse.last": "آخرین",
+  "analytics.tse.return": "بازده %",
+  "analytics.tse.bars": "کندل",
+
+  "fc.portfolioMc.title": "مونت‌کارلو سبد",
+  "fc.portfolioMc.hint": "شبیه‌سازی وزن واچ‌لیست با تخمین نوسان ۳۰روزه.",
+  "fc.portfolioMc.run": "اجرای MC سبد",
+  "fc.portfolioMc.probLoss": "احتمال ضرر",
+  "fc.portfolioMc.p5": "P5",
+  "fc.portfolioMc.p50": "P50",
+  "fc.portfolioMc.p95": "P95",
+
+  "sb.presets.title": "بارگذاری preset",
+  "sb.presets.load": "بارگذاری",
 };

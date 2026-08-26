@@ -321,6 +321,32 @@ export default function StrategyBuilder({ t, activeStrategyKey, onSaved, onDelet
 
   return (
     <div className="sb-list">
+      <div className="sb-presets">
+        <span className="control-hint">{t("sb.presets.title")}</span>
+        <div className="run-btn-row">
+          {[
+            { file: "/presets/trend-momentum.json", label: "Trend momentum" },
+            { file: "/presets/mean-reversion.json", label: "Mean reversion" },
+          ].map((p) => (
+            <button
+              key={p.file}
+              type="button"
+              className="run-btn run-btn--ghost"
+              onClick={async () => {
+                try {
+                  const res = await fetch(p.file);
+                  const def = await res.json();
+                  setDraft({ ...emptyDef(), ...def, id: null });
+                } catch {
+                  /* ignore */
+                }
+              }}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      </div>
       {defs.length === 0 && <small className="control-hint">{t("bt.custom.empty")}</small>}
       {defs.map((def) => (
         <div key={def.id} className={`sb-saved-item${def.id === activeStrategyKey ? " is-active" : ""}`}>
