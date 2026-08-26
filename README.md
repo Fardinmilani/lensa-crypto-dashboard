@@ -40,8 +40,15 @@ Lensa started as a way to combine two things: a genuine interest in quantitative
 - Deterministic seeded RNG for reproducible scenario cones; percentile bands, touch probabilities, and outcome zones, not a single misleadingly-precise number.
 
 **A data layer that admits when it's uncertain**
-- Multi-exchange fallback chain (Binance → Bybit → OKX → CoinGecko) with an optional self-hosted Cloudflare Worker CORS proxy for geo-blocked regions.
+- Multi-exchange fallback chain (Binance → Bybit → OKX → CoinGecko) with automatic failover when a venue is blocked or rate-limited.
 - A **confidence-scoring system** (Healthy / Limited / Failed, gap detection, synthetic-candle flagging) that downgrades displayed confidence — rather than silently guessing — whenever the underlying data is incomplete or stale.
+
+**Edge Lab — the questions a Sharpe ratio will not answer**
+- Live **regime permission** (trend / range / vol-shock): don't run a trend rule in chop just because the backtest average looked fine.
+- **Trade-sequence Monte Carlo** of the actual round-trips — probability of 20/30/40% drawdown, and a risk budget that keeps P(ruin) under 5%.
+- **MAE/MFE** stop and target hints from the path of each trade, not round numbers.
+- **Deflated Sharpe** across the strategy universe so the luckiest of 21 rules does not get mistaken for an edge.
+- Crypto **crowding tape** (funding APR, open interest, long/short accounts) from Binance public endpoints, no API keys.
 
 **Everything else you'd expect from a serious build, not a demo**
 - Full bilingual UI (Persian/English, RTL-aware) — not a handful of translated strings, the entire app.
@@ -54,7 +61,7 @@ Three rules this codebase tries to actually follow, not just claim:
 
 1. **Auditable over clever.** Every strategy, every risk calculation, every Monte Carlo method is a small function you can read top to bottom. The Strategy Builder extends this instead of undermining it — custom strategies are data, not code.
 2. **Honest about uncertainty.** Forecasts are scenario cones with percentile bands, not point predictions. The Decision Center outputs a bias that always requires your own confirmation, never a "buy/sell" instruction. Data-quality state is surfaced, not hidden.
-3. **No backend, no exceptions.** Free to host, trivial to deploy, and private by construction — nothing here can leak because there is no server-side "here" to leak from. The Cloudflare Worker in `cloudflare-proxy/` is an optional, stateless CORS relay for public market data, not application infrastructure.
+3. **No backend, no exceptions.** Free to host, trivial to deploy, and private by construction — nothing here can leak because there is no server-side "here" to leak from.
 
 ## Tech stack
 
@@ -67,7 +74,7 @@ npm install
 npm run dev
 ```
 
-There is no local API proxy — development and production use the same browser-only data path. To use a self-hosted CORS proxy for geo-blocked exchanges, see [`cloudflare-proxy/README.md`](cloudflare-proxy/README.md) and set `VITE_MARKET_PROXY_ENDPOINTS` in a local `.env` (see `.env.example`).
+There is no local API proxy — development and production use the same browser-only data path. If an exchange geo-blocks the visitor, Lensa falls through the remaining public venues (Bybit / OKX / CoinGecko) instead of depending on a private relay.
 
 ## Testing
 
@@ -87,7 +94,7 @@ Lensa deploys to GitHub Pages via GitHub Actions on every push to `main`:
 2. The built `dist/` is uploaded as a Pages artifact and published via `actions/deploy-pages`.
 3. A custom domain (with DNS through Cloudflare) can be configured in the repo's **Settings → Pages**; `vite.config.js` uses `base: "/"`, which assumes the app is served from a domain root rather than a `/repo-name/` subpath.
 
-No `functions/` directory, database, or always-on server is required. The optional Cloudflare Worker in `cloudflare-proxy/` is a stateless CORS relay you can deploy separately if public exchange APIs are geo-blocked in your region — the app works without it, just with fewer fallback data sources.
+No `functions/` directory, database, or always-on server is required.
 
 ## Project structure
 
@@ -105,9 +112,11 @@ src/
     forecast.js          Monte Carlo (bootstrap / block bootstrap / GBM)
     risk.js              position sizing, R:R, ATR-based stops
     dataQuality.js        confidence scoring for market data
-    coingecko.js          multi-exchange market data client + CORS proxy routing
-  pages/               Dashboard, Decision Center, Forecast, Backtest, Risk Tools, About
-cloudflare-proxy/       optional, stateless CORS relay for geo-blocked exchanges
+    coingecko.js          multi-exchange market data client
+    regime.js             ADX/EMA tape classifier (trend / range / shock)
+    edge.js               SQN, Kelly, MAE/MFE, trade-sequence Monte Carlo, deflated Sharpe
+    derivatives.js        Binance funding / OI / long-short crowding (public, no keys)
+  pages/               Dashboard, Decision Center, Edge Lab, Forecast, Backtest, Risk Tools, About
 scripts/                validate-models.mjs — math correctness, no browser needed
 ```
 
@@ -117,6 +126,7 @@ scripts/                validate-models.mjs — math correctness, no browser nee
 - ~~Custom, user-defined strategies in the backtester~~ — see the Strategy Builder above.
 - ~~Fixed-fractional position sizing~~, ~~configurable fill timing~~, ~~walk-forward validation~~.
 - ~~Block-bootstrap Monte Carlo~~ (preserves volatility clustering plain bootstrap ignores).
+- ~~Edge Lab~~ — regime permission, trade-sequence ruin, MAE/MFE, deflated Sharpe, funding crowding.
 
 **Next up:**
 - Schema versioning + migration-safe helpers for `localStorage` state.

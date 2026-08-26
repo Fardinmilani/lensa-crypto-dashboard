@@ -7,16 +7,19 @@ const Backtest = lazy(() => import("./pages/Backtest"));
 const Forecast = lazy(() => import("./pages/Forecast"));
 const RiskTools = lazy(() => import("./pages/RiskTools"));
 const DecisionCenter = lazy(() => import("./pages/DecisionCenter"));
+const EdgeLab = lazy(() => import("./pages/EdgeLab"));
 const About = lazy(() => import("./pages/About"));
 import { CoinProvider } from "./context/CoinContext";
 import { MarketProvider } from "./context/MarketContext";
 import { useI18n } from "./i18n/langStore";
+import ErrorBoundary from "./components/ErrorBoundary";
 import "./App.css";
 
 // Core = daily-use tools shown first; advanced = deeper analysis tools.
 const TABS = [
   { id: "dashboard", labelKey: "tab.dashboard", component: Dashboard, icon: GridIcon, group: "core" },
   { id: "decision", labelKey: "tab.decision", component: DecisionCenter, icon: ShieldIcon, group: "core" },
+  { id: "edge", labelKey: "tab.edge", component: EdgeLab, icon: AtomIcon, group: "advanced" },
   { id: "forecast", labelKey: "tab.forecast", component: Forecast, icon: WaveIcon, group: "advanced" },
   { id: "backtest", labelKey: "tab.backtest", component: Backtest, icon: ChartIcon, group: "advanced" },
   { id: "risk", labelKey: "tab.risk", component: RiskTools, icon: GaugeIcon, group: "advanced" },
@@ -135,7 +138,9 @@ export default function App() {
 
         <main className="app-main" key={activeTab}>
           <Suspense fallback={<div className="route-loading">{t("common.loading")}</div>}>
-            <ActiveComponent />
+            <ErrorBoundary>
+              <ActiveComponent />
+            </ErrorBoundary>
           </Suspense>
         </main>
 
@@ -183,6 +188,16 @@ function ShieldIcon() {
   return (
     <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
       <path d="M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6l7-3z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+    </svg>
+  );
+}
+function AtomIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <circle cx="12" cy="12" r="2.2" fill="currentColor" />
+      <ellipse cx="12" cy="12" rx="9" ry="3.6" fill="none" stroke="currentColor" strokeWidth="2" />
+      <ellipse cx="12" cy="12" rx="9" ry="3.6" fill="none" stroke="currentColor" strokeWidth="2" transform="rotate(60 12 12)" />
+      <ellipse cx="12" cy="12" rx="9" ry="3.6" fill="none" stroke="currentColor" strokeWidth="2" transform="rotate(120 12 12)" />
     </svg>
   );
 }

@@ -1,6 +1,7 @@
 import { formatPrice } from "../lib/priceFormat";
 import { useMarket } from "../context/MarketContext";
 import { useI18n } from "../i18n/langStore";
+import { sourceDisplayLabel } from "../lib/coingecko";
 
 // Rendered ONCE per page (sticky, right under the page's own title/hero).
 // Previously this bar was duplicated 3-4x per page (once per section) with a
@@ -14,7 +15,7 @@ export default function MarketContextBar({ lastPrice }) {
     : t("context.noCandle");
   return (
     <div className="market-context-bar market-context-bar--sticky" role="status" aria-label={t("context.ariaLabel")}>
-      <span>{market.exchange.toUpperCase()}</span>
+      <span>{sourceDisplayLabel(market.exchange, market.marketType)}</span>
       <span>{market.pair}</span>
       <span>{market.marketType}</span>
       <span>{market.timeframeMeta.label || market.timeframe}</span>

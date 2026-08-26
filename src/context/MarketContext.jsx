@@ -1,6 +1,6 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createContext, useCallback, useContext, useEffect, useMemo } from "react";
-import { defaultPairForSymbol, getSourceHealth, resolveTimeframe } from "../lib/coingecko";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef } from "react";
+import { defaultPairForSymbol, getSourceHealth, normalizeMarketSource, resolveTimeframe } from "../lib/coingecko";
 import { isForexCoinId } from "../lib/forex";
 import { isIrrFxCoinId } from "../lib/irrfx";
 import { isTseCoinId } from "../lib/tse";
@@ -55,6 +55,30 @@ export function MarketProvider({ children }) {
   useEffect(() => {
     setPrecision({});
   }, [coin.id, setPrecision]);
+
+  const wasSingleSource = useRef(isSingleSource);
+  useEffect(() => {
+    if (wasSingleSource.current && !isSingleSource) {
+      setExchange("binance");
+      setMarketType("Spot");
+    }
+    wasSingleSource.current = isSingleSource;
+  }, [isSingleSource, setExchange, setMarketType]);
+
+  useEffect(() => {
+    if (isSingleSource) return;
+    const next = normalizeMarketSource(exchange, marketType);
+    if (next !== exchange) setExchange(next);
+  }, [isSingleSource, exchange, marketType, setExchange]);
+
+  useEffect(() => {
+    const retired = { "45m": "1h", "3h": "4h" };
+    const mapped = retired[timeframe];
+    if (mapped) {
+      setStoredTimeframe(mapped);
+      setHistoricalRange(mapped);
+    }
+  }, [timeframe, setStoredTimeframe, setHistoricalRange]);
 
   // Forex/TSE/IRR-FX each have exactly one valid (exchange, marketType)
   // combination and only ever produce daily candles (see lib/forex.js,

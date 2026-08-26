@@ -32,7 +32,7 @@
 
 import { fetchJsonViaProxy } from "./corsProxy.js";
 
-export const IRRFX_SOURCE_ID = "tgju"; // must match cloudflare-proxy/worker.js UPSTREAMS key
+export const IRRFX_SOURCE_ID = "tgju";
 export const IRRFX_SOURCE_LABEL = "TGJU (Iran currency market)";
 
 const TGJU_BASE = "https://platform.tgju.org/fa/tvdata";

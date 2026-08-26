@@ -4,7 +4,7 @@ import { runBacktest, runLeveragedBacktest, runAllStrategies, autoFitRiskExits, 
 import { optimizeStrategy, optimizeAllStrategies, walkForwardValidate, optimizeOptionsStrategy, optimizeAllOptionsStrategies } from "../lib/optimize";
 import { getAllStrategies, loadCustomDefs } from "../lib/customStrategies";
 import { OPTIONS_STRATEGIES, OPTION_PARAM_LABELS, runOptionsStrategy, runAllOptionsStrategies } from "../lib/options";
-import { getChartCandles } from "../lib/coingecko";
+import { getChartCandles, isBinanceFamilySource, sourceForMarketType } from "../lib/coingecko";
 import { formatUsd } from "../lib/priceFormat";
 import { qualityMetaFromError } from "../lib/dataQuality";
 import EquityChart from "../components/EquityChart";
@@ -174,18 +174,11 @@ export default function Backtest() {
   // suffix (Coin-M uses `${base}USD_PERP`, not `${base}USDT`), so switching
   // market type has to update exchange+pair together, not just marketType.
   const base = String(coin.symbol || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-  const isBinanceFamily = /^Binance($| )/.test(market.exchange || "");
+  const isBinanceFamily = isBinanceFamilySource(market.exchange, market.marketType);
   function selectMarketType(mt) {
-    if (mt === "Spot") {
-      setExchange("Binance");
-      setPair(`${base}USDT`);
-    } else if (mt === "USD-M Futures") {
-      setExchange("Binance USD-M Futures");
-      setPair(`${base}USDT`);
-    } else if (mt === "Coin-M Futures") {
-      setExchange("Binance Coin-M Futures");
-      setPair(`${base}USD_PERP`);
-    }
+    setExchange(sourceForMarketType(mt));
+    if (mt === "Coin-M Futures") setPair(`${base}USD_PERP`);
+    else setPair(`${base}USDT`);
     setMarketType(mt);
   }
 
@@ -1158,6 +1151,9 @@ export default function Backtest() {
               </button>
               <button className="run-btn run-btn--ghost" onClick={handleExportStrategy}>
                 {t("bt.handoff.export")}
+              </button>
+              <button className="run-btn run-btn--ghost" onClick={() => { window.location.hash = "edge"; }}>
+                {t("bt.handoff.edge")}
               </button>
               {importedNotice && <small className="control-hint control-hint--accent">{t("bt.handoff.sent")}</small>}
             </div>

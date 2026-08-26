@@ -3,9 +3,11 @@ import { runBacktest, runLeveragedBacktest } from "../src/lib/backtest.js";
 import { STRATEGIES, sma } from "../src/lib/strategies.js";
 import { positionSize, riskRewardRatio, calculateATR, atrStopSuggestion } from "../src/lib/risk.js";
 import { monteCarlo, outcomeZones, tradeSetups, probabilityAboveAcrossWindows, probabilityPriceMap, SCENARIO_CONSENSUS_STEPS } from "../src/lib/forecast.js";
-import { resolveTimeframe, TIMEFRAMES } from "../src/lib/coingecko.js";
+import { resolveTimeframe, TIMEFRAMES, normalizeMarketSource, coinIdFromPair } from "../src/lib/coingecko.js";
 import { optimizeStrategy, walkForwardValidate } from "../src/lib/optimize.js";
 import { buildCustomStrategy, getAllStrategies } from "../src/lib/customStrategies.js";
+import { classifyRegimes, currentRegime, REGIME, gateSignalsByRegime, breakdownTradesByRegime } from "../src/lib/regime.js";
+import { kellyFraction, systemQualityNumber, maeMfeAnalysis, tradeSequenceMonteCarlo, deflatedSharpeRatio, enrichBacktest } from "../src/lib/edge.js";
 
 function makeCandles(length = 180) {
   const start = Date.UTC(2025, 0, 1) / 1000;
@@ -312,6 +314,68 @@ assert.ok(TIMEFRAMES.some((tf) => tf.id === "1M"), "TradingView-style monthly ti
   assert.equal(holdCompiled.generateShortSignals, undefined, "hold-mode custom strategies are long-only in this version");
 }
 
+{
+  assert.equal(TIMEFRAMES.some((tf) => tf.id === "45m"), false, "45m is not offered (no venue has it)");
+  assert.equal(TIMEFRAMES.some((tf) => tf.id === "3h"), false, "3h is not offered (mapped to 4h on every venue)");
+  assert.equal(normalizeMarketSource("Binance USD-M Futures"), "binanceUsdFutures");
+  assert.equal(normalizeMarketSource("binance", "USD-M Futures"), "binanceUsdFutures");
+  assert.equal(normalizeMarketSource("Binance"), "binance");
+  assert.equal(coinIdFromPair("ETHUSDT", "bitcoin"), "ethereum");
+  assert.equal(coinIdFromPair("BTCUSDT"), "bitcoin");
+
+  const kelly = kellyFraction({ winRatePercent: 60, avgWin: 2, avgLoss: 1 });
+  assert.ok(Math.abs(kelly.full - 0.4) < 1e-9, "Kelly f* = p - (1-p)/b");
+  assert.ok(Math.abs(kelly.half - 0.2) < 1e-9, "half-Kelly is f*/2");
+  assert.ok(Math.abs(kelly.usable - 0.2) < 1e-9, "usable Kelly is half, already under the 25% cap");
+
+  const winning = Array.from({ length: 20 }, (_, i) => ({ pnlPercent: i % 4 === 0 ? -1 : 2 }));
+  const sqn = systemQualityNumber(winning);
+  assert.ok(sqn > 1, "a positively-expectant sample has SQN > 1");
+
+  const dsrLucky = deflatedSharpeRatio({ sharpe: 0.35, nObs: 40, nTrials: 21 });
+  const dsrHonest = deflatedSharpeRatio({ sharpe: 1.2, nObs: 2000, nTrials: 1 });
+  assert.ok(dsrLucky.dsr < dsrHonest.dsr, "multiple testing deflates Sharpe");
+  assert.equal(dsrLucky.likelyOverfit, true, "a 0.35 Sharpe on 40 observations after 21 peeks is luck");
+
+  const maeTrades = [{ entryTime: candles[10].time, exitTime: candles[20].time, entryPrice: candles[10].close, exitPrice: candles[20].close, pnlPercent: 5, side: 1 }];
+  const mae = maeMfeAnalysis(maeTrades, candles);
+  assert.ok(mae.avgMae >= 0 && mae.avgMfe >= 0, "MAE/MFE are non-negative percents");
+  assert.ok(mae.stopHint >= 0 && mae.targetHint >= 0, "stop/target hints exist");
+
+  const mcTrades = Array.from({ length: 30 }, (_, i) => ({ pnlPercent: i % 3 === 0 ? -2 : 1.5 }));
+  const ruin = tradeSequenceMonteCarlo(mcTrades, { sims: 400, seed: 3, ruinDrawdownPercent: 40 });
+  assert.ok(ruin.pRuin >= 0 && ruin.pRuin <= 1, "ruin probability is a probability");
+  assert.ok(ruin.pDD20 >= ruin.pDD30, "P(DD≥20) ≥ P(DD≥30)");
+  assert.ok(ruin.medianTerminal > 0, "median terminal wealth is positive");
+
+  const regimes = classifyRegimes(candles);
+  const labeled = regimes.filter(Boolean);
+  assert.ok(labeled.length > 0, "regime classifier warms up on a trending synthetic series");
+  const now = currentRegime(candles);
+  assert.ok(now && Object.values(REGIME).includes(now.id), "current regime is a known id");
+  const gated = gateSignalsByRegime(Array(candles.length).fill(1), regimes, [REGIME.TREND_UP]);
+  assert.equal(gated.length, candles.length);
+  assert.ok(gated.some((s) => s === 0) || gated.every((s) => s === 1), "regime gate returns a signal series");
+
+  const mixedTrades = labeled.slice(0, 12).map((row, i) => ({
+    entryTime: row.time,
+    exitTime: row.time,
+    pnlPercent: i % 2 === 0 ? 2 : -1,
+  }));
+  const buckets = breakdownTradesByRegime(mixedTrades, regimes);
+  const assigned = Object.values(buckets).reduce((n, b) => n + b.n, 0);
+  assert.equal(assigned, mixedTrades.length, "every trade lands in a regime bucket");
+
+  const bt = runBacktest({
+    candles,
+    signals: STRATEGIES.buyAndHold.generateSignals(candles),
+    feePercent: 0,
+  });
+  const enriched = enrichBacktest(bt, candles, { nTrials: 1 });
+  assert.ok(enriched.maeMfe && !enriched.maeMfe.error, "buy-hold path produces MAE/MFE");
+  assert.ok(enriched.kelly, "Kelly object is present even if unused");
+}
+
 console.log(
-  "Model validation passed: strategies, backtest, position sizing, fill timing, risk tools, Monte Carlo (incl. block bootstrap), walk-forward validation, custom strategies, and timeframes."
+  "Model validation passed: strategies, backtest, position sizing, fill timing, risk tools, Monte Carlo (incl. block bootstrap), walk-forward validation, custom strategies, timeframes, regime, Kelly, MAE/MFE, trade-sequence Monte Carlo, and deflated Sharpe."
 );

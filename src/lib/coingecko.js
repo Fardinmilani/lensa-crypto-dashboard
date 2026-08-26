@@ -87,65 +87,101 @@ const sourceHealth = new Map(
 const CACHE_TTL_MS = 60_000;
 const FETCH_TIMEOUT_MS = 10_000;
 
-// Optional Cloudflare Worker CORS proxies. This is a purely static (GitHub
-// Pages / Actions) site with no backend, so when an exchange geo-blocks the
-// visitor's IP (e.g. Binance 451, Bybit 403 for some regions) no amount of
-// frontend code can fix that -- the request itself must originate from an
-// IP the exchange doesn't block. A tiny Cloudflare Worker re-issues the
-// request from Cloudflare's edge and adds CORS headers.
-//
-// Configure one or more deployed worker URLs via the VITE_MARKET_PROXY_ENDPOINTS
-// build-time env var (comma-separated, no trailing slash), e.g.:
-//   VITE_MARKET_PROXY_ENDPOINTS=https://lensa-proxy-1.acct1.workers.dev,https://lensa-proxy-2.acct2.workers.dev
-// Each entry can be on a *different* free Cloudflare account, since each
-// account gets its own independent 100k requests/day quota. If it's empty,
-// the app behaves exactly as before (direct browser fetch only).
-const PROXY_ENDPOINTS = (import.meta.env?.VITE_MARKET_PROXY_ENDPOINTS || "")
-  .split(",")
-  .map((s) => s.trim().replace(/\/$/, ""))
-  .filter(Boolean);
+const SOURCE_ALIASES = {
+  binance: "binance",
+  "binance spot": "binance",
+  bybit: "bybit",
+  okx: "okx",
+  coinbase: "coinbase",
+  coingecko: "coingecko",
+  frankfurter: "frankfurter",
+  tsetmc: "tsetmc",
+  tgju: "tgju",
+  binanceusdfutures: "binanceUsdFutures",
+  binancecoinfutures: "binanceCoinFutures",
+  "binance usd-m futures": "binanceUsdFutures",
+  "binance coin-m futures": "binanceCoinFutures",
+};
 
-// Only these sources are actually geo-blocked (Binance 451, Bybit 403 for
-// some regions) -- CoinGecko/OKX/Coinbase already work fine direct from the
-// browser, so we leave them alone. Routing them through the proxy too would
-// funnel EVERY request through one Cloudflare hostname, and browsers cap
-// concurrent connections to ~6 per origin -- with 5 exchanges' worth of
-// traffic queued behind that one origin, requests were queueing long enough
-// to hit our own fetch timeout. Keeping the proxy scoped to just the
-// sources that need it avoids that self-inflicted bottleneck.
-const PROXIED_SOURCES = new Set(["binance", "binanceUsdFutures", "binanceCoinFutures", "bybit"]);
-
-let rrIndex = 0;
-/** Rotates the proxy list by one position on every call so consecutive
- * requests spread across accounts instead of always hammering the first
- * one -- a crude but effective load balancer across quotas. */
-function rotateProxies() {
-  if (PROXY_ENDPOINTS.length < 2) return PROXY_ENDPOINTS;
-  const i = rrIndex % PROXY_ENDPOINTS.length;
-  rrIndex++;
-  return [...PROXY_ENDPOINTS.slice(i), ...PROXY_ENDPOINTS.slice(0, i)];
+/**
+ * Persist and compare source ids in one canonical form. Older builds mixed
+ * display labels ("Binance USD-M Futures") with API keys ("binance"), which
+ * made futures toggles disappear and sent candle requests down the CoinGecko
+ * fallback by accident.
+ */
+export function normalizeMarketSource(source, marketType) {
+  const raw = String(source || "").trim();
+  if (!raw) {
+    if (marketType === "USD-M Futures") return "binanceUsdFutures";
+    if (marketType === "Coin-M Futures") return "binanceCoinFutures";
+    return "binance";
+  }
+  const key = raw.toLowerCase().replace(/\s+/g, " ");
+  let id = SOURCE_ALIASES[key] || SOURCE_ALIASES[key.replace(/[^a-z0-9]/g, "")];
+  if (!id) {
+    if (key.includes("coin-m") || compactIncludes(key, "coinm")) id = "binanceCoinFutures";
+    else if (key.includes("usd-m") || compactIncludes(key, "usdm") || key.includes("futures")) id = "binanceUsdFutures";
+    else if (key.startsWith("binance")) id = "binance";
+    else id = raw;
+  }
+  if (id === "binance" || id === "binanceUsdFutures" || id === "binanceCoinFutures") {
+    if (marketType === "USD-M Futures") return "binanceUsdFutures";
+    if (marketType === "Coin-M Futures") return "binanceCoinFutures";
+    if (marketType === "Spot") return "binance";
+  }
+  return id;
 }
 
-/** Builds the ordered list of URLs to try for one request: every configured
- * proxy (rotated), then the direct browser fetch as the final fallback. If
- * a proxy has exhausted its daily quota it fails immediately (Cloudflare
- * returns a non-2xx/error page rather than making us wait), so we move on
- * to the next candidate right away -- never blocked waiting for a quota
- * reset. */
-function buildCandidateUrls(source, path) {
-  const direct = path.startsWith("http") ? path : `${API_BASES[source]}${path}`;
-  if (!PROXY_ENDPOINTS.length || !PROXIED_SOURCES.has(source)) return [direct];
-  let upstreamPath = "";
-  let upstreamSearch = "";
-  try {
-    const u = new URL(direct);
-    upstreamPath = u.pathname;
-    upstreamSearch = u.search;
-  } catch {
-    return [direct];
-  }
-  const proxied = rotateProxies().map((base) => `${base}/proxy/${source}${upstreamPath}${upstreamSearch}`);
-  return [...proxied, direct];
+function compactIncludes(key, token) {
+  return key.replace(/[^a-z0-9]/g, "").includes(token);
+}
+
+export function sourceDisplayLabel(source, marketType) {
+  const id = normalizeMarketSource(source, marketType);
+  return SOURCE_LABELS[id] || id;
+}
+
+export function isBinanceFamilySource(source, marketType) {
+  const id = normalizeMarketSource(source, marketType);
+  return id === "binance" || id === "binanceUsdFutures" || id === "binanceCoinFutures";
+}
+
+export function sourceForMarketType(marketType) {
+  if (marketType === "USD-M Futures") return "binanceUsdFutures";
+  if (marketType === "Coin-M Futures") return "binanceCoinFutures";
+  return "binance";
+}
+
+const PAIR_BASE_IDS = {
+  btc: "bitcoin",
+  eth: "ethereum",
+  sol: "solana",
+  bnb: "binancecoin",
+  xrp: "ripple",
+  ada: "cardano",
+  doge: "dogecoin",
+  ton: "the-open-network",
+  avax: "avalanche-2",
+  link: "chainlink",
+  dot: "polkadot",
+  matic: "matic-network",
+  sui: "sui",
+  near: "near",
+  ltc: "litecoin",
+  atom: "cosmos",
+  uni: "uniswap",
+  apt: "aptos",
+  arb: "arbitrum",
+  op: "optimism",
+};
+
+export function coinIdFromPair(pair, fallbackId) {
+  const raw = String(pair || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const base = raw.replace(/USDT$|USDC$|BUSD$|FDUSD$|USD_PERP$|USD$/, "");
+  if (!base) return fallbackId;
+  const known = PAIR_BASE_IDS[base.toLowerCase()];
+  if (known) return known;
+  return PAIR_BASE_IDS[base.toLowerCase()] || fallbackId || base.toLowerCase();
 }
 
 async function fetchWithTimeout(url, ms = FETCH_TIMEOUT_MS) {
@@ -199,46 +235,35 @@ async function cachedJson(source, path, ttl = CACHE_TTL_MS) {
   if (hit && Date.now() - hit.time < ttl) return hit.data;
   if (inflight.has(url)) return inflight.get(url);
 
-  const candidates = buildCandidateUrls(source, path);
-
   const promise = (async () => {
     let lastErr;
-    for (const candidateUrl of candidates) {
-      const viaProxy = candidateUrl !== url;
-      // Up to 2 tries per candidate, but ONLY to ride out a transient 429.
-      // Any other failure (CORS, geo-block 403/451, a proxy whose daily
-      // quota is exhausted, timeout, ...) moves to the next candidate
-      // immediately -- we never sit around waiting for something to reset.
-      for (let attempt = 0; attempt < 2; attempt++) {
-        try {
-          const res = await fetchWithTimeout(candidateUrl);
-          if (res.ok) {
-            const data = await res.json();
-            cache.set(url, { data, time: Date.now() });
-            setSourceHealth(
-              source,
-              SOURCE_STATUS.HEALTHY,
-              viaProxy ? "Fetched via CORS proxy." : "Direct browser fetch succeeded."
-            );
-            return data;
-          }
-          const err = new Error(`HTTP ${res.status}`);
-          err.status = res.status;
-          if (res.status === 429) {
-            lastErr = err;
-            setSourceHealth(source, SOURCE_STATUS.RATE_LIMITED, friendlyMessage(source, SOURCE_STATUS.RATE_LIMITED, err));
-            await sleep(500);
-            continue;
-          }
-          lastErr = err;
-          setSourceHealth(source, classifyFetchError(err), friendlyMessage(source, classifyFetchError(err), err));
-          break;
-        } catch (err) {
-          lastErr = err;
-          const status = classifyFetchError(err);
-          setSourceHealth(source, status, friendlyMessage(source, status, err));
-          break;
+    // Two attempts only to ride out a transient 429. Any other failure
+    // (CORS, geo-block 403/451, timeout) stops immediately.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const res = await fetchWithTimeout(url);
+        if (res.ok) {
+          const data = await res.json();
+          cache.set(url, { data, time: Date.now() });
+          setSourceHealth(source, SOURCE_STATUS.HEALTHY, "Direct browser fetch succeeded.");
+          return data;
         }
+        const err = new Error(`HTTP ${res.status}`);
+        err.status = res.status;
+        if (res.status === 429) {
+          lastErr = err;
+          setSourceHealth(source, SOURCE_STATUS.RATE_LIMITED, friendlyMessage(source, SOURCE_STATUS.RATE_LIMITED, err));
+          await sleep(500);
+          continue;
+        }
+        lastErr = err;
+        setSourceHealth(source, classifyFetchError(err), friendlyMessage(source, classifyFetchError(err), err));
+        break;
+      } catch (err) {
+        lastErr = err;
+        const status = classifyFetchError(err);
+        setSourceHealth(source, status, friendlyMessage(source, status, err));
+        break;
       }
     }
     if (hit) {
@@ -250,6 +275,11 @@ async function cachedJson(source, path, ttl = CACHE_TTL_MS) {
 
   inflight.set(url, promise);
   return promise;
+}
+
+/** Public wrapper so other market modules share the same cache + health map. */
+export async function fetchMarketJson(source, path, ttl = CACHE_TTL_MS) {
+  return cachedJson(source, path, ttl);
 }
 
 function withMeta(candles, meta) {
@@ -476,10 +506,8 @@ export const TIMEFRAMES = [
   { id: "5m", label: "5m", intervalMinutes: 5, days: 1, intraday: true },
   { id: "15m", label: "15m", intervalMinutes: 15, days: 2, intraday: true },
   { id: "30m", label: "30m", intervalMinutes: 30, days: 3, intraday: true },
-  { id: "45m", label: "45m", intervalMinutes: 45, days: 5, intraday: true },
   { id: "1h", label: "1h", intervalMinutes: 60, days: 7, intraday: true },
   { id: "2h", label: "2h", intervalMinutes: 120, days: 14, intraday: true },
-  { id: "3h", label: "3h", intervalMinutes: 180, days: 21, intraday: true },
   { id: "4h", label: "4h", intervalMinutes: 240, days: 30, intraday: true },
   { id: "1d", label: "1D", intervalMinutes: 1440, days: 180 },
   { id: "1w", label: "1W", intervalMinutes: 10080, days: 365 },
@@ -578,7 +606,9 @@ export async function getChartCandles({ id, symbol, timeframe = "4h", lookbackDa
   const irrFxPair = parseIrrFxCoinId(id);
   if (irrFxPair) return getIrrFxChartCandles(irrFxPair, { timeframe, lookbackDays });
 
-  const requested = source || "binance";
+  const requestedRaw = normalizeMarketSource(source || "binance", marketType);
+  const requested =
+    requestedRaw === "binanceUsdFutures" || requestedRaw === "binanceCoinFutures" ? "binance" : requestedRaw;
   const warnings = [];
   const tf = resolveTimeframe(timeframe);
   const effectiveDays = resolveLookbackDays(timeframe, lookbackDays);
@@ -850,10 +880,8 @@ function bybitInterval(id) {
     "5m": "5",
     "15m": "15",
     "30m": "30",
-    "45m": "60",
     "1h": "60",
     "2h": "120",
-    "3h": "240",
     "4h": "240",
     "1d": "D",
     "1w": "W",
@@ -907,10 +935,8 @@ function okxInterval(id) {
     "5m": "5m",
     "15m": "15m",
     "30m": "30m",
-    "45m": "1H",
     "1h": "1H",
     "2h": "2H",
-    "3h": "4H",
     "4h": "4H",
     "1d": "1D",
     "1w": "1W",
@@ -949,10 +975,8 @@ function coinbaseGranularity(id) {
     "5m": 300,
     "15m": 900,
     "30m": 900,
-    "45m": 3600,
     "1h": 3600,
     "2h": 3600,
-    "3h": 21600,
     "4h": 21600,
     "1d": 86400,
     "1w": 86400,
@@ -1031,10 +1055,8 @@ function binanceInterval(id) {
     "5m": "5m",
     "15m": "15m",
     "30m": "30m",
-    "45m": "1h",
     "1h": "1h",
     "2h": "2h",
-    "3h": "4h",
     "4h": "4h",
     "1d": "1d",
     "1w": "1w",

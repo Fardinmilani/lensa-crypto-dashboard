@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import MarketContextBar from "../components/MarketContextBar";
 import DataQualityGuard from "../components/DataQualityGuard";
-import { getChartCandles } from "../lib/coingecko";
+import { coinIdFromPair, getChartCandles } from "../lib/coingecko";
 import { firstTouchProbabilities, monteCarlo, probabilityAboveAcrossWindows, SCENARIO_CONSENSUS_STEPS, touchProbability } from "../lib/forecast";
 import { ema, macd, rsi, STRATEGIES, combineDirectionalSignals, currentSignalState } from "../lib/strategies";
 import { runBacktest, runLeveragedBacktest } from "../lib/backtest";
@@ -468,7 +468,7 @@ export default function DecisionCenter() {
       }
       try {
         const candles = await getChartCandles({
-          id: market.coin.id,
+          id: coinIdFromPair(symbol, market.coin.id),
           symbol,
           timeframe: market.timeframe,
           source: market.exchange,
@@ -530,11 +530,16 @@ export default function DecisionCenter() {
 
   async function importPaperTrades(file) {
     if (!file) return;
-    const text = await file.text();
-    const parsed = JSON.parse(text);
-    const rows = Array.isArray(parsed) ? parsed : parsed.trades || [];
-    for (const trade of rows) await putPaperTrade({ ...trade, id: trade.id || `${Date.now()}-${Math.random()}` });
-    setPaperTrades(await loadPaperTrades());
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      const rows = Array.isArray(parsed) ? parsed : parsed.trades || [];
+      for (const trade of rows) await putPaperTrade({ ...trade, id: trade.id || `${Date.now()}-${Math.random()}` });
+      setPaperTrades(await loadPaperTrades());
+      setImportNotice({ ok: true, msg: t("decision.imported.importSuccess") });
+    } catch {
+      setImportNotice({ ok: false, msg: t("decision.imported.importError") });
+    }
   }
 
   async function removePaperTrade(id) {
